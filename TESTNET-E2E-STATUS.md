@@ -48,17 +48,24 @@ Commitment `1` evaluation `3` was accepted/compliant: [C5mfYMeApbCu2ENZgyCCnNmEB
 
 After resolving the open challenge by timeout, commitment `1` was closed in [H5iX5ZseRCVKLnH2fgCfc4jFs1Yqf2h7M1WUHADRTPjm](https://testnet.nearblocks.io/txns/H5iX5ZseRCVKLnH2fgCfc4jFs1Yqf2h7M1WUHADRTPjm). The sponsor then requested the full unused `0.01 NEAR` refund in [3VyLLme3k8Z87fr8p5WwSxfAPLT9JnYSTnwyb9ta8Li6](https://testnet.nearblocks.io/txns/3VyLLme3k8Z87fr8p5WwSxfAPLT9JnYSTnwyb9ta8Li6). Final escrow view: `funded=0.01 NEAR`, `paid=0`, `refunded=0.01 NEAR`, `pending=0`, `free=0`. The successful refund callback reconciled the accounting.
 
+### Mismatched evaluator digest
+
+Commitment `3` pinned an all-zero evaluator digest while pointing at the published evaluator artifact. Its request transaction was [7YZa8jLihPDfbgSEU1NUwYntFjcu5S2tNAbzpvcLdJBA](https://testnet.nearblocks.io/txns/7YZa8jLihPDfbgSEU1NUwYntFjcu5S2tNAbzpvcLdJBA). The callback completed with evaluation status `Rejected` and reason `MALFORMED_VERDICT`; the stored output hash `74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b` is SHA-256 of the JSON bytes `null`. The pending evaluation pointer cleared. Operations accounting recorded the full `0.01 NEAR` execution deposit as authorized spend.
+
+Commitment `3` was then closed in [H5BgoFiJyfWz1k6Rty92SFm8xdC5ZNpPHzQttj4qPa2t](https://testnet.nearblocks.io/txns/H5BgoFiJyfWz1k6Rty92SFm8xdC5ZNpPHzQttj4qPa2t); its unused `0.01 NEAR` escrow was refunded and reconciled in [7EJAPXLAraX13s6dFopLSfAkAkuznRvboALAzSGAbPzd](https://testnet.nearblocks.io/txns/7EJAPXLAraX13s6dFopLSfAkAkuznRvboALAzSGAbPzd). This records the observed malformed-output path. It does not simulate an OutLayer promise rejection or a missing callback past the request deadline.
+
 ## Current Testnet State and Remaining Work
 
 - Commitment `1` is `Closed`; its unused escrow was fully refunded. It is no longer a recovery fixture.
 - Commitment `2` remains `Active` and `Healthy`; its only tranche is `Paid` to the distinct beneficiary.
-- The deployed evaluator proof, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, closure, and successful refund callback are validated.
-- Still open: OutLayer execution timeout/failure callback behavior, failed NEAR transfer recovery, arbiter uphold/invalidate challenge paths, broader temporal boundaries, and a full wallet-driven demo run.
+- Commitment `3` is `Closed`; its unused escrow was fully refunded after the malformed evaluator output was rejected.
+- The deployed evaluator proof, malformed-output rejection, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, closure, and successful refund callbacks are validated.
+- Still open: OutLayer promise rejection and no-callback timeout behavior, failed NEAR transfer recovery, arbiter uphold/invalidate challenge paths, broader temporal boundaries, and a full wallet-driven demo run.
 - Historical commitment discovery is still ID-based; design a bounded index or event-backed discovery path before expanding the public demo.
 
 Recommended next sequence:
 
-1. Validate an OutLayer timeout/failure and confirm the request can be permissionlessly expired without corrupting operations accounting.
+1. Reproduce a genuine OutLayer promise rejection and a no-callback request timeout; confirm callback status and permissionless expiry semantics.
 2. Exercise failed transfer callback recovery and confirm escrow/claim state remains retryable.
 3. Validate arbiter uphold and invalidation on fresh test commitments, then boundary-test `AtRisk`/`Breached` transitions.
 4. Run the complete browser-wallet journey and decide on a bounded discovery/indexing design.
