@@ -74,7 +74,7 @@ Commitment `6` used a valid evaluator artifact with an execution deposit of one 
 
 ### Bounded commitment discovery
 
-The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. In Brave, the recent list rendered against the deployed contract and selecting a row loaded its detail panel. The user confirmed the older-page control works with all 21 records and that the browser wallet connector connects successfully. The demo header now has an explicit disconnect action; confirm it in the browser while exercising the remaining transaction flows.
+The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. In Brave, the recent list rendered against the deployed contract and selecting a row loaded its detail panel. The user confirmed the older-page control works with all 21 records and that the browser wallet connector connects and disconnects successfully. The remaining browser transaction flows still need validation.
 
 ### Playground payout, closure, and refund
 
@@ -120,7 +120,7 @@ Recommended next sequence:
 
 1. Find a safe deterministic live failed-transfer fixture; keep the mock-runtime retry test as the verified fallback.
 2. Observe natural temporal transitions as the playground deadlines pass.
-3. Confirm wallet disconnection in the browser, then continue through create, funding, activation, evidence, payout/retry, closure, and refund.
+3. Continue the browser wallet journey through create, funding, activation, evidence, payout/retry, closure, and refund.
 
 ## Local Configuration and Verifier Note
 
