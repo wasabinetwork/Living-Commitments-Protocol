@@ -294,6 +294,13 @@ export class LcpClient {
     });
   }
 
+  getEvaluationTimeout(id: CommitmentId, evaluationId: EvaluationId): Promise<Nanoseconds | null> {
+    return this.transport.view<Nanoseconds | null>(this.contractId, "get_evaluation_timeout", {
+      commitment_id: id,
+      evaluation_id: evaluationId,
+    });
+  }
+
   getChallenge(challengeId: ChallengeId): Promise<ChallengeView | null> {
     return this.transport.view<ChallengeView | null>(this.contractId, "get_challenge", { challenge_id: challengeId });
   }

@@ -694,6 +694,16 @@ impl Contract {
             .map(EvaluationRecordView::from)
     }
 
+    pub fn get_evaluation_timeout(
+        &self,
+        commitment_id: U64,
+        evaluation_id: U64,
+    ) -> Option<U64> {
+        self.evaluation_requests
+            .get(&(commitment_id.0, evaluation_id.0))
+            .map(|request| U64(request.timeout_at_ns))
+    }
+
     pub fn get_latest_evaluation(&self, commitment_id: U64) -> Option<EvaluationRecordView> {
         let commitment = self.commitments.get(&commitment_id.0)?;
         if commitment.next_evaluation_id == 1 {

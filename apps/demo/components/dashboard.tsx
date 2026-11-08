@@ -55,6 +55,7 @@ interface CommitmentData {
   policy: CommitmentPolicyView | null;
   evaluation: EvaluationRecordView | null;
   evaluationHistory: EvaluationRecordView[];
+  evaluationTimeoutNs: string | null;
   challenge: ChallengeView | null;
   eligibility: ClaimEligibilityView | null;
   escrow: EscrowStatusView | null;
@@ -82,6 +83,7 @@ export function Dashboard() {
   const [claiming, setClaiming] = useState(false);
   const [creating, setCreating] = useState(false);
   const [requestingEvaluation, setRequestingEvaluation] = useState(false);
+  const [expiringEvaluation, setExpiringEvaluation] = useState(false);
   const [challengeAction, setChallengeAction] = useState<ChallengeAction | null>(null);
   const [closureAction, setClosureAction] = useState<ClosureAction | null>(null);
   const [draftAction, setDraftAction] = useState<DraftAction | null>(null);
@@ -132,9 +134,13 @@ export function Dashboard() {
       for (let id = latestEvaluationId; id >= firstEvaluationId && id > 0n; id -= 1n) {
         evaluationIds.push(id.toString());
       }
-      const evaluationHistory = (await Promise.all(
-        evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)),
-      )).filter((record): record is EvaluationRecordView => record !== null);
+      const [evaluationHistory, evaluationTimeoutNs] = await Promise.all([
+        Promise.all(evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)))
+          .then((records) => records.filter((record): record is EvaluationRecordView => record !== null)),
+        commitment.pending_evaluation_id
+          ? client.getEvaluationTimeout(normalizedId, commitment.pending_evaluation_id)
+          : Promise.resolve(null),
+      ]);
 
       const [activeChallenge, tranche] = await Promise.all([
         commitment.active_challenge_id
@@ -145,7 +151,7 @@ export function Dashboard() {
       const challenge = activeChallenge ?? (evaluation
         ? await client.getChallengeForEvaluation(normalizedId, evaluation.evaluation_id)
         : null);
-      setData({ commitment, policy, evaluation, evaluationHistory, challenge, eligibility, escrow, epoch, tranche });
+      setData({ commitment, policy, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
       setData(null);
@@ -303,6 +309,42 @@ export function Dashboard() {
       setError(cause instanceof Error ? cause.message : "The evaluation request failed.");
     } finally {
       setRequestingEvaluation(false);
+    }
+  }
+
+  async function expirePendingEvaluation() {
+    if (!data?.commitment.pending_evaluation_id) return;
+    const connector = connectorRef.current;
+    if (!connector) {
+      setError("Connect a testnet wallet to expire this evaluation request.");
+      return;
+    }
+    if (!data.evaluationTimeoutNs) {
+      setError("The evaluation timeout is not available from this contract view.");
+      return;
+    }
+
+    setExpiringEvaluation(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const nowNs = BigInt(await getFinalBlockTimestampNs(RPC_URL));
+      if (nowNs < BigInt(data.evaluationTimeoutNs)) {
+        throw new Error(`This request can be expired after ${formatDate(data.evaluationTimeoutNs)}.`);
+      }
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      await client.expireEvaluation(data.commitment.id, data.commitment.pending_evaluation_id);
+      const loaded = await loadCommitment(data.commitment.id);
+      setActionMessage(loaded
+        ? `Evaluation #${data.commitment.pending_evaluation_id} expired after its timeout.`
+        : `The evaluation expiry transaction returned successfully. Reload commitment #${data.commitment.id} to verify its state.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The pending evaluation could not be expired.");
+    } finally {
+      setExpiringEvaluation(false);
     }
   }
 
@@ -609,7 +651,9 @@ export function Dashboard() {
                 key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
                 data={data}
                 accountId={accountId}
-                busy={requestingEvaluation}
+                busy={requestingEvaluation || expiringEvaluation}
+                pendingTimeoutNs={data.evaluationTimeoutNs}
+                onExpire={expirePendingEvaluation}
                 onSubmit={submitEvaluation}
               />
             )}
@@ -812,11 +856,15 @@ function EvidenceSubmissionCard({
   data,
   accountId,
   busy,
+  pendingTimeoutNs,
+  onExpire,
   onSubmit,
 }: {
   data: CommitmentData;
   accountId: string | null;
   busy: boolean;
+  pendingTimeoutNs: string | null;
+  onExpire: () => Promise<void>;
   onSubmit: (evidence: SignedHeartbeatEvidence, storageDeposit: string) => Promise<void>;
 }) {
   const { commitment, policy } = data;
@@ -893,9 +941,18 @@ function EvidenceSubmissionCard({
         <span className="card-index">NEXT · {commitment.next_evaluation_id}</span>
       </div>
       <p className="evidence-intro">The demo builds the exact commitment-bound message using a finalized NEAR block time. Sign its UTF-8 text offline with the maintainer key pinned in policy, then paste the lowercase hex signature within the policy’s {formatDuration(policy?.temporal.max_source_lag_ns ?? "0")} source-lag window. The private key never enters this page; regenerate the payload if it gets stale.</p>
-      {commitment.pending_evaluation_id && <p className="form-wallet-hint">Evaluation #{commitment.pending_evaluation_id} is already pending.</p>}
+      {commitment.pending_evaluation_id && (
+        <div className="pending-evaluation">
+          <p className="form-wallet-hint">Evaluation #{commitment.pending_evaluation_id} is pending{pendingTimeoutNs ? ` until ${formatDate(pendingTimeoutNs)}` : ""}.</p>
+          <button className="challenge-expire-button" type="button" onClick={() => void onExpire()} disabled={!accountId || busy || !pendingTimeoutNs}>
+            {busy ? "Expiring evaluation…" : "Expire after timeout"}
+          </button>
+          {!accountId && <small>Connect any testnet wallet to expire the request.</small>}
+          <small>Any connected wallet can expire the request after its deadline if the OutLayer callback has not completed.</small>
+        </div>
+      )}
       {commitment.active_challenge_id && <p className="form-wallet-hint">Resolve challenge #{commitment.active_challenge_id} before requesting another evaluation.</p>}
-      {!canRequest && <p className="form-wallet-hint">Connect the maintainer or sponsor wallet to submit an evaluation request.</p>}
+      {!canRequest && !commitment.pending_evaluation_id && <p className="form-wallet-hint">Connect the maintainer or sponsor wallet to submit an evaluation request.</p>}
       <div className="form-grid evidence-form-grid">
         <FormField label="Evidence artifact SHA-256 · 64 lowercase hex" wide>
           <input className="mono-input" value={artifactHash} onChange={(event) => { setArtifactHash(event.target.value); setPayload(""); setObservedAt(""); setSignature(""); }} placeholder="Digest of the artifact or maintenance evidence" />
