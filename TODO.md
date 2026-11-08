@@ -3,18 +3,17 @@
 ## In progress
 
 - [ ] **Live failed tranche recovery:** find a safe deterministic testnet fixture for a failed transfer; the local mock-runtime test already confirms the failure callback accounting and exactly-once retry behavior.
-- [ ] **Live arbiter outcomes:** validate `Upheld` and `Invalidated` challenges on fresh testnet commitments; local tests cover evidence retention/invalidation and claim eligibility.
-- [ ] **Live temporal boundaries:** validate expiry, grace, recovery, challenge-window, and resolution-timeout behavior against fresh testnet commitments; exact local timestamp boundaries are covered.
-
-## Next
-
-- [ ] **Wallet journey:** complete create, fund, activate, evidence, claim/retry, close, and refund flows. Check the older-page control when at least ten records exist.
+- [ ] **Live temporal boundaries:** observe expiry, grace, and recovery on the new short-horizon testnet commitments; exact local timestamp boundaries are covered.
+- [ ] **Wallet journey:** verify the older-page control with 21 records, then complete create, fund, activate, evidence, claim/retry, close, and refund flows.
 
 ## Complete
 
 - [x] Add a deterministic contract unit test covering failed callback accounting, restored eligibility, successful retry, and duplicate-callback idempotency.
 - [x] Add deterministic contract tests for upheld and invalidated challenge outcomes.
 - [x] Cover exact local boundaries for initial evidence, evidence expiry, grace, recovery, claim eligibility, and challenge timeout.
+- [x] Create and activate 15 funded testnet playground commitments with varied policies and initial evidence deadlines staggered across the five-day horizon.
+- [x] Validate live upheld, invalidated, and recovery outcomes on playground commitments `8` and `9`.
+- [x] Confirm testnet pagination pages as IDs `21–12`, `11–2`, and `1`.
 - [x] Deploy bounded newest-first commitment discovery; confirm exclusive cursor pagination through testnet RPC.
 - [x] Verify the recent-commitment list renders in Brave against the deployed testnet contract.
 - [x] Select a recent commitment in Brave and verify its detail panel loads contract state and available actions.

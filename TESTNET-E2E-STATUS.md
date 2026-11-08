@@ -82,16 +82,39 @@ The contract now exposes a capped newest-first view, and the demo requests ten r
 - Commitment `4` is `Closed`; its unused escrow was refunded after its evaluation timed out.
 - Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
 - Commitment `6` is `Closed`; its unused escrow was refunded after an OutLayer promise failure.
-- The deployed evaluator proof, malformed-output rejection under the initial callback, updated null-result classification, promise failure, request timeout, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, closure, successful refund callbacks, and bounded discovery pagination are validated.
-- Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, claim eligibility, recovery, and exact initial-window, evidence-expiry, grace, challenge-window, and timeout boundaries. Contract callbacks mark a failed tranche `Failed`; retry remains eligible while the commitment is healthy and the epoch is active, and the demo labels it `Retry payout`. Live failed-transfer, arbiter, and temporal-boundary validation remain open.
-- Still open: live failed NEAR transfer recovery, live arbiter uphold/invalidate challenge paths, testnet temporal-boundary checks, and the full wallet-driven demo run. In Brave, both the recent list and selection of commitment `2` were verified; wallet-driven actions still need manual validation.
-- The bounded, newest-first commitment listing is deployed and pagination is verified through finalized RPC views. The older-page control has not been exercised in the browser because the current testnet account has fewer than ten records.
+- Commitments `7`–`21` are a 15-record playground cohort. All are `Active`, funded for one to three tranches, and initially received one evaluator run budget. Commitment `9` received an additional run for recovery. Initial evidence deadlines are staggered from six hours to five days after activation; evidence TTL, grace, challenge windows, resolution timeouts, recovery policy, and epoch counts vary. Subjects identify their intended scenarios.
+
+The contract models an initial evidence deadline as `activated_at_ns + initial_window_ns`; it has no separate absolute-expiry field. These are the derived deadlines for the playground cohort:
+
+| ID | Scenario | Initial evidence deadline (UTC) |
+| --- | --- | --- |
+| 7 | Healthy evidence and payout | Nov 13, 22:17 |
+| 8 | Upheld challenge | Nov 13, 16:18 |
+| 9 | Invalidated challenge and recovery | Nov 13, 10:19 |
+| 10 | Challenge timeout | Nov 12, 22:19 |
+| 11 | Evidence expiry and recovery | Nov 12, 10:19 |
+| 12 | Initial deadline and grace | Nov 11, 22:19 |
+| 13 | Non-recoverable breach | Nov 11, 10:19 |
+| 14 | Recoverable breach | Nov 10, 22:20 |
+| 15 | Short evidence freshness | Nov 10, 16:20 |
+| 16 | Single epoch budget | Nov 10, 10:20 |
+| 17 | Three epoch budget | Nov 10, 04:20 |
+| 18 | Long evidence freshness | Nov 9, 22:21 |
+| 19 | Short challenge window | Nov 9, 16:21 |
+| 20 | Extended resolution window | Nov 9, 10:21 |
+| 21 | Short initial evidence window | Nov 9, 04:21 |
+
+- Playground commitment `8` accepted compliant evaluation `1`; challenge `2` was upheld. It remains `Healthy`, with claims correctly held until its post-evaluation challenge window ends. [Evaluation request](https://testnet.nearblocks.io/txns/5or7nERU8uk2qKobG2WxaxCWyP7tesqVnuz7wACZSLYe) · [Upheld resolution](https://testnet.nearblocks.io/txns/Cb9URBfVDVqUJH5qJgJzzUWGEuNP9kLA7RhsG4YoTewC).
+- Playground commitment `9` accepted evaluation `1`, then challenge `3` invalidated that evidence and put it `AtRisk`. A fresh compliant evaluation `2` restored `Healthy` and cleared the negative period. [Invalidation resolution](https://testnet.nearblocks.io/txns/HAyVNDmVXjww68nzVQdAammtoqLmZXnmaZLopt4e87WC) · [Recovery evaluation](https://testnet.nearblocks.io/txns/8p47a9eqNUicY99hT1VuqUxdYKqnjMuSMY6KXNYQR2TL).
+- Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, claim eligibility, recovery, and exact initial-window, evidence-expiry, grace, challenge-window, and timeout boundaries. Live failed-transfer recovery and natural testnet temporal transitions remain open.
+- Still open: a safe live failed NEAR transfer fixture, natural expiry/grace observations on the new cohort, the older-page control in the browser, and the remaining wallet-driven demo flows. In Brave, the recent list and selection of commitment `2` were verified before the cohort was added.
+- Testnet RPC pagination now returns IDs `21`–`12`, then `11`–`2`, then `1`, confirming the exclusive cursor and enough records for the older page. The browser relay disconnected during post-cohort UI verification, so the visible older-page control remains unverified.
 
 Recommended next sequence:
 
-1. Exercise failed transfer callback recovery and confirm escrow/claim state remains retryable.
-2. Validate arbiter uphold and invalidation on fresh test commitments, then boundary-test `AtRisk`/`Breached`, recovery, challenge-window, and timeout transitions.
-3. Run the browser against the deployed contract, validate the recent/older commitment list UI, then complete the full wallet-driven journey.
+1. Find a safe deterministic live failed-transfer fixture; keep the mock-runtime retry test as the verified fallback.
+2. Observe natural temporal transitions as the playground deadlines pass.
+3. Reconnect the browser, exercise the older-page control, then complete the wallet-driven journey.
 
 ## Local Configuration and Verifier Note
 
