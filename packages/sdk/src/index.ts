@@ -127,7 +127,7 @@ export interface CommitmentPolicyView {
 export interface EvaluationRecordView {
   commitment_id: CommitmentId;
   evaluation_id: EvaluationId;
-  request_transaction_hash: Sha256Hex;
+  request_transaction_hash: Sha256Hex | null;
   status: EvaluationStatus;
   verdict: Verdict | null;
   reason_codes: string[];
@@ -461,7 +461,7 @@ export function buildHeartbeatSigningPayload(input: HeartbeatSigningInput): stri
 
 export async function sha256Hex(value: string | Uint8Array): Promise<Sha256Hex> {
   const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
-  const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer));
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 

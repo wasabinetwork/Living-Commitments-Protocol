@@ -507,14 +507,14 @@ export function Dashboard() {
   }
 
   async function claimTranche() {
-    if (!data) return;
+    if (!data || !data.policy) return;
     const connector = connectorRef.current;
     if (!connector || !accountId) {
       setError("Connect the beneficiary wallet before submitting a claim.");
       return;
     }
-    if (accountId !== data.commitment.policy.budget.beneficiary) {
-      setError(`Only ${data.commitment.policy.budget.beneficiary} can claim this tranche.`);
+    if (accountId !== data.policy.budget.beneficiary) {
+      setError(`Only ${data.policy.budget.beneficiary} can claim this tranche.`);
       return;
     }
 
@@ -549,7 +549,7 @@ export function Dashboard() {
 
   const health = data?.commitment.effective_health;
   const claimAllowed = data?.eligibility?.eligible === true;
-  const correctBeneficiary = Boolean(accountId && data && accountId === data.commitment.policy.budget.beneficiary);
+  const correctBeneficiary = Boolean(accountId && data?.policy && accountId === data.policy.budget.beneficiary);
   const canSubmitClaim = Boolean(data && claimAllowed && correctBeneficiary && !claiming);
 
   return (
@@ -687,7 +687,7 @@ export function Dashboard() {
               <div className="health-facts">
                 <Fact label="SUBJECT" value={data.commitment.subject} />
                 <Fact label="MAINTAINER" value={data.commitment.maintainer} mono />
-                <Fact label="BENEFICIARY" value={data.commitment.policy.budget.beneficiary} mono />
+                <Fact label="BENEFICIARY" value={data.policy?.budget.beneficiary ?? "Unknown"} mono />
                 <Fact label="POLICY VERSION" value={`v${data.commitment.policy_version}`} mono />
               </div>
             </section>
@@ -1503,8 +1503,8 @@ function parseNearToYocto(amount: string): string {
   return yocto;
 }
 
-function formatNear(yocto: string): string {
-  const value = BigInt(yocto);
+function formatNear(yocto: string | bigint): string {
+  const value = typeof yocto === "bigint" ? yocto : BigInt(yocto);
   const whole = value / 10n ** 24n;
   const fraction = (value % 10n ** 24n).toString().padStart(24, "0").replace(/0+$/, "");
   return fraction ? `${whole.toLocaleString()}.${fraction}` : whole.toLocaleString();
@@ -1533,7 +1533,8 @@ function formatDate(nanoseconds: string): string {
   });
 }
 
-function EvaluationProofReference({ transactionHashHex }: { transactionHashHex: string }) {
+function EvaluationProofReference({ transactionHashHex }: { transactionHashHex: string | null }) {
+  if (!transactionHashHex) return null;
   const transactionHash = transactionHashToBase58(transactionHashHex);
   if (!transactionHash) return null;
 

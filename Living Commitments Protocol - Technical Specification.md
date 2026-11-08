@@ -411,6 +411,8 @@ pub struct EvaluationRequest {
 
     pub requested_at_ns: u64,
     pub timeout_at_ns: u64,
+    /// All-zero placeholder reserves callback storage until a hash is available.
+    pub request_transaction_hash: Option<[u8; 32]>,
 
     pub status: EvaluationStatus,
 }
@@ -420,8 +422,8 @@ pub struct EvaluationRequest {
 pub struct EvaluationRecord {
     pub request_id: EvaluationId,
     pub commitment_id: CommitmentId,
-    /// Originating NEAR transaction hash, used to locate OutLayer's on-chain execution proof.
-    pub request_transaction_hash: [u8; 32],
+    /// All-zero placeholder reserves callback storage; views expose it as absent until set.
+    pub request_transaction_hash: Option<[u8; 32]>,
     pub status: EvaluationStatus,
     pub verdict: Option<Verdict>,
     pub reason_codes: Vec<String>,
@@ -703,7 +705,8 @@ The maintainer signs the exact UTF-8 bytes of this JSON with Ed25519. `evidence_
 
 ```json
 {
-  "schema": "lcp.evaluation.verdict.v1",
+  "schema": "lcp.evaluation.verdict.v2",
+  "request_transaction_hash": "base58-encoded-NEAR-transaction-hash",
   "commitment_id": "1",
   "evaluation_id": "4",
   "policy_version": 1,
@@ -839,13 +842,14 @@ Requirements:
 5. Confirm policy version and digest.
 6. Confirm the preceding promise succeeded.
 7. Parse the actual OutLayer return encoding.
-8. Validate the verdict schema.
-9. Confirm commitment and evaluation IDs.
-10. Confirm input and evidence digests.
-11. Validate source timestamp.
-12. Apply the verdict.
-13. Clear pending request.
-14. Emit the appropriate event.
+8. Decode the originating transaction hash supplied by the evaluator.
+9. Validate the verdict schema.
+10. Confirm commitment and evaluation IDs.
+11. Confirm input and evidence digests.
+12. Validate source timestamp.
+13. Apply the verdict and store the transaction hash.
+14. Clear pending request.
+15. Emit the appropriate event.
 
 **Integration note:** The exact byte encoding returned by OutLayer's `Json` response format must be confirmed with a real testnet execution. Do not assume raw stdout bytes and NEAR's serialized return value are identical.
 
@@ -883,7 +887,7 @@ OutLayer's execution produces a TEE attestation that can be inspected independen
 
 The protocol's on-chain acceptance relies on the documented OutLayer contract and execution path; LCP does not independently verify a complete Intel TDX quote in v0.1.
 
-Each evaluation stores the originating NEAR transaction hash. The SDK exposes it as lowercase hex, and the demo renders a NEAR Explorer link plus `outlayer-verify tx <base58-hash> --network <network>`.
+The evaluator reads OutLayer's `NEAR_TRANSACTION_HASH` execution environment value and returns it in its verdict. The LCP callback validates and stores it as lowercase hexadecimal, and the SDK exposes it for a NEAR Explorer link plus `outlayer-verify tx <base58-hash> --network <network>`. Pending or failed executions without a valid verdict have no transaction hash.
 
 OutLayer documents transaction-hash lookup for on-chain executions and recovery of request and response data from NEAR. Live integration must still confirm that this LCP promise chain resolves to the expected job and attestation.
 

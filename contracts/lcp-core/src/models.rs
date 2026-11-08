@@ -13,7 +13,7 @@ pub type ChallengeId = u64;
 pub type TransferId = u64;
 
 pub const EVALUATION_REQUEST_SCHEMA: &str = "lcp.evaluation.request.v1";
-pub const EVALUATION_VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v1";
+pub const EVALUATION_VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v2";
 pub const HEARTBEAT_SCHEMA: &str = "lcp.heartbeat.v1";
 pub const HEARTBEAT_EVIDENCE_TYPE: &str = "signed_maintenance_heartbeat";
 
@@ -216,6 +216,8 @@ pub struct EvaluationRequest {
     pub observed_at_ns: u64,
     pub requested_at_ns: u64,
     pub timeout_at_ns: u64,
+    /// The all-zero value reserves callback storage until OutLayer returns the hash.
+    pub request_transaction_hash: Option<[u8; 32]>,
     pub status: EvaluationStatus,
 }
 
@@ -224,7 +226,8 @@ pub struct EvaluationRequest {
 pub struct EvaluationRecord {
     pub request_id: EvaluationId,
     pub commitment_id: CommitmentId,
-    pub request_transaction_hash: [u8; 32],
+    /// The all-zero value reserves callback storage when no hash is available.
+    pub request_transaction_hash: Option<[u8; 32]>,
     pub status: EvaluationStatus,
     pub verdict: Option<Verdict>,
     pub reason_codes: Vec<String>,
@@ -281,6 +284,7 @@ pub struct EvaluationInput<'a> {
 #[serde(crate = "near_sdk::serde", deny_unknown_fields)]
 pub struct EvaluationVerdictOutput {
     pub schema: String,
+    pub request_transaction_hash: String,
     pub commitment_id: String,
     pub evaluation_id: String,
     pub policy_version: u32,
@@ -297,7 +301,7 @@ pub struct EvaluationVerdictOutput {
 pub struct EvaluationRecordView {
     pub commitment_id: U64,
     pub evaluation_id: U64,
-    pub request_transaction_hash: String,
+    pub request_transaction_hash: Option<String>,
     pub status: EvaluationStatus,
     pub verdict: Option<Verdict>,
     pub reason_codes: Vec<String>,
@@ -315,7 +319,15 @@ impl From<&EvaluationRecord> for EvaluationRecordView {
         Self {
             commitment_id: U64(record.commitment_id),
             evaluation_id: U64(record.request_id),
-            request_transaction_hash: encode_hex(&record.request_transaction_hash),
+            request_transaction_hash: if is_pending {
+                None
+            } else {
+                record
+                    .request_transaction_hash
+                    .as_ref()
+                    .filter(|hash| **hash != [0; 32])
+                    .map(|hash| encode_hex(hash))
+            },
             status: record.status,
             verdict: if is_pending { None } else { record.verdict },
             reason_codes: if is_pending {
@@ -386,7 +398,7 @@ impl Commitment {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct CreateCommitmentArgs {
     pub subject: String,
@@ -395,7 +407,7 @@ pub struct CreateCommitmentArgs {
     pub policy: CommitmentPolicyArgs,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct CommitmentPolicyArgs {
     pub temporal: TemporalPolicyArgs,
@@ -404,7 +416,7 @@ pub struct CommitmentPolicyArgs {
     pub budget: BudgetPolicyArgs,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct TemporalPolicyArgs {
     pub initial_window_ns: U64,
@@ -416,13 +428,13 @@ pub struct TemporalPolicyArgs {
     pub recovery_allowed: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct EvidencePolicyArgs {
     pub maintainer_public_key_hex: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct EvaluatorPolicyArgs {
     pub outlayer_account: AccountId,
@@ -436,7 +448,7 @@ pub struct EvaluatorPolicyArgs {
     pub execution_deposit_yocto: U128,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct BudgetPolicyArgs {
     pub sponsor: AccountId,

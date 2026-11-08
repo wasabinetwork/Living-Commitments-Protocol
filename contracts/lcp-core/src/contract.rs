@@ -5,7 +5,7 @@ use near_sdk::{
     near, require,
     serde_json::{json, Value},
     store::LookupMap,
-    BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseResult,
+    BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseError,
 };
 
 use crate::{
@@ -383,8 +383,6 @@ impl Contract {
         let timeout_at_ns = requested_at_ns
             .checked_add(commitment.policy.evaluator.request_timeout_ns)
             .unwrap_or_else(|| env::panic_str("evaluation timeout timestamp overflow"));
-        let request_transaction_hash = env::transaction_hash();
-
         let request = EvaluationRequest {
             id: evaluation_id,
             commitment_id: commitment_id.0,
@@ -395,13 +393,14 @@ impl Contract {
             observed_at_ns,
             requested_at_ns,
             timeout_at_ns,
+            request_transaction_hash: Some([0; 32]),
             status: EvaluationStatus::Pending,
         };
         // This maximum-sized placeholder reserves callback storage for bounded reason codes.
         let record = EvaluationRecord {
             request_id: evaluation_id,
             commitment_id: commitment_id.0,
-            request_transaction_hash,
+            request_transaction_hash: Some([0; 32]),
             status: EvaluationStatus::Pending,
             verdict: Some(Verdict::NonCompliant),
             reason_codes: vec!["X".repeat(MAX_REASON_CODE_BYTES); MAX_REASON_CODES],
@@ -514,7 +513,6 @@ impl Contract {
             json!({
                 "commitment_id": commitment_id.0.to_string(),
                 "evaluation_id": evaluation_id.to_string(),
-                "request_transaction_hash": encode_hex(&request_transaction_hash),
                 "requested_at_ns": requested_at_ns.to_string(),
                 "timeout_at_ns": timeout_at_ns.to_string(),
                 "input_hash": encode_hex(&input_hash),
@@ -570,9 +568,19 @@ impl Contract {
             return;
         }
 
-        let output_bytes = match env::promise_result(0) {
-            PromiseResult::Successful(data) => data,
-            PromiseResult::Failed | PromiseResult::NotReady => {
+        let output_bytes = match env::promise_result_checked(0, MAX_EVALUATOR_OUTPUT_BYTES) {
+            Ok(data) => data,
+            Err(PromiseError::TooLong(_)) => {
+                self.reject_evaluation(
+                    &mut commitment,
+                    &mut request,
+                    "VERDICT_TOO_LARGE",
+                    None,
+                    now_ns,
+                );
+                return;
+            }
+            Err(_) => {
                 self.finish_evaluation(
                     &mut commitment,
                     &mut request,
@@ -588,16 +596,6 @@ impl Contract {
         };
 
         let output_hash = env::sha256_array(&output_bytes);
-        if output_bytes.len() > MAX_EVALUATOR_OUTPUT_BYTES {
-            self.reject_evaluation(
-                &mut commitment,
-                &mut request,
-                "VERDICT_TOO_LARGE",
-                Some(output_hash),
-                now_ns,
-            );
-            return;
-        }
         let output: EvaluationVerdictOutput = match near_sdk::serde_json::from_slice(&output_bytes)
         {
             Ok(output) => output,
@@ -612,6 +610,19 @@ impl Contract {
                 return;
             }
         };
+        let Some(request_transaction_hash) =
+            parse_near_transaction_hash(&output.request_transaction_hash)
+        else {
+            self.reject_evaluation(
+                &mut commitment,
+                &mut request,
+                "INVALID_REQUEST_TRANSACTION_HASH",
+                Some(output_hash),
+                now_ns,
+            );
+            return;
+        };
+        request.request_transaction_hash = Some(request_transaction_hash);
         if let Some(reason) = validate_verdict_output(&commitment, &request, &output, now_ns) {
             self.reject_evaluation(
                 &mut commitment,
@@ -697,11 +708,7 @@ impl Contract {
             .map(EvaluationRecordView::from)
     }
 
-    pub fn get_evaluation_timeout(
-        &self,
-        commitment_id: U64,
-        evaluation_id: U64,
-    ) -> Option<U64> {
+    pub fn get_evaluation_timeout(&self, commitment_id: U64, evaluation_id: U64) -> Option<U64> {
         self.evaluation_requests
             .get(&(commitment_id.0, evaluation_id.0))
             .map(|request| U64(request.timeout_at_ns))
@@ -941,7 +948,7 @@ impl Contract {
         );
         let epoch = self
             .claim_eligibility(&commitment, now_ns)
-            .unwrap_or_else(env::panic_str);
+            .unwrap_or_else(|error| env::panic_str(error));
         let tranche_key = (commitment_id.0, epoch);
 
         let tranche_amount = commitment.policy.budget.tranche_yocto;
@@ -1059,7 +1066,10 @@ impl Contract {
         );
 
         let succeeded = env::promise_results_count() == 1
-            && matches!(env::promise_result(0), PromiseResult::Successful(_));
+            && match env::promise_result_checked(0, 0) {
+                Ok(_) | Err(PromiseError::TooLong(_)) => true,
+                Err(_) => false,
+            };
         commitment.escrow_pending_yocto -= transfer.amount_yocto;
         if succeeded {
             commitment.escrow_paid_yocto = commitment
@@ -1113,7 +1123,10 @@ impl Contract {
             "pending refund accounting invariant violated"
         );
         let succeeded = env::promise_results_count() == 1
-            && matches!(env::promise_result(0), PromiseResult::Successful(_));
+            && match env::promise_result_checked(0, 0) {
+                Ok(_) | Err(PromiseError::TooLong(_)) => true,
+                Err(_) => false,
+            };
         commitment.escrow_pending_yocto -= transfer.amount_yocto;
         if succeeded {
             commitment.escrow_refunded_yocto = commitment
@@ -1461,6 +1474,7 @@ impl Contract {
             .cloned()
             .unwrap_or_else(|| env::panic_str("evaluation record not found"));
         record.status = status;
+        record.request_transaction_hash = request.request_transaction_hash;
         record.verdict = verdict;
         record.reason_codes = reason_codes.clone();
         record.accepted_at_ns = accepted_at_ns;
@@ -1491,6 +1505,11 @@ impl Contract {
                 "observed_at_ns": request.observed_at_ns.to_string(),
                 "accepted_at_ns": accepted_at_ns.map(|timestamp| timestamp.to_string()),
                 "completed_at_ns": now_ns.to_string(),
+                "request_transaction_hash": request
+                    .request_transaction_hash
+                    .as_ref()
+                    .filter(|hash| **hash != [0; 32])
+                    .map(|hash| encode_hex(hash)),
                 "output_hash": output_hash.as_ref().map(|hash| encode_hex(hash)),
             }),
         );
@@ -1733,6 +1752,11 @@ fn validate_verdict_output(
 fn parse_decimal_u64(value: &str) -> Option<u64> {
     let parsed = value.parse::<u64>().ok()?;
     (parsed.to_string() == value).then_some(parsed)
+}
+
+fn parse_near_transaction_hash(value: &str) -> Option<[u8; 32]> {
+    let decoded = bs58::decode(value).into_vec().ok()?;
+    decoded.try_into().ok()
 }
 
 fn build_policy(args: CommitmentPolicyArgs) -> CommitmentPolicy {

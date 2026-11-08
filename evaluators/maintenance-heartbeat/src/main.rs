@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const REQUEST_SCHEMA: &str = "lcp.evaluation.request.v1";
-const VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v1";
+const VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v2";
 const HEARTBEAT_SCHEMA: &str = "lcp.heartbeat.v1";
 const EVIDENCE_TYPE: &str = "signed_maintenance_heartbeat";
 const MAX_INPUT_BYTES: usize = 8_192;
@@ -55,6 +55,7 @@ struct HeartbeatPayload {
 #[derive(Serialize)]
 struct EvaluationVerdict {
     schema: &'static str,
+    request_transaction_hash: String,
     commitment_id: String,
     evaluation_id: String,
     policy_version: u32,
@@ -105,6 +106,15 @@ fn evaluate_stdin() -> Result<String, &'static str> {
         return Err("heartbeat payload exceeds the configured size limit");
     }
 
+    let request_transaction_hash = std::env::var("NEAR_TRANSACTION_HASH")
+        .map_err(|_| "OutLayer did not provide the originating NEAR transaction hash")?;
+    let transaction_hash_bytes = bs58::decode(&request_transaction_hash)
+        .into_vec()
+        .map_err(|_| "OutLayer provided an invalid NEAR transaction hash")?;
+    if transaction_hash_bytes.len() != 32 {
+        return Err("OutLayer provided an invalid NEAR transaction hash");
+    }
+
     let payload: HeartbeatPayload = serde_json::from_str(&request.evidence.payload)
         .map_err(|_| "heartbeat payload is malformed")?;
     if serde_json::to_string(&payload).map_err(|_| "heartbeat serialization failed")?
@@ -145,6 +155,7 @@ fn evaluate_stdin() -> Result<String, &'static str> {
 
     let output = EvaluationVerdict {
         schema: VERDICT_SCHEMA,
+        request_transaction_hash,
         commitment_id: request.commitment_id,
         evaluation_id: request.evaluation_id,
         policy_version: request.policy_version,
