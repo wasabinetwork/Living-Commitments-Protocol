@@ -1,0 +1,15 @@
+[package]
+name = "maintenance-heartbeat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "maintenance-heartbeat"
+path = "src/main.rs"
+
+[dependencies]
+ed25519-dalek.workspace = true
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2.workspace = true

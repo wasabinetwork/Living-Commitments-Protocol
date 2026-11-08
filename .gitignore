@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.near-credentials/
+submission-payload*.json
+target/
+node_modules/
+.next/
+dist/
+out/

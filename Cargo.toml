@@ -1,0 +1,15 @@
+[workspace]
+members = ["contracts/lcp-core", "evaluators/maintenance-heartbeat"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+rust-version = "1.94"
+
+[workspace.dependencies]
+near-sdk = "=5.29.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = "=2.2.0"
+sha2 = "=0.10.9"
