@@ -120,12 +120,14 @@ The contract models an initial evidence deadline as `activated_at_ns + initial_w
 - Playground commitment `9` accepted evaluation `1`, then challenge `3` invalidated that evidence and put it `AtRisk`. A fresh compliant evaluation `2` restored `Healthy` and cleared the negative period. [Invalidation resolution](https://testnet.nearblocks.io/txns/HAyVNDmVXjww68nzVQdAammtoqLmZXnmaZLopt4e87WC) · [Recovery evaluation](https://testnet.nearblocks.io/txns/8p47a9eqNUicY99hT1VuqUxdYKqnjMuSMY6KXNYQR2TL).
 - Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, claim eligibility, recovery, and exact initial-window, evidence-expiry, grace, challenge-window, and timeout boundaries. The separate live fixture now confirms failed-transfer recovery on testnet; natural transitions on the five-day cohort remain open.
 - Still open: natural expiry/grace observations on the new cohort and completion of the browser wallet UI journey. The user reports no browser journey bugs so far. The signer-driven payout, close, and refund path is verified on commitment `19`, and the failed-transfer recovery is verified on the isolated fixture. In Brave, the recent list and selection of commitment `2` were verified before the cohort was added.
+- A user-level cron monitor now samples finalized block time and commitment `21` health once per minute in `America/Santo_Domingo`. Its bounded schedule runs through Nov 9, 2026 at 02:59 AST and removes its own entries on `Breached`/`Closed`, with a 03:00 AST cleanup cutoff. The first samples were `AwaitingEvidence`; the JSONL log is `/private/tmp/lcp-temporal-monitor-21.jsonl`. The tracked monitor implementation is `scripts/monitor_near_temporal.py`.
+- The demo dashboard source now includes a health clock timeline: recorded activation/evidence/negative-health timestamps are distinguished from initial-evidence, freshness, and grace deadlines derived from policy. Its snapshot time comes from finalized NEAR block time and can be refreshed. Browser inspection of this UI change is still pending.
 - Testnet RPC pagination returns IDs `21`–`12`, then `11`–`2`, then `1`, confirming the exclusive cursor. The user subsequently confirmed the browser older-page control works with all 21 records and the wallet connector connects.
 
 Recommended next sequence:
 
-1. Observe natural temporal transitions as the playground deadlines pass.
-2. Finish the browser wallet journey through create, funding, activation, evidence, payout/retry, closure, and refund.
+1. Review commitment `21` monitor samples for the `AwaitingEvidence` → `AtRisk` → `Breached` transitions; refresh its dashboard snapshot at the same boundaries, then observe other staggered playground deadlines.
+2. Finish the browser wallet journey through create, funding, activation, evidence, payout/retry, closure, and refund; the user reports no bugs so far.
 
 ## Local Configuration and Verifier Note
 

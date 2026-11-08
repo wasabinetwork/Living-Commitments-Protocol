@@ -55,6 +55,7 @@ interface NearConnectorPort {
 interface CommitmentData {
   commitment: CommitmentView;
   policy: CommitmentPolicyView | null;
+  chainTimeNs: string | null;
   evaluation: EvaluationRecordView | null;
   evaluationHistory: EvaluationRecordView[];
   evaluationTimeoutNs: string | null;
@@ -142,13 +143,14 @@ export function Dashboard() {
     setActionMessage(null);
     try {
       const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
-      const [commitment, policy, evaluation, eligibility, escrow, epoch] = await Promise.all([
+      const [commitment, policy, evaluation, eligibility, escrow, epoch, chainTimeNs] = await Promise.all([
         client.getCommitment(normalizedId),
         client.getPolicy(normalizedId),
         client.getLatestEvaluation(normalizedId),
         client.canClaimTranche(normalizedId),
         client.getEscrowStatus(normalizedId),
         client.getCurrentEpoch(normalizedId),
+        getFinalBlockTimestampNs(RPC_URL).catch(() => null),
       ]);
 
       if (!commitment) {
@@ -182,7 +184,7 @@ export function Dashboard() {
       const challenge = activeChallenge ?? (evaluation
         ? await client.getChallengeForEvaluation(normalizedId, evaluation.evaluation_id)
         : null);
-      setData({ commitment, policy, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, eligibility, escrow, epoch, tranche });
+      setData({ commitment, policy, chainTimeNs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
       setData(null);
@@ -810,6 +812,8 @@ export function Dashboard() {
               </div>
             </section>
 
+            <HealthTimeline data={data} busy={loading} onRefresh={() => void loadCommitment(data.commitment.id)} />
+
             <div className="metrics-grid">
               <MetricCard
                 eyebrow="LAST COMPLIANT EVIDENCE"
@@ -963,6 +967,151 @@ export function Dashboard() {
 
 function Fact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return <div className="fact"><span>{label}</span><strong className={mono ? "mono" : ""} title={value}>{value}</strong></div>;
+}
+
+interface HealthTimelinePoint {
+  label: string;
+  detail: string;
+  atNs: string;
+  source: "recorded" | "derived";
+}
+
+function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
+  const { commitment, policy } = data;
+  if (!commitment.activated_at_ns || !policy) return [];
+
+  const points: HealthTimelinePoint[] = [{
+    label: "Commitment activated",
+    detail: "The contract started the initial evidence clock.",
+    atNs: commitment.activated_at_ns,
+    source: "recorded",
+  }];
+  if (commitment.last_good_observed_at_ns) {
+    points.push({
+      label: "Compliant evidence observed",
+      detail: "Timestamp from the most recent accepted compliant heartbeat.",
+      atNs: commitment.last_good_observed_at_ns,
+      source: "recorded",
+    });
+  }
+  if (commitment.negative_since_ns) {
+    points.push({
+      label: "Negative health period began",
+      detail: "The contract recorded a negative evaluation or invalidated evidence.",
+      atNs: commitment.negative_since_ns,
+      source: "recorded",
+    });
+    if (commitment.lifecycle === "Active") {
+      points.push({
+        label: "Grace period ends",
+        detail: policy.temporal.recovery_allowed
+          ? "Breached begins here unless qualifying evidence is accepted first."
+          : "Breach latches here because recovery is disabled by policy.",
+        atNs: (BigInt(commitment.negative_since_ns) + BigInt(policy.temporal.grace_ns)).toString(),
+        source: "derived",
+      });
+    }
+  } else if (commitment.last_good_observed_at_ns) {
+    const evidenceExpiryNs = BigInt(commitment.last_good_observed_at_ns)
+      + BigInt(policy.temporal.evidence_ttl_ns);
+    points.push({
+      label: "Evidence freshness ends",
+      detail: "AtRisk begins if no newer compliant evidence has been accepted.",
+      atNs: evidenceExpiryNs.toString(),
+      source: "derived",
+    });
+    if (commitment.lifecycle === "Active") {
+      points.push({
+        label: "Grace period ends",
+        detail: policy.temporal.recovery_allowed
+          ? "Breached begins here unless qualifying evidence is accepted first."
+          : "Breach latches here because recovery is disabled by policy.",
+        atNs: (evidenceExpiryNs + BigInt(policy.temporal.grace_ns)).toString(),
+        source: "derived",
+      });
+    }
+  } else if (commitment.lifecycle === "Active") {
+    const initialDeadlineNs = BigInt(commitment.activated_at_ns)
+      + BigInt(policy.temporal.initial_window_ns);
+    points.push({
+      label: "Initial evidence deadline",
+      detail: "AtRisk begins if compliant evidence has not been accepted by this time.",
+      atNs: initialDeadlineNs.toString(),
+      source: "derived",
+    });
+    points.push({
+      label: "Grace period ends",
+      detail: policy.temporal.recovery_allowed
+        ? "Breached begins here unless qualifying evidence is accepted first."
+        : "Breach latches here because recovery is disabled by policy.",
+      atNs: (initialDeadlineNs + BigInt(policy.temporal.grace_ns)).toString(),
+      source: "derived",
+    });
+  }
+
+  const nowNs = data.chainTimeNs ? BigInt(data.chainTimeNs) : null;
+  const hideFutureDeadlines = commitment.lifecycle === "Closed" || commitment.effective_health === "Breached";
+  const visiblePoints = hideFutureDeadlines
+    ? points.filter((point) => point.source === "recorded" || (nowNs !== null && BigInt(point.atNs) <= nowNs))
+    : points;
+  return visiblePoints.sort((left, right) => {
+    const leftNs = BigInt(left.atNs);
+    const rightNs = BigInt(right.atNs);
+    return leftNs < rightNs ? -1 : leftNs > rightNs ? 1 : 0;
+  });
+}
+
+function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy: boolean; onRefresh: () => void }) {
+  const points = buildHealthTimeline(data);
+  const chainTimeNs = data.chainTimeNs;
+  const canHaveNextDeadline = data.commitment.lifecycle === "Active"
+    && data.commitment.effective_health !== "Breached";
+  const nextPointIndex = chainTimeNs && canHaveNextDeadline
+    ? points.findIndex((point) => BigInt(point.atNs) > BigInt(chainTimeNs))
+    : -1;
+
+  return (
+    <section className="content-card health-timeline" aria-labelledby="health-timeline-title">
+      <div className="card-heading">
+        <div><p className="eyebrow">RECORDED EVENTS &amp; POLICY TIME</p><h3 id="health-timeline-title">Health clock</h3></div>
+        <div className="timeline-tools">
+          <span className="timeline-snapshot">{data.chainTimeNs ? `FINALIZED · ${formatDate(data.chainTimeNs)}` : "BLOCK TIME UNAVAILABLE"}</span>
+          <button className="browser-text-button timeline-refresh" type="button" onClick={onRefresh} disabled={busy}>
+            {busy ? "Refreshing…" : "Refresh snapshot"}
+          </button>
+        </div>
+      </div>
+      {!data.policy ? (
+        <p className="empty-copy">Policy timing details are unavailable for this commitment.</p>
+      ) : data.commitment.lifecycle === "Draft" ? (
+        <p className="empty-copy">The evidence clock starts when the commitment is activated.</p>
+      ) : points.length === 0 ? (
+        <p className="empty-copy">Activation time is not available for this commitment.</p>
+      ) : (
+        <>
+          <p className="timeline-explainer">Recorded entries come from commitment state. Deadlines are derived from recorded timestamps and the immutable policy; finalized NEAR time shows which one is next.</p>
+          <ol className="timeline-list">
+            {points.map((point, index) => (
+              <li className={`timeline-item ${index === nextPointIndex ? "timeline-item-next" : ""}`} key={`${point.label}-${point.atNs}`}>
+                <span className={`timeline-marker timeline-marker-${point.source}`} aria-hidden="true" />
+                <div className="timeline-content">
+                  <div className="timeline-item-top">
+                    <strong>{point.label}</strong>
+                    <span className={`timeline-source timeline-source-${point.source}`}>{point.source === "recorded" ? "RECORDED" : "DERIVED"}</span>
+                  </div>
+                  <p>{point.detail}</p>
+                  <time>{formatDate(point.atNs)}{index === nextPointIndex ? " · UP NEXT" : ""}</time>
+                </div>
+              </li>
+            ))}
+          </ol>
+          {data.commitment.lifecycle === "Closed" && <p className="timeline-closed-note">The commitment is closed; no future health deadlines are active.</p>}
+          {data.commitment.effective_health === "Breached" && <p className="timeline-closed-note">The commitment is currently Breached; the timeline shows no future automatic health changes.</p>}
+          {!data.chainTimeNs && <p className="timeline-closed-note">Refresh the commitment to compare these milestones with a finalized block time.</p>}
+        </>
+      )}
+    </section>
+  );
 }
 
 function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: string; detail: string; icon: string }) {
