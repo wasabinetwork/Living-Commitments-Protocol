@@ -577,6 +577,8 @@ export function Dashboard() {
 
   const health = data?.commitment.effective_health;
   const claimAllowed = data?.eligibility?.eligible === true;
+  const failedTranche = data?.tranche?.status === "Failed";
+  const retryingFailedPayout = failedTranche && claimAllowed;
   const correctBeneficiary = Boolean(accountId && data?.policy && accountId === data.policy.budget.beneficiary);
   const canSubmitClaim = Boolean(data && claimAllowed && correctBeneficiary && !claiming);
 
@@ -871,7 +873,10 @@ export function Dashboard() {
                 <div className="claim-box">
                   <div className="claim-copy">
                     <span className={`eligibility-mark ${claimAllowed ? "is-eligible" : "is-blocked"}`}>{claimAllowed ? "✓" : "×"}</span>
-                    <div><strong>{claimAllowed ? "A tranche can be claimed" : "A tranche is blocked"}</strong><span>{data.eligibility?.reason ?? "The contract has no current claim."}</span></div>
+                    <div>
+                      <strong>{retryingFailedPayout ? "Previous payout failed; retry is available" : failedTranche ? "Previous payout failed; this epoch is currently blocked" : claimAllowed ? "A tranche can be claimed" : "A tranche is blocked"}</strong>
+                      <span>{retryingFailedPayout ? "The failed transfer was released back to escrow. Retry when the beneficiary account can receive funds." : data.eligibility?.reason ?? "The contract has no current claim."}</span>
+                    </div>
                   </div>
                   {data.eligibility?.eligible && (
                     <div className="claim-controls">
@@ -879,7 +884,7 @@ export function Dashboard() {
                       <div className="claim-form-row">
                         <input id="storage-deposit" inputMode="decimal" value={depositNear} onChange={(event) => setDepositNear(event.target.value)} aria-label="Storage deposit in NEAR" />
                         <button className="claim-button" onClick={() => void claimTranche()} disabled={!canSubmitClaim}>
-                          {claiming ? "Submitting…" : !accountId ? "Connect to claim" : !correctBeneficiary ? "Beneficiary wallet required" : "Claim tranche"}
+                          {claiming ? "Submitting…" : !accountId ? "Connect to claim" : !correctBeneficiary ? "Beneficiary wallet required" : retryingFailedPayout ? "Retry payout" : "Claim tranche"}
                           <span aria-hidden="true">↗</span>
                         </button>
                       </div>

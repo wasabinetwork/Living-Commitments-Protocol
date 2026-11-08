@@ -83,6 +83,7 @@ The contract now exposes a capped newest-first view, and the demo requests ten r
 - Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
 - Commitment `6` is `Closed`; its unused escrow was refunded after an OutLayer promise failure.
 - The deployed evaluator proof, malformed-output rejection under the initial callback, updated null-result classification, promise failure, request timeout, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, closure, successful refund callbacks, and bounded discovery pagination are validated.
+- Failed tranche callbacks clear pending escrow and mark the tranche `Failed`; contract eligibility permits a retry if the commitment is still healthy and the epoch remains active. The demo now labels that action `Retry payout`. The failed-transfer callback/retry path itself remains unverified on testnet.
 - Still open: failed NEAR transfer recovery, arbiter uphold/invalidate challenge paths, broader temporal boundaries, and the full wallet-driven demo run (including the new browser UI).
 - The bounded, newest-first commitment listing is deployed and pagination is verified through finalized RPC views. The demo browser is implemented, but its UI still needs manual validation against the deployed contract.
 
