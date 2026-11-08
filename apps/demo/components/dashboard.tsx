@@ -62,6 +62,7 @@ interface CommitmentData {
 }
 
 type DraftAction = "escrow" | "operations" | "activate";
+type ChallengeAction = "open" | "uphold" | "invalidate" | "expire";
 
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
@@ -78,6 +79,7 @@ export function Dashboard() {
   const [claiming, setClaiming] = useState(false);
   const [creating, setCreating] = useState(false);
   const [requestingEvaluation, setRequestingEvaluation] = useState(false);
+  const [challengeAction, setChallengeAction] = useState<ChallengeAction | null>(null);
   const [draftAction, setDraftAction] = useState<DraftAction | null>(null);
   const [escrowFundingNear, setEscrowFundingNear] = useState("0.03");
   const [operationsFundingNear, setOperationsFundingNear] = useState("0.01");
@@ -118,12 +120,15 @@ export function Dashboard() {
         return false;
       }
 
-      const [challenge, tranche] = await Promise.all([
+      const [activeChallenge, tranche] = await Promise.all([
         commitment.active_challenge_id
           ? client.getChallenge(commitment.active_challenge_id)
           : Promise.resolve(null),
         epoch ? client.getTranche(normalizedId, epoch) : Promise.resolve(null),
       ]);
+      const challenge = activeChallenge ?? (evaluation
+        ? await client.getChallengeForEvaluation(normalizedId, evaluation.evaluation_id)
+        : null);
       setData({ commitment, policy, evaluation, challenge, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
@@ -285,6 +290,92 @@ export function Dashboard() {
     }
   }
 
+  async function submitChallengeAction(action: ChallengeAction, reason = "", storageDeposit = "") {
+    if (!data?.policy) return;
+    const connector = connectorRef.current;
+    if (!connector || !accountId) {
+      setError("Connect the authorized commitment wallet before changing challenge state.");
+      return;
+    }
+    const { commitment, policy, evaluation, challenge } = data;
+    if (action === "open") {
+      if (accountId !== commitment.maintainer && accountId !== policy.budget.sponsor) {
+        setError(`Only ${commitment.maintainer} or ${policy.budget.sponsor} can challenge an evaluation.`);
+        return;
+      }
+      if (commitment.pending_evaluation_id || commitment.active_challenge_id || challenge) {
+        setError("Resolve the pending evaluation or existing challenge before opening another challenge.");
+        return;
+      }
+      if (!evaluation || evaluation.status !== "Accepted" || evaluation.verdict !== "Compliant" || !evaluation.accepted_at_ns) {
+        setError("Only the latest accepted compliant evaluation can be challenged.");
+        return;
+      }
+      if (!reason.trim() || new TextEncoder().encode(reason).length > 1024) {
+        setError("Challenge reason must be non-empty and no longer than 1024 UTF-8 bytes.");
+        return;
+      }
+    } else {
+      if (!challenge || challenge.status !== "Open") {
+        setError("There is no open challenge for this commitment.");
+        return;
+      }
+      if ((action === "uphold" || action === "invalidate") && accountId !== commitment.arbiter) {
+        setError(`Only ${commitment.arbiter} can resolve this challenge.`);
+        return;
+      }
+    }
+
+    setChallengeAction(action);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const nowNs = BigInt(await getFinalBlockTimestampNs(RPC_URL));
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      if (action === "open") {
+        const challengeDeadline = BigInt(evaluation!.accepted_at_ns!) + BigInt(policy.temporal.challenge_window_ns);
+        if (nowNs >= challengeDeadline) throw new Error("The evaluation challenge window has closed.");
+        const deposit = parseNearToYocto(storageDeposit);
+        if (BigInt(deposit) === 0n) throw new Error("Challenge storage deposit must be greater than zero.");
+        const challengeId = await client.challengeEvaluation(commitment.id, evaluation!.evaluation_id, reason, {
+          attachedDepositYocto: deposit,
+          gas: "140000000000000",
+        });
+        const loaded = await loadCommitment(commitment.id);
+        setActionMessage(loaded
+          ? `Challenge #${challengeId} opened for evaluation #${evaluation!.evaluation_id}.`
+          : `Challenge #${challengeId} opened. Reload commitment #${commitment.id} to verify its state.`);
+      } else if (action === "uphold" || action === "invalidate") {
+        if (nowNs >= BigInt(challenge!.resolution_deadline_ns)) {
+          throw new Error("The arbiter resolution deadline has passed; the challenge can now time out.");
+        }
+        await client.resolveChallenge(challenge!.id, action === "uphold");
+        const loaded = await loadCommitment(commitment.id);
+        setActionMessage(loaded
+          ? action === "uphold"
+            ? `Challenge #${challenge!.id} upheld; the evaluation remains accepted.`
+            : `Challenge #${challenge!.id} invalidated; its evidence no longer qualifies.`
+          : `Challenge #${challenge!.id} was resolved. Reload commitment #${commitment.id} to verify its state.`);
+      } else {
+        if (nowNs < BigInt(challenge!.resolution_deadline_ns)) {
+          throw new Error("The challenge resolution deadline has not passed yet.");
+        }
+        await client.expireChallenge(challenge!.id);
+        const loaded = await loadCommitment(commitment.id);
+        setActionMessage(loaded
+          ? `Challenge #${challenge!.id} timed out; its evidence no longer qualifies.`
+          : `Challenge #${challenge!.id} timed out. Reload commitment #${commitment.id} to verify its state.`);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The challenge action failed.");
+    } finally {
+      setChallengeAction(null);
+    }
+  }
+
   async function claimTranche() {
     if (!data) return;
     const connector = connectorRef.current;
@@ -435,6 +526,14 @@ export function Dashboard() {
                 onSubmit={submitEvaluation}
               />
             )}
+            {data.commitment.lifecycle === "Active" && data.policy && (
+              <ChallengeControlsCard
+                data={data}
+                accountId={accountId}
+                busyAction={challengeAction}
+                onAction={submitChallengeAction}
+              />
+            )}
             <section className={`health-panel health-${health?.toLowerCase() ?? "unknown"}`}>
               <div className="health-panel-top">
                 <div>
@@ -564,7 +663,6 @@ export function Dashboard() {
                 <div className="integrity-footer"><span className="integrity-dot" />POLICY ENFORCED ON NEAR</div>
               </section>
             </div>
-            {data.challenge && <div className="notice notice-warning" role="status">Challenge #{data.challenge.id} is {data.challenge.status.toLowerCase()} and is linked to evaluation #{data.challenge.evaluation_id}.</div>}
           </div>
         ) : (
           <section className="empty-state">
@@ -709,6 +807,73 @@ function EvidenceSubmissionCard({
         </form>
       )}
       {!payload && formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
+    </section>
+  );
+}
+
+function ChallengeControlsCard({
+  data,
+  accountId,
+  busyAction,
+  onAction,
+}: {
+  data: CommitmentData;
+  accountId: string | null;
+  busyAction: ChallengeAction | null;
+  onAction: (action: ChallengeAction, reason?: string, storageDeposit?: string) => Promise<void>;
+}) {
+  const { commitment, policy, evaluation, challenge } = data;
+  const [reason, setReason] = useState("");
+  const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
+  const canChallenge = Boolean(accountId && (accountId === commitment.maintainer || accountId === policy?.budget.sponsor));
+  const canResolve = accountId === commitment.arbiter;
+  const latestCompliant = Boolean(evaluation?.status === "Accepted" && evaluation.verdict === "Compliant" && evaluation.accepted_at_ns);
+
+  if (!challenge && !latestCompliant) return null;
+
+  async function handleOpen(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onAction("open", reason, storageDepositNear);
+  }
+
+  return (
+    <section className="content-card challenge-controls">
+      <div className="card-heading">
+        <div><p className="eyebrow">CHALLENGE · REVIEW &amp; RESOLVE</p><h3>Keep evidence accountable.</h3></div>
+        <span className="card-index">{challenge ? `#${challenge.id}` : "REVIEW"}</span>
+      </div>
+      {challenge?.status === "Open" ? (
+        <>
+          <p className="challenge-intro">Challenge #{challenge.id} contests evaluation #{challenge.evaluation_id}. The designated arbiter may resolve it before the deadline; anyone may expire it after the deadline.</p>
+          <div className="digest-row"><span>REASON HASH</span><code>{challenge.reason_hash}</code></div>
+          <div className="digest-row"><span>RESOLUTION DEADLINE · NS</span><code>{challenge.resolution_deadline_ns}</code></div>
+          {!canResolve && <p className="form-wallet-hint">Connect the arbiter wallet ({commitment.arbiter}) to resolve this challenge.</p>}
+          <div className="challenge-actions">
+            <button type="button" onClick={() => void onAction("uphold")} disabled={busyAction !== null || !canResolve}>{busyAction === "uphold" ? "Resolving…" : "Uphold evaluation"}</button>
+            <button type="button" onClick={() => void onAction("invalidate")} disabled={busyAction !== null || !canResolve}>{busyAction === "invalidate" ? "Resolving…" : "Invalidate evidence"}</button>
+            <button className="challenge-expire" type="button" onClick={() => void onAction("expire")} disabled={busyAction !== null}>{busyAction === "expire" ? "Expiring…" : "Expire after deadline"}</button>
+          </div>
+          <small className="challenge-help">Upholding leaves the accepted observation intact. Invalidating or timing out removes it from health calculations.</small>
+        </>
+      ) : challenge ? (
+        <>
+          <p className="challenge-intro">Evaluation #{challenge.evaluation_id} was already challenged. Its resolution is final and cannot be challenged again.</p>
+          <div className="challenge-history"><span className={`status-pill status-${challenge.status.toLowerCase()}`}>{challenge.status}</span><span>Challenge #{challenge.id} · {formatDate(challenge.opened_at_ns)}</span></div>
+          <div className="digest-row"><span>REASON HASH</span><code>{challenge.reason_hash}</code></div>
+        </>
+      ) : (
+        <>
+          <p className="challenge-intro">The latest accepted evaluation is compliant. An authorized maintainer or sponsor can open one challenge during its policy window; the reason is stored as a hash.</p>
+          {!canChallenge && <p className="form-wallet-hint">Connect the maintainer or sponsor wallet to challenge this evaluation.</p>}
+          <form className="challenge-open-form" onSubmit={(event) => void handleOpen(event)}>
+            <FormField label="Challenge reason · max 1024 UTF-8 bytes" wide><textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1024} rows={3} required placeholder="Describe the evidence concern; only its hash is stored on-chain." /></FormField>
+            <div className="challenge-submit-row">
+              <FormField label="Challenge storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /></FormField>
+              <button className="prepare-payload-button" type="submit" disabled={!canChallenge || busyAction !== null}>{busyAction === "open" ? "Opening challenge…" : "Open challenge"}</button>
+            </div>
+          </form>
+        </>
+      )}
     </section>
   );
 }

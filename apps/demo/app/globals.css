@@ -175,6 +175,20 @@ a { color: inherit; text-decoration: none; }
 .evidence-signing-form { margin-top: 15px; padding-top: 13px; border-top: 1px solid #e5e5dd; }
 .signing-payload { width: 100%; min-height: 105px; border: 1px solid #dbdcd3; border-radius: 2px; padding: 10px; background: #f8f8f3; color: #465548; line-height: 1.5; resize: vertical; }
 .copy-payload-button { margin-top: 7px; }
+.challenge-controls { margin-bottom: 13px; border-color: #ded8cb; background: #fffefa; }
+.challenge-intro { margin: -9px 0 14px; color: #737c71; font-size: 10px; line-height: 1.55; }
+.challenge-open-form { margin-top: 13px; }
+.form-field textarea { width: 100%; min-width: 0; border: 1px solid #dbdcd3; border-radius: 2px; padding: 9px 10px; outline: none; background: #fffefa; color: #283a2f; font: 10px var(--sans); line-height: 1.5; resize: vertical; }
+.form-field textarea:focus { border-color: #88a28a; }
+.challenge-submit-row { display: flex; align-items: end; gap: 12px; margin-top: 12px; }
+.challenge-submit-row .form-field { flex: 0 0 190px; }
+.challenge-submit-row button { min-width: 150px; }
+.challenge-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.challenge-actions button { min-height: 35px; border: 1px solid #cbd6c8; border-radius: 2px; padding: 0 12px; background: #f1f5ee; color: #47634a; font-size: 9px; font-weight: 600; }
+.challenge-actions button:disabled { opacity: .48; }
+.challenge-actions .challenge-expire { border-color: #e1d6c4; background: #f8f3e9; color: #795f39; }
+.challenge-help { display: block; margin-top: 10px; color: #858a80; font-size: 9px; line-height: 1.5; }
+.challenge-history { display: flex; align-items: center; gap: 10px; margin: 12px 0; color: #777e75; font-size: 10px; }
 .health-panel { padding: 25px 29px 23px; border: 1px solid #cad9c8; border-radius: 4px; background: var(--green-soft); }
 .health-panel.health-atrisk { border-color: #e0d1ad; background: #f6f0df; }
 .health-panel.health-awaitingevidence { border-color: #e0d1ad; background: #f6f0df; }
@@ -312,6 +326,9 @@ a { color: inherit; text-decoration: none; }
   .creation-summary > small { margin-left: 0; }
   .creation-submit-row { align-items: stretch; flex-direction: column; gap: 12px; }
   .creation-submit-row .lookup-button { width: 100%; }
+  .challenge-submit-row { align-items: stretch; flex-direction: column; }
+  .challenge-submit-row .form-field { flex-basis: auto; }
+  .challenge-submit-row button { width: 100%; }
   .health-panel { padding: 19px 17px; }
   .health-title-row h3 { font-size: 28px; }
   .health-copy { font-size: 11px; }

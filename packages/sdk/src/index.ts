@@ -298,6 +298,13 @@ export class LcpClient {
     return this.transport.view<ChallengeView | null>(this.contractId, "get_challenge", { challenge_id: challengeId });
   }
 
+  getChallengeForEvaluation(commitmentId: CommitmentId, evaluationId: EvaluationId): Promise<ChallengeView | null> {
+    return this.transport.view<ChallengeView | null>(this.contractId, "get_challenge_for_evaluation", {
+      commitment_id: commitmentId,
+      evaluation_id: evaluationId,
+    });
+  }
+
   getCurrentEpoch(id: CommitmentId): Promise<DecimalString | null> {
     return this.transport.view<DecimalString | null>(this.contractId, "get_current_epoch", { commitment_id: id });
   }

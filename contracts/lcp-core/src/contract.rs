@@ -906,6 +906,17 @@ impl Contract {
             .map(ChallengeView::from)
     }
 
+    pub fn get_challenge_for_evaluation(
+        &self,
+        commitment_id: U64,
+        evaluation_id: U64,
+    ) -> Option<ChallengeView> {
+        let challenge_id = self
+            .challenge_by_evaluation
+            .get(&(commitment_id.0, evaluation_id.0))?;
+        self.challenges.get(&challenge_id).map(ChallengeView::from)
+    }
+
     #[payable]
     pub fn claim_tranche(&mut self, commitment_id: U64) -> U64 {
         let caller = env::predecessor_account_id();
