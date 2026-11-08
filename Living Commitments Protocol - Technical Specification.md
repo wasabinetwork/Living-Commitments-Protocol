@@ -420,6 +420,8 @@ pub struct EvaluationRequest {
 pub struct EvaluationRecord {
     pub request_id: EvaluationId,
     pub commitment_id: CommitmentId,
+    /// Originating NEAR transaction hash, used to locate OutLayer's on-chain execution proof.
+    pub request_transaction_hash: [u8; 32],
     pub status: EvaluationStatus,
     pub verdict: Option<Verdict>,
     pub reason_codes: Vec<String>,
@@ -881,9 +883,9 @@ OutLayer's execution produces a TEE attestation that can be inspected independen
 
 The protocol's on-chain acceptance relies on the documented OutLayer contract and execution path; LCP does not independently verify a complete Intel TDX quote in v0.1.
 
-The SDK and demo must provide a link from an evaluation to its associated OutLayer execution.
+Each evaluation stores the originating NEAR transaction hash. The SDK exposes it as lowercase hex, and the demo renders a NEAR Explorer link plus `outlayer-verify tx <base58-hash> --network <network>`.
 
-The exact mapping from LCP request to OutLayer execution ID or transaction must be established during integration testing.
+OutLayer documents transaction-hash lookup for on-chain executions and recovery of request and response data from NEAR. Live integration must still confirm that this LCP promise chain resolves to the expected job and attestation.
 
 An optional indexer may store that mapping, but it must not become the authority for health or settlement.
 
@@ -1342,7 +1344,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. `packages/sdk` provides typed calls and views, canonical heartbeat payload construction, challenge lookup, event parsing, and NEAR JSON-RPC reads with an injected transaction sender. `apps/demo` provides testnet commitment creation, draft escrow and operations funding, activation, commitment-by-ID reads, externally signed evaluation requests, permissionless expiry of timed-out requests, challenge opening and arbiter resolution, up to ten recent on-chain evaluation records, eligible beneficiary tranche claims, commitment closure, and sponsor refunds of residual escrow. Broader historical indexing and the OutLayer execution link remain open. The demo lifecycle and evaluator callback still need live testnet execution; confirm evaluator hashes, response bytes, gas, and attestation mapping before describing that path as operational.
+**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. `packages/sdk` provides typed calls and views, canonical heartbeat payload construction, challenge lookup, event parsing, and NEAR JSON-RPC reads with an injected transaction sender. `apps/demo` provides testnet commitment creation, draft escrow and operations funding, activation, commitment-by-ID reads, externally signed evaluation requests, permissionless expiry of timed-out requests, challenge opening and arbiter resolution, up to ten recent on-chain evaluation records with NEAR transaction links and OutLayer verifier commands, eligible beneficiary tranche claims, commitment closure, and sponsor refunds of residual escrow. Broader historical indexing remains open. The demo lifecycle and evaluator callback still need live testnet execution; confirm evaluator hashes, response bytes, gas, fees, and transaction-to-attestation resolution before describing that path as operational.
 
 ## Milestone A — Pure engine
 
@@ -1457,7 +1459,7 @@ Confirm the exact NEAR return bytes for OutLayer `response_format: Json`.
 
 **OUT-002 — Execution identity**
 
-Confirm how an LCP evaluation request maps to an OutLayer execution ID and independently verifiable attestation.
+Confirm that the request transaction hash stored by LCP resolves to the expected OutLayer execution and independently verifiable attestation.
 
 **OUT-003 — Execution fee behavior**
 

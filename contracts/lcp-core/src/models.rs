@@ -224,6 +224,7 @@ pub struct EvaluationRequest {
 pub struct EvaluationRecord {
     pub request_id: EvaluationId,
     pub commitment_id: CommitmentId,
+    pub request_transaction_hash: [u8; 32],
     pub status: EvaluationStatus,
     pub verdict: Option<Verdict>,
     pub reason_codes: Vec<String>,
@@ -296,6 +297,7 @@ pub struct EvaluationVerdictOutput {
 pub struct EvaluationRecordView {
     pub commitment_id: U64,
     pub evaluation_id: U64,
+    pub request_transaction_hash: String,
     pub status: EvaluationStatus,
     pub verdict: Option<Verdict>,
     pub reason_codes: Vec<String>,
@@ -313,6 +315,7 @@ impl From<&EvaluationRecord> for EvaluationRecordView {
         Self {
             commitment_id: U64(record.commitment_id),
             evaluation_id: U64(record.request_id),
+            request_transaction_hash: encode_hex(&record.request_transaction_hash),
             status: record.status,
             verdict: if is_pending { None } else { record.verdict },
             reason_codes: if is_pending {

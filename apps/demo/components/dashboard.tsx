@@ -68,6 +68,7 @@ type ChallengeAction = "open" | "uphold" | "invalidate" | "expire";
 type ClosureAction = "close" | "refund";
 
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
+const NEAR_NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK_ID?.trim() === "mainnet" ? "mainnet" : "testnet";
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
 const EVALUATION_HISTORY_LIMIT = 10;
@@ -752,7 +753,7 @@ export function Dashboard() {
                     <div className="digest-row"><span>EVIDENCE HASH</span><code>{data.evaluation.evidence_hash}</code></div>
                     <div className="digest-row"><span>INPUT HASH</span><code>{data.evaluation.input_hash}</code></div>
                     {data.evaluation.output_hash && <div className="digest-row"><span>OUTPUT HASH</span><code>{data.evaluation.output_hash}</code></div>}
-                    <div className="attestation-note"><span>↗</span><p>OutLayer execution reference is not included in the current on-chain evaluation view.</p></div>
+                    <EvaluationProofReference transactionHashHex={data.evaluation.request_transaction_hash} />
                     {data.evaluationHistory.filter((record) => record.evaluation_id !== data.evaluation?.evaluation_id).length > 0 && (
                       <div className="evaluation-history">
                         <p className="eyebrow">PREVIOUS EVALUATIONS · RECENT 9</p>
@@ -764,6 +765,7 @@ export function Dashboard() {
                                 <span className={`status-pill status-${record.status.toLowerCase()}`}>{record.status}</span>
                                 <strong>#{record.evaluation_id} · {record.verdict ?? "Pending"}</strong>
                                 <time>{formatDate(record.accepted_at_ns ?? record.observed_at_ns)}</time>
+                                <EvaluationProofReference transactionHashHex={record.request_transaction_hash} />
                               </li>
                             ))}
                         </ol>
@@ -1529,6 +1531,44 @@ function formatDate(nanoseconds: string): string {
     minute: "2-digit",
     timeZoneName: "short",
   });
+}
+
+function EvaluationProofReference({ transactionHashHex }: { transactionHashHex: string }) {
+  const transactionHash = transactionHashToBase58(transactionHashHex);
+  if (!transactionHash) return null;
+
+  return (
+    <div className="evaluation-proof">
+      <div className="evaluation-proof-links">
+        <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${transactionHash}`} target="_blank" rel="noreferrer">
+          NEAR transaction ↗
+        </a>
+        <a href="https://app.outlayer.ai/docs/trust-verification" target="_blank" rel="noreferrer">
+          OutLayer verification guide ↗
+        </a>
+      </div>
+      <code>outlayer-verify tx {transactionHash} --network {NEAR_NETWORK_ID}</code>
+    </div>
+  );
+}
+
+function transactionHashToBase58(hashHex: string): string | null {
+  if (!/^(?:[0-9a-f]{2}){32}$/i.test(hashHex)) return null;
+
+  let leadingZeroBytes = 0;
+  while (hashHex.slice(leadingZeroBytes * 2, leadingZeroBytes * 2 + 2) === "00") {
+    leadingZeroBytes += 1;
+  }
+
+  let value = BigInt(`0x${hashHex.slice(leadingZeroBytes * 2) || "0"}`);
+  let encoded = "";
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  while (value > 0n) {
+    const digit = Number(value % 58n);
+    encoded = alphabet[digit] + encoded;
+    value /= 58n;
+  }
+  return `${"1".repeat(leadingZeroBytes)}${encoded}`;
 }
 
 function healthLabel(health?: string): string {

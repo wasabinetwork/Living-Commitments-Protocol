@@ -383,6 +383,7 @@ impl Contract {
         let timeout_at_ns = requested_at_ns
             .checked_add(commitment.policy.evaluator.request_timeout_ns)
             .unwrap_or_else(|| env::panic_str("evaluation timeout timestamp overflow"));
+        let request_transaction_hash = env::transaction_hash();
 
         let request = EvaluationRequest {
             id: evaluation_id,
@@ -400,6 +401,7 @@ impl Contract {
         let record = EvaluationRecord {
             request_id: evaluation_id,
             commitment_id: commitment_id.0,
+            request_transaction_hash,
             status: EvaluationStatus::Pending,
             verdict: Some(Verdict::NonCompliant),
             reason_codes: vec!["X".repeat(MAX_REASON_CODE_BYTES); MAX_REASON_CODES],
@@ -512,6 +514,7 @@ impl Contract {
             json!({
                 "commitment_id": commitment_id.0.to_string(),
                 "evaluation_id": evaluation_id.to_string(),
+                "request_transaction_hash": encode_hex(&request_transaction_hash),
                 "requested_at_ns": requested_at_ns.to_string(),
                 "timeout_at_ns": timeout_at_ns.to_string(),
                 "input_hash": encode_hex(&input_hash),

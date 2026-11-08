@@ -127,6 +127,7 @@ export interface CommitmentPolicyView {
 export interface EvaluationRecordView {
   commitment_id: CommitmentId;
   evaluation_id: EvaluationId;
+  request_transaction_hash: Sha256Hex;
   status: EvaluationStatus;
   verdict: Verdict | null;
   reason_codes: string[];
