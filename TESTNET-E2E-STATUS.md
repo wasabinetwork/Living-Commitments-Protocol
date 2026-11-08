@@ -1,7 +1,7 @@
 # NEAR Testnet E2E Status
 
 **Last verified:** 2026-11-08  
-**Source revision:** working-tree build based on `5ce2277`, including Task 011 bounded discovery
+**Source revision:** `b8e493d`
 **Network:** NEAR testnet
 
 ## Deployment
