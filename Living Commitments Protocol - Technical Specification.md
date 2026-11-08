@@ -1348,7 +1348,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. `packages/sdk` provides typed calls and views, canonical heartbeat payload construction, challenge lookup, event parsing, and NEAR JSON-RPC reads with an injected transaction sender. `apps/demo` provides testnet commitment creation, draft escrow and operations funding, activation, commitment-by-ID reads, externally signed evaluation requests, permissionless expiry of timed-out requests, challenge opening and arbiter resolution, up to ten recent on-chain evaluation records with NEAR transaction links and OutLayer verifier commands, eligible beneficiary tranche claims, commitment closure, and sponsor refunds of residual escrow. Broader historical indexing remains open. The demo lifecycle and evaluator callback still need live testnet execution; confirm evaluator hashes, response bytes, gas, fees, and transaction-to-attestation resolution before describing that path as operational.
+**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. `packages/sdk` provides typed calls and views, canonical heartbeat payload construction, challenge lookup, event parsing, and NEAR JSON-RPC reads with an injected transaction sender. `apps/demo` provides testnet commitment creation, draft escrow and operations funding, activation, commitment-by-ID reads, externally signed evaluation requests, permissionless expiry of timed-out requests, challenge opening and arbiter resolution, up to ten recent on-chain evaluation records with NEAR transaction links and OutLayer verifier commands, eligible beneficiary tranche claims, commitment closure, and sponsor refunds of residual escrow. Testnet evidence now confirms an OutLayer verdict independently verified as `PROVEN`, rejection of a breached claim, healthy recovery, payout to a distinct beneficiary with successful callback accounting, challenge timeout with evidence invalidation, and commitment closure with sponsor refund reconciliation. See `TESTNET-E2E-STATUS.md` for transaction evidence. Historical discovery, OutLayer execution timeout/failure behavior, failed transfer recovery, arbiter resolution, and the complete wallet-driven demo remain to be validated.
 
 ## Milestone A — Pure engine
 
@@ -1388,7 +1388,7 @@ Implement:
 
 ## Milestone D — Consequences
 
-Initial source implementation covers epoch calculation, health-gated claims, escrow accounting, transfer callbacks, and residual escrow refunds after closure. Live testnet behavior is not yet verified.
+Initial source implementation covers epoch calculation, health-gated claims, escrow accounting, transfer callbacks, and residual escrow refunds after closure. Testnet confirms a breached claim is rejected, a healthy tranche pays a distinct beneficiary and reconciles, and an unused escrow refund reconciles after closure. Failed-transfer recovery and broader accounting cases remain open.
 
 Implement:
 
@@ -1402,7 +1402,7 @@ Implement:
 
 ## Milestone E — Recovery and challenge
 
-Initial source implementation covers positive-evidence recovery, challenge opening/resolution, arbiter timeout, and invalidation of challenged evidence. Live testnet behavior is not yet verified.
+Initial source implementation covers positive-evidence recovery, challenge opening/resolution, arbiter timeout, and invalidation of challenged evidence. Testnet confirms recovery from `Breached` to `Healthy` and timeout of an open challenge invalidating its evidence. Arbiter uphold/invalidate outcomes and additional health boundaries remain unverified.
 
 Implement:
 
@@ -1457,21 +1457,21 @@ Before deployment, verify:
 
 These are the remaining implementation-level unknowns, not unresolved product strategy.
 
-**OUT-001 — Callback encoding**
+**OUT-001 — Callback encoding — RESOLVED (2026-11-08)**
 
-Confirm the exact NEAR return bytes for OutLayer `response_format: Json`.
+The live testnet callback decoded and accepted the `response_format: Json` verdict.
 
-**OUT-002 — Execution identity**
+**OUT-002 — Execution identity — RESOLVED (2026-11-08)**
 
-Confirm that the request transaction hash stored by LCP resolves to the expected OutLayer execution and independently verifiable attestation.
+The callback stored the originating request transaction hash. `outlayer-verify tx` recovered that transaction's request and response and reported `PROVEN`; see `TESTNET-E2E-STATUS.md`.
 
 **OUT-003 — Execution fee behavior**
 
-Confirm deposit, refund, and failure behavior with a real testnet request.
+One configured request completed. Reconcile evaluator spend, request-time storage bonds, refunds, and failure behavior across a full lifecycle.
 
 **OUT-004 — Promise gas**
 
-Measure required gas for OutLayer execution and LCP callback processing.
+The configured request and callback gas completed one request. Measure headroom and minimum safe gas under varied evaluator results.
 
 **OUT-005 — Timeout behavior**
 
@@ -1479,15 +1479,15 @@ Confirm how failed or timed-out OutLayer executions are represented in the callb
 
 **NEAR-001 — Storage reserve**
 
-Measure storage costs for commitment creation and evaluation history.
+Initial deployment, commitment, and evaluation storage were measured on testnet; the refund request's storage bond and excess-deposit refund also completed. Reconcile storage bonds across history growth and additional callbacks.
 
 **NEAR-002 — Transfer accounting**
 
-Validate contract balances during asynchronous transfers and callbacks.
+Successful beneficiary payment and sponsor refund both reconciled through asynchronous callbacks on testnet. Validate failed-transfer recovery and balance/accounting invariants under retries.
 
-**NEAR-003 — Final SDK compatibility**
+**NEAR-003 — Final SDK compatibility — RESOLVED (2026-11-08)**
 
-Pin NEAR SDK, Rust toolchain, WASI target, and dependency lockfiles.
+NEAR SDK, Rust toolchain, WASI target, and dependency lockfiles are pinned; the deployed contract and evaluator executed successfully on testnet.
 
 No production-readiness claim may be made until these checks pass.
 
@@ -1495,45 +1495,21 @@ No production-readiness claim may be made until these checks pass.
 
 # 17. Immediate Engineering Tasks
 
-**Task 001 — Initialize repository**
+**Task 009 — Validate the financial consequence on testnet — CORE PATH VERIFIED**
 
-Create the Rust workspace, evaluator package, TypeScript workspace, and CI.
+The breached-claim rejection and healthy distinct-beneficiary payout/callback both succeeded. Closure and sponsor refund of unused escrow also reconciled; failed-transfer recovery remains under NEAR-002. Receipts are in `TESTNET-E2E-STATUS.md`.
 
-**Task 002 — Implement canonical models**
+**Task 010 — Complete breach and recovery validation — CORE PATH VERIFIED**
 
-Add enums, policy structs, commitment storage, and view types.
+Evidence expiry, breached-claim rejection, fresh-evidence recovery, and challenge timeout/invalidation were exercised. Validate remaining health boundaries and arbiter resolution; note that challenge timeout invalidated the latest evidence and left commitment 1 `AtRisk` before closure/refund.
 
-**Task 003 — Implement pure temporal engine**
+**Task 011 — Improve commitment discovery**
 
-Add `effective_health` and all boundary tests.
+Replace commitment-by-ID-only navigation with bounded, paginated discovery while preserving low-cost public views.
 
-**Task 004 — Implement policy validation**
+**Task 012 — Finish the public demo journey**
 
-Reject invalid durations, impossible challenge windows, overflow, unsupported evaluator configurations, and invalid budget parameters.
-
-**Task 005 — Implement commitment lifecycle**
-
-Create, fund, activate, and inspect commitments.
-
-**Task 006 — Build evaluator**
-
-Compile and test the signed-heartbeat WASM.
-
-**Task 007 — Prove OutLayer integration**
-
-Execute the WASM through `outlayer.testnet` and inspect the returned bytes and attestation.
-
-**Task 008 — Bind evaluation to commitment**
-
-Persist request, validate callback, and update evidence state.
-
-**Task 009 — Implement budget consequence**
-
-Fund, claim, transfer, reconcile, and refund.
-
-**Task 010 — Complete breach/recovery demo**
-
-Show the complete temporal lifecycle with real transactions.
+Validate wallet-driven creation, signing, evidence submission, health history, claim/refund flows, and submission materials without CLI-only steps.
 
 ---
 
