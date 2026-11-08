@@ -74,7 +74,7 @@ Commitment `6` used a valid evaluator artifact with an execution deposit of one 
 
 ### Bounded commitment discovery
 
-The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. In Brave, the recent list rendered against the deployed contract and selecting a row loaded its detail panel. The 21-record RPC pagination was verified, but the visible older-page button still needs a browser check.
+The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. In Brave, the recent list rendered against the deployed contract and selecting a row loaded its detail panel. The user confirmed the older-page control works with all 21 records and that the browser wallet connector connects successfully. The demo header now has an explicit disconnect action; confirm it in the browser while exercising the remaining transaction flows.
 
 ### Playground payout, closure, and refund
 
@@ -113,14 +113,14 @@ The contract models an initial evidence deadline as `activated_at_ns + initial_w
 - Playground commitment `8` accepted compliant evaluation `1`; challenge `2` was upheld, preserving `Healthy` evidence. Claims were held during the configured post-evaluation challenge window. [Evaluation request](https://testnet.nearblocks.io/txns/5or7nERU8uk2qKobG2WxaxCWyP7tesqVnuz7wACZSLYe) · [Upheld resolution](https://testnet.nearblocks.io/txns/Cb9URBfVDVqUJH5qJgJzzUWGEuNP9kLA7RhsG4YoTewC).
 - Playground commitment `9` accepted evaluation `1`, then challenge `3` invalidated that evidence and put it `AtRisk`. A fresh compliant evaluation `2` restored `Healthy` and cleared the negative period. [Invalidation resolution](https://testnet.nearblocks.io/txns/HAyVNDmVXjww68nzVQdAammtoqLmZXnmaZLopt4e87WC) · [Recovery evaluation](https://testnet.nearblocks.io/txns/8p47a9eqNUicY99hT1VuqUxdYKqnjMuSMY6KXNYQR2TL).
 - Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, claim eligibility, recovery, and exact initial-window, evidence-expiry, grace, challenge-window, and timeout boundaries. Live failed-transfer recovery and natural testnet temporal transitions remain open.
-- Still open: a safe live failed NEAR transfer fixture, natural expiry/grace observations on the new cohort, the older-page control in the browser, and the browser wallet UI journey. The signer-driven on-chain payout, close, and refund path is verified on commitment `19`. In Brave, the recent list and selection of commitment `2` were verified before the cohort was added.
-- Testnet RPC pagination now returns IDs `21`–`12`, then `11`–`2`, then `1`, confirming the exclusive cursor and enough records for the older page. The browser relay disconnected during post-cohort UI verification, so the visible older-page control remains unverified.
+- Still open: a safe live failed NEAR transfer fixture, natural expiry/grace observations on the new cohort, and the remaining browser wallet UI journey. The signer-driven on-chain payout, close, and refund path is verified on commitment `19`. In Brave, the recent list and selection of commitment `2` were verified before the cohort was added.
+- Testnet RPC pagination returns IDs `21`–`12`, then `11`–`2`, then `1`, confirming the exclusive cursor. The user subsequently confirmed the browser older-page control works with all 21 records and the wallet connector connects.
 
 Recommended next sequence:
 
 1. Find a safe deterministic live failed-transfer fixture; keep the mock-runtime retry test as the verified fallback.
 2. Observe natural temporal transitions as the playground deadlines pass.
-3. Reconnect the browser, exercise the older-page control, then complete the wallet-driven journey.
+3. Confirm wallet disconnection in the browser, then continue through create, funding, activation, evidence, payout/retry, closure, and refund.
 
 ## Local Configuration and Verifier Note
 

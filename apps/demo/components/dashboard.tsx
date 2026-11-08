@@ -48,6 +48,7 @@ interface NearConnectorPort {
   on(event: "wallet:signIn", handler: (event: ConnectorAccountEvent) => void): unknown;
   on(event: "wallet:signOut", handler: () => void): unknown;
   connect(): Promise<unknown>;
+  disconnect(): Promise<void>;
   wallet(): Promise<NearWalletPort>;
 }
 
@@ -88,6 +89,7 @@ export function Dashboard() {
   const [depositNear, setDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [creating, setCreating] = useState(false);
   const [requestingEvaluation, setRequestingEvaluation] = useState(false);
@@ -208,6 +210,24 @@ export function Dashboard() {
       setError(cause instanceof Error ? cause.message : "Wallet connection was not completed.");
     } finally {
       setConnecting(false);
+    }
+  }
+
+  async function disconnectWallet() {
+    const connector = connectorRef.current;
+    if (!connector || !accountId) return;
+
+    setDisconnecting(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      await connector.disconnect();
+      setAccountId(null);
+      setActionMessage("Wallet disconnected.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Wallet disconnection was not completed.");
+    } finally {
+      setDisconnecting(false);
     }
   }
 
@@ -591,10 +611,26 @@ export function Dashboard() {
         </a>
         <div className="topbar-right">
           <span className="network-chip"><span className="network-dot" />NEAR TESTNET</span>
-          <button className={`wallet-button ${accountId ? "wallet-button-connected" : ""}`} onClick={connectWallet} disabled={connecting || Boolean(accountId)}>
-            <span className="wallet-icon" aria-hidden="true">◈</span>
-            {connecting ? "Connecting…" : accountId ? shortenAccount(accountId) : "Connect wallet"}
-          </button>
+          {accountId ? (
+            <>
+              <span className="wallet-account" title={accountId} aria-label={`Connected wallet ${accountId}`}>
+                {shortenAccount(accountId)}
+              </span>
+              <button
+                className="wallet-button wallet-disconnect-button"
+                type="button"
+                onClick={() => void disconnectWallet()}
+                disabled={disconnecting}
+              >
+                {disconnecting ? "Disconnecting…" : "Disconnect"}
+              </button>
+            </>
+          ) : (
+            <button className="wallet-button" type="button" onClick={() => void connectWallet()} disabled={connecting}>
+              <span className="wallet-icon" aria-hidden="true">◈</span>
+              {connecting ? "Connecting…" : "Connect wallet"}
+            </button>
+          )}
         </div>
       </header>
 
