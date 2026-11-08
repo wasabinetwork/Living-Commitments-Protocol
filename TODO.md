@@ -4,7 +4,7 @@
 
 - [ ] **Live failed tranche recovery:** find a safe deterministic testnet fixture for a failed transfer; the local mock-runtime test already confirms the failure callback accounting and exactly-once retry behavior.
 - [ ] **Live temporal boundaries:** observe expiry, grace, and recovery on the new short-horizon testnet commitments; exact local timestamp boundaries are covered.
-- [ ] **Wallet journey:** verify the older-page control with 21 records, then complete create, fund, activate, evidence, claim/retry, close, and refund flows.
+- [ ] **Demo wallet journey:** verify the older-page control with 21 records, then exercise create, fund, activate, evidence, claim/retry, close, and refund through the browser wallet UI.
 
 ## Complete
 
@@ -13,6 +13,7 @@
 - [x] Cover exact local boundaries for initial evidence, evidence expiry, grace, recovery, claim eligibility, and challenge timeout.
 - [x] Create and activate 15 funded testnet playground commitments with varied policies and initial evidence deadlines staggered across the five-day horizon.
 - [x] Validate live upheld, invalidated, and recovery outcomes on playground commitments `8` and `9`.
+- [x] Complete an on-chain payout and close/refund journey on playground commitment `19` using the testnet signer: pay one tranche, close, and refund the remaining escrow.
 - [x] Confirm testnet pagination pages as IDs `21–12`, `11–2`, and `1`.
 - [x] Deploy bounded newest-first commitment discovery; confirm exclusive cursor pagination through testnet RPC.
 - [x] Verify the recent-commitment list renders in Brave against the deployed testnet contract.

@@ -44,7 +44,9 @@ Commitment `2` used beneficiary `payee-85d2a7.livingcommitmentsprotocol.testnet`
 
 ### Challenge timeout and evidence invalidation
 
-Commitment `1` evaluation `3` was accepted/compliant: [C5mfYMeApbCu2ENZgyCCnNmEB5c45jUTxV47yh6orFoF](https://testnet.nearblocks.io/txns/C5mfYMeApbCu2ENZgyCCnNmEB5c45jUTxV47yh6orFoF). Challenge `1` was opened in [A8nRCan3NJkSY7pYMq9c5CiRDs8oRVZEruRmXWBGwvZU](https://testnet.nearblocks.io/txns/A8nRCan3NJkSY7pYMq9c5CiRDs8oRVZEruRmXWBGwvZU) and then permissionlessly expired after its resolution deadline: [5amhA2gzcNYJBvxUQK3nSZrnFNLPwoond5qDd3zbgn1m](https://testnet.nearblocks.io/txns/5amhA2gzcNYJBvxUQK3nSZrnFNLPwoond5qDd3zbgn1m). The resulting challenge status was `TimedOut`, the active challenge pointer was cleared, `last_good_evaluation_id` became null, and effective health was `AtRisk`. Arbiter uphold/invalidate outcomes remain untested.
+Commitment `1` evaluation `3` was accepted/compliant: [C5mfYMeApbCu2ENZgyCCnNmEB5c45jUTxV47yh6orFoF](https://testnet.nearblocks.io/txns/C5mfYMeApbCu2ENZgyCCnNmEB5c45jUTxV47yh6orFoF). Challenge `1` was opened in [A8nRCan3NJkSY7pYMq9c5CiRDs8oRVZEruRmXWBGwvZU](https://testnet.nearblocks.io/txns/A8nRCan3NJkSY7pYMq9c5CiRDs8oRVZEruRmXWBGwvZU) and then permissionlessly expired after its resolution deadline: [5amhA2gzcNYJBvxUQK3nSZrnFNLPwoond5qDd3zbgn1m](https://testnet.nearblocks.io/txns/5amhA2gzcNYJBvxUQK3nSZrnFNLPwoond5qDd3zbgn1m). The resulting challenge status was `TimedOut`, the active challenge pointer was cleared, `last_good_evaluation_id` became null, and effective health was `AtRisk`.
+
+Live arbiter outcomes were later verified on playground commitments `8` and `9`: challenge `2` on `8` was upheld, preserving `Healthy` evidence ([resolution](https://testnet.nearblocks.io/txns/Cb9URBfVDVqUJH5qJgJzzUWGEuNP9kLA7RhsG4YoTewC)); challenge `3` on `9` was invalidated, clearing last-good evidence and moving the commitment to `AtRisk` ([resolution](https://testnet.nearblocks.io/txns/HAyVNDmVXjww68nzVQdAammtoqLmZXnmaZLopt4e87WC)). A fresh compliant evaluation restored `Healthy` on `9` ([recovery evaluation](https://testnet.nearblocks.io/txns/8p47a9eqNUicY99hT1VuqUxdYKqnjMuSMY6KXNYQR2TL).
 
 ### Closure and escrow refund
 
@@ -72,7 +74,11 @@ Commitment `6` used a valid evaluator artifact with an execution deposit of one 
 
 ### Bounded commitment discovery
 
-The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. In Brave, the recent list rendered against the deployed contract; selecting a row and wallet-driven actions still need manual validation.
+The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. In Brave, the recent list rendered against the deployed contract and selecting a row loaded its detail panel. The 21-record RPC pagination was verified, but the visible older-page button still needs a browser check.
+
+### Playground payout, closure, and refund
+
+Commitment `19` was topped up with `0.002 NEAR` surplus ([top-up](https://testnet.nearblocks.io/txns/5cQn2n6N9a7eHg6kJdYaCXj7Jiat1VdY778BNvoLo4Vs)), then evaluation `1` was accepted/compliant ([evaluation request](https://testnet.nearblocks.io/txns/4wKuNoznN3xjJJmXWjZox38CWVSCMniinewwyR21ZuGG)). Once its five-minute challenge window elapsed, the beneficiary claimed the `0.001 NEAR` tranche ([claim](https://testnet.nearblocks.io/txns/GuqCpRMHJ1XpQA6CTCEbNqQ1N7kk3U5HRjRREaLYFyeY)); the tranche view reported `Paid`. The sponsor closed the commitment ([close](https://testnet.nearblocks.io/txns/Gk3uN4kwqffLwCwyiXZ5CBaXgtVt2qgMJ2NwSE5GRDc1)) and received the remaining `0.002 NEAR` escrow ([refund](https://testnet.nearblocks.io/txns/65bFzqkKXuQdYW1STcaNkXzpWM6foKSH5HpWECHHnzV5)). Final state: `Closed`, `funded=0.003 NEAR`, `paid=0.001 NEAR`, `refunded=0.002 NEAR`, `pending=0`, `free=0`.
 
 ## Current Testnet State and Remaining Work
 
@@ -82,7 +88,7 @@ The contract now exposes a capped newest-first view, and the demo requests ten r
 - Commitment `4` is `Closed`; its unused escrow was refunded after its evaluation timed out.
 - Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
 - Commitment `6` is `Closed`; its unused escrow was refunded after an OutLayer promise failure.
-- Commitments `7`–`21` are a 15-record playground cohort. All are `Active`, funded for one to three tranches, and initially received one evaluator run budget. Commitment `9` received an additional run for recovery. Initial evidence deadlines are staggered from six hours to five days after activation; evidence TTL, grace, challenge windows, resolution timeouts, recovery policy, and epoch counts vary. Subjects identify their intended scenarios.
+- Commitments `7`–`21` are a 15-record playground cohort, funded for one to three tranches and initially provisioned with one evaluator run each. Commitment `9` received an additional run for recovery. Commitment `19` is now `Closed` after the payout/refund journey; the others remain available for scenarios. Initial evidence deadlines were staggered from six hours to five days after activation; evidence TTL, grace, challenge windows, resolution timeouts, recovery policy, and epoch counts vary. Subjects identify their intended scenarios.
 
 The contract models an initial evidence deadline as `activated_at_ns + initial_window_ns`; it has no separate absolute-expiry field. These are the derived deadlines for the playground cohort:
 
@@ -104,10 +110,10 @@ The contract models an initial evidence deadline as `activated_at_ns + initial_w
 | 20 | Extended resolution window | Nov 9, 10:21 |
 | 21 | Short initial evidence window | Nov 9, 04:21 |
 
-- Playground commitment `8` accepted compliant evaluation `1`; challenge `2` was upheld. It remains `Healthy`, with claims correctly held until its post-evaluation challenge window ends. [Evaluation request](https://testnet.nearblocks.io/txns/5or7nERU8uk2qKobG2WxaxCWyP7tesqVnuz7wACZSLYe) · [Upheld resolution](https://testnet.nearblocks.io/txns/Cb9URBfVDVqUJH5qJgJzzUWGEuNP9kLA7RhsG4YoTewC).
+- Playground commitment `8` accepted compliant evaluation `1`; challenge `2` was upheld, preserving `Healthy` evidence. Claims were held during the configured post-evaluation challenge window. [Evaluation request](https://testnet.nearblocks.io/txns/5or7nERU8uk2qKobG2WxaxCWyP7tesqVnuz7wACZSLYe) · [Upheld resolution](https://testnet.nearblocks.io/txns/Cb9URBfVDVqUJH5qJgJzzUWGEuNP9kLA7RhsG4YoTewC).
 - Playground commitment `9` accepted evaluation `1`, then challenge `3` invalidated that evidence and put it `AtRisk`. A fresh compliant evaluation `2` restored `Healthy` and cleared the negative period. [Invalidation resolution](https://testnet.nearblocks.io/txns/HAyVNDmVXjww68nzVQdAammtoqLmZXnmaZLopt4e87WC) · [Recovery evaluation](https://testnet.nearblocks.io/txns/8p47a9eqNUicY99hT1VuqUxdYKqnjMuSMY6KXNYQR2TL).
 - Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, claim eligibility, recovery, and exact initial-window, evidence-expiry, grace, challenge-window, and timeout boundaries. Live failed-transfer recovery and natural testnet temporal transitions remain open.
-- Still open: a safe live failed NEAR transfer fixture, natural expiry/grace observations on the new cohort, the older-page control in the browser, and the remaining wallet-driven demo flows. In Brave, the recent list and selection of commitment `2` were verified before the cohort was added.
+- Still open: a safe live failed NEAR transfer fixture, natural expiry/grace observations on the new cohort, the older-page control in the browser, and the browser wallet UI journey. The signer-driven on-chain payout, close, and refund path is verified on commitment `19`. In Brave, the recent list and selection of commitment `2` were verified before the cohort was added.
 - Testnet RPC pagination now returns IDs `21`–`12`, then `11`–`2`, then `1`, confirming the exclusive cursor and enough records for the older page. The browser relay disconnected during post-cohort UI verification, so the visible older-page control remains unverified.
 
 Recommended next sequence:
