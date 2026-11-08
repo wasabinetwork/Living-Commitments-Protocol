@@ -6,7 +6,7 @@ The product requirements document (`Living_Commitments_Protocol_[LCP]-PRD.md`), 
 
 ## Build, Test, and Development Commands
 
-Build the Rust workspace with `cargo build -p lcp-core -p maintenance-heartbeat`. Build the evaluator WASM with `cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release`. Install the JavaScript workspaces with `npm install`, then build the SDK with `npm --prefix packages/sdk run build`. Run the demo with `npm run dev --workspace=@lcp/demo` after configuring `apps/demo/.env.local` from `.env.example`. A test suite and deployment workflow are not configured yet. Keep examples reproducible against NEAR testnet.
+Build the Rust workspace with `cargo build -p lcp-core -p maintenance-heartbeat`. Build the evaluator WASM with `cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release`. Install the JavaScript workspaces with `npm install`, then build the SDK with `npm --prefix packages/sdk run build`. Run the demo with `npm run dev --workspace=@lcp/demo` after configuring `apps/demo/.env.local` from `.env.example`. Run contract unit tests with `cargo test -p lcp-core`; keep examples reproducible against NEAR testnet.
 
 ## Coding Style & Naming Conventions
 
@@ -14,7 +14,7 @@ For Markdown, use descriptive ATX headings, short paragraphs, and fenced code bl
 
 ## Testing Guidelines
 
-Add tests alongside each implementation module. Cover temporal boundaries, stale or mismatched evaluation results, authorization, recovery, and escrow accounting as specified in the technical baseline. Use deterministic timestamps for state-transition tests. Before proposing a change, run the relevant module's test and lint commands once those are configured; report any checks that could not be run.
+Add tests alongside each implementation module. Contract tests use NEAR's mock runtime and deterministic timestamps to cover state transitions, callback handling, and escrow accounting. Cover temporal boundaries, stale or mismatched evaluation results, authorization, recovery, and escrow accounting as specified in the technical baseline. Run `cargo test -p lcp-core` for contract changes; report checks run and any that could not be run.
 
 ## Commit & Pull Request Guidelines
 

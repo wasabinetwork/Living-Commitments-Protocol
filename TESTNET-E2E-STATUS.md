@@ -72,7 +72,7 @@ Commitment `6` used a valid evaluator artifact with an execution deposit of one 
 
 ### Bounded commitment discovery
 
-The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. The browser UI still needs a manual run against the deployed contract.
+The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. In Brave, the recent list rendered against the deployed contract; selecting a row and wallet-driven actions still need manual validation.
 
 ## Current Testnet State and Remaining Work
 
@@ -83,9 +83,9 @@ The contract now exposes a capped newest-first view, and the demo requests ten r
 - Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
 - Commitment `6` is `Closed`; its unused escrow was refunded after an OutLayer promise failure.
 - The deployed evaluator proof, malformed-output rejection under the initial callback, updated null-result classification, promise failure, request timeout, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, closure, successful refund callbacks, and bounded discovery pagination are validated.
-- Failed tranche callbacks clear pending escrow and mark the tranche `Failed`; contract eligibility permits a retry if the commitment is still healthy and the epoch remains active. The demo now labels that action `Retry payout`. The failed-transfer callback/retry path itself remains unverified on testnet.
-- Still open: failed NEAR transfer recovery, arbiter uphold/invalidate challenge paths, broader temporal boundaries, and the full wallet-driven demo run (including the new browser UI).
-- The bounded, newest-first commitment listing is deployed and pagination is verified through finalized RPC views. The demo browser is implemented, but its UI still needs manual validation against the deployed contract.
+- Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, and claim eligibility. Contract callbacks mark a failed tranche `Failed`; retry remains eligible while the commitment is healthy and the epoch is active, and the demo labels it `Retry payout`. Live failed-transfer and arbiter-path validation remain open.
+- Still open: live failed NEAR transfer recovery, live arbiter uphold/invalidate challenge paths, broader temporal boundaries, and the full wallet-driven demo run. The recent-commitment list was rendered in Brave; selecting a commitment and wallet-driven actions still need manual validation.
+- The bounded, newest-first commitment listing is deployed and pagination is verified through finalized RPC views. The older-page control has not been exercised in the browser because the current testnet account has fewer than ten records.
 
 Recommended next sequence:
 

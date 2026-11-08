@@ -14,10 +14,9 @@ use crate::{
         encode_hex, BudgetPolicy, BudgetPolicyArgs, Challenge, ChallengeStatus, ChallengeView,
         ClaimEligibilityView, Commitment, CommitmentId, CommitmentPolicy, CommitmentPolicyArgs,
         CommitmentPolicyView, CommitmentSummaryView, CommitmentView, CreateCommitmentArgs,
-        EscrowStatusView,
-        EvaluationInput, EvaluationRecord, EvaluationRecordView, EvaluationRequest,
-        EvaluationStatus, EvaluationVerdictOutput, EvaluatorPolicy, EvaluatorPolicyArgs,
-        EvidencePolicy, GoodObservation, HeartbeatPayload, PendingTransfer,
+        EscrowStatusView, EvaluationInput, EvaluationRecord, EvaluationRecordView,
+        EvaluationRequest, EvaluationStatus, EvaluationVerdictOutput, EvaluatorPolicy,
+        EvaluatorPolicyArgs, EvidencePolicy, GoodObservation, HeartbeatPayload, PendingTransfer,
         SignedHeartbeatEvidence, Tranche, TrancheStatus, TrancheView, TransferKind, Verdict,
         EVALUATION_REQUEST_SCHEMA, EVALUATION_VERDICT_SCHEMA, HEARTBEAT_EVIDENCE_TYPE,
         HEARTBEAT_SCHEMA,
@@ -1355,23 +1354,23 @@ impl Contract {
         if upper_id == 0 {
             return Vec::new();
         }
-        let first_id = upper_id
-            .saturating_sub(u64::from(page_size - 1))
-            .max(1);
+        let first_id = upper_id.saturating_sub(u64::from(page_size - 1)).max(1);
         let now_ns = env::block_timestamp();
 
         (first_id..=upper_id)
             .rev()
             .filter_map(|id| {
-                self.commitments.get(&id).map(|commitment| CommitmentSummaryView {
-                    id: U64(commitment.id),
-                    subject: commitment.subject.clone(),
-                    lifecycle: commitment.lifecycle,
-                    effective_health: health_of(commitment, now_ns),
-                    policy_version: commitment.policy.version,
-                    escrow_funded_yocto: U128(commitment.escrow_funded_yocto),
-                    escrow_paid_yocto: U128(commitment.escrow_paid_yocto),
-                })
+                self.commitments
+                    .get(&id)
+                    .map(|commitment| CommitmentSummaryView {
+                        id: U64(commitment.id),
+                        subject: commitment.subject.clone(),
+                        lifecycle: commitment.lifecycle,
+                        effective_health: health_of(commitment, now_ns),
+                        policy_version: commitment.policy.version,
+                        escrow_funded_yocto: U128(commitment.escrow_funded_yocto),
+                        escrow_paid_yocto: U128(commitment.escrow_paid_yocto),
+                    })
             })
             .collect()
     }
@@ -1973,6 +1972,315 @@ fn storage_cost(storage_bytes: u64) -> u128 {
         .as_yoctonear()
         .checked_mul(u128::from(storage_bytes))
         .unwrap_or_else(|| env::panic_str("storage deposit calculation overflow"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[allow(deprecated)]
+    use near_sdk::test_utils::testing_env_with_promise_results;
+    use near_sdk::{
+        test_utils::{accounts, VMContextBuilder},
+        testing_env, AccountId, NearToken, PromiseResult,
+    };
+
+    const CONTRACT_ID: u64 = 1;
+    const EVALUATION_ID: u64 = 1;
+    const TRANSFER_ID: u64 = 1;
+    const EPOCH: u32 = 0;
+    const TRANCHE_AMOUNT: u128 = 10_u128.pow(22);
+    const NOW_NS: u64 = 1_000_000_200;
+
+    fn context(predecessor: AccountId, attached_deposit: u128) -> near_sdk::VMContext {
+        VMContextBuilder::new()
+            .current_account_id(accounts(0))
+            .predecessor_account_id(predecessor)
+            .block_timestamp(NOW_NS)
+            .attached_deposit(NearToken::from_yoctonear(attached_deposit))
+            .build()
+    }
+
+    fn contract_with_pending_tranche() -> (Contract, AccountId) {
+        testing_env!(context(accounts(0), 0));
+        let mut contract = Contract::new();
+        let sponsor = accounts(1);
+        let maintainer = accounts(2);
+        let beneficiary = accounts(3);
+        let arbiter = accounts(4);
+        let evaluator = accounts(5);
+        let evidence_hash = [7; 32];
+        let policy_hash = [9; 32];
+
+        let commitment = Commitment {
+            id: CONTRACT_ID,
+            subject: "failed transfer retry fixture".to_string(),
+            creator: sponsor.clone(),
+            maintainer,
+            arbiter,
+            lifecycle: Lifecycle::Active,
+            policy: CommitmentPolicy {
+                version: 1,
+                temporal: TemporalPolicy {
+                    initial_window_ns: 1_000_000,
+                    evidence_ttl_ns: 1_000_000,
+                    grace_ns: 1_000_000,
+                    max_source_lag_ns: 100,
+                    challenge_window_ns: 100,
+                    resolution_timeout_ns: 1_000,
+                    recovery_allowed: true,
+                },
+                evidence: EvidencePolicy {
+                    maintainer_public_key: [3; 32],
+                },
+                evaluator: EvaluatorPolicy {
+                    outlayer_account: evaluator,
+                    wasm_url: "https://example.invalid/evaluator.wasm".to_string(),
+                    wasm_sha256: [4; 32],
+                    build_target: "wasm32-wasip2".to_string(),
+                    max_instructions: 1_000_000,
+                    max_memory_mb: 64,
+                    max_execution_seconds: 30,
+                    request_timeout_ns: 1_000,
+                    execution_deposit_yocto: TRANCHE_AMOUNT,
+                },
+                budget: BudgetPolicy {
+                    sponsor,
+                    beneficiary: beneficiary.clone(),
+                    epoch_ns: 10_000_000_000,
+                    max_epochs: 1,
+                    tranche_yocto: TRANCHE_AMOUNT,
+                },
+            },
+            policy_hash,
+            activated_at_ns: Some(1_000_000_000),
+            last_good: Some(GoodObservation {
+                evaluation_id: EVALUATION_ID,
+                evidence_hash,
+                observed_at_ns: 1_000_000_000,
+                accepted_at_ns: 1_000_000_000,
+            }),
+            last_observed_at_ns: Some(1_000_000_000),
+            negative_since_ns: None,
+            pending_evaluation_id: None,
+            active_challenge_id: None,
+            breach_latched: false,
+            escrow_funded_yocto: TRANCHE_AMOUNT,
+            escrow_paid_yocto: 0,
+            escrow_refunded_yocto: 0,
+            escrow_pending_yocto: TRANCHE_AMOUNT,
+            operations_funded_yocto: 0,
+            operations_authorized_spend_yocto: 0,
+            storage_deposit_yocto: 0,
+            next_evaluation_id: EVALUATION_ID + 1,
+            challenge_count: 0,
+            pending_transfer_count: 1,
+        };
+
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.evaluation_records.insert(
+            (CONTRACT_ID, EVALUATION_ID),
+            EvaluationRecord {
+                request_id: EVALUATION_ID,
+                commitment_id: CONTRACT_ID,
+                request_transaction_hash: Some([0; 32]),
+                status: EvaluationStatus::Accepted,
+                verdict: Some(Verdict::Compliant),
+                reason_codes: vec!["SIGNATURE_VALID".to_string()],
+                input_hash: [5; 32],
+                evidence_hash,
+                observed_at_ns: 1_000_000_000,
+                accepted_at_ns: Some(1_000_000_000),
+                policy_hash,
+                output_hash: Some([6; 32]),
+            },
+        );
+        contract.tranches.insert(
+            (CONTRACT_ID, EPOCH),
+            Tranche {
+                commitment_id: CONTRACT_ID,
+                epoch: EPOCH,
+                amount_yocto: TRANCHE_AMOUNT,
+                status: TrancheStatus::Pending,
+                transfer_id: Some(TRANSFER_ID),
+            },
+        );
+        contract.pending_transfers.insert(
+            TRANSFER_ID,
+            PendingTransfer {
+                id: TRANSFER_ID,
+                commitment_id: CONTRACT_ID,
+                kind: TransferKind::Tranche,
+                epoch: Some(EPOCH),
+                recipient: beneficiary.clone(),
+                amount_yocto: TRANCHE_AMOUNT,
+            },
+        );
+        contract.next_transfer_id = TRANSFER_ID;
+        contract.commitments.flush();
+        contract.evaluation_records.flush();
+        contract.tranches.flush();
+        contract.pending_transfers.flush();
+
+        (contract, beneficiary)
+    }
+
+    fn add_open_challenge(contract: &mut Contract) {
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.active_challenge_id = Some(TRANSFER_ID);
+        commitment.challenge_count = 1;
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.challenges.insert(
+            TRANSFER_ID,
+            Challenge {
+                id: TRANSFER_ID,
+                commitment_id: CONTRACT_ID,
+                evaluation_id: EVALUATION_ID,
+                challenger: accounts(1),
+                reason_hash: [8; 32],
+                opened_at_ns: NOW_NS - 10,
+                resolution_deadline_ns: NOW_NS + 1_000,
+                status: ChallengeStatus::Open,
+            },
+        );
+        contract.commitments.flush();
+        contract.challenges.flush();
+    }
+
+    fn clear_pending_tranche(contract: &mut Contract) {
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.escrow_pending_yocto = 0;
+        commitment.pending_transfer_count = 0;
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.tranches.remove(&(CONTRACT_ID, EPOCH));
+        contract.pending_transfers.remove(&TRANSFER_ID);
+        contract.commitments.flush();
+        contract.tranches.flush();
+        contract.pending_transfers.flush();
+    }
+
+    #[test]
+    fn upheld_challenge_preserves_evidence_and_releases_claim_block() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        add_open_challenge(&mut contract);
+
+        testing_env!(context(accounts(4), 0));
+        contract.resolve_challenge(U64(TRANSFER_ID), true);
+
+        let challenge = contract.get_challenge(U64(TRANSFER_ID)).unwrap();
+        assert_eq!(challenge.status, ChallengeStatus::Upheld);
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(commitment.active_challenge_id, None);
+        assert!(commitment.last_good.is_some());
+        assert_eq!(commitment.negative_since_ns, None);
+        assert!(
+            contract
+                .can_claim_tranche(U64(CONTRACT_ID))
+                .unwrap()
+                .eligible
+        );
+    }
+
+    #[test]
+    fn invalidated_challenge_clears_evidence_and_starts_negative_period() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        add_open_challenge(&mut contract);
+
+        testing_env!(context(accounts(4), 0));
+        contract.resolve_challenge(U64(TRANSFER_ID), false);
+
+        let challenge = contract.get_challenge(U64(TRANSFER_ID)).unwrap();
+        assert_eq!(challenge.status, ChallengeStatus::Invalidated);
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(commitment.active_challenge_id, None);
+        assert!(commitment.last_good.is_none());
+        assert_eq!(commitment.negative_since_ns, Some(NOW_NS));
+        assert_eq!(
+            contract.claim_eligibility(&commitment, NOW_NS),
+            Err("commitment health must be Healthy to claim")
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn failed_tranche_transfer_restores_eligibility_and_retry_pays_once() {
+        let (mut contract, beneficiary) = contract_with_pending_tranche();
+
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        contract.on_tranche_transfer(U64(TRANSFER_ID));
+
+        let failed_tranche = contract
+            .get_tranche(U64(CONTRACT_ID), U64(u64::from(EPOCH)))
+            .expect("failed tranche should remain recorded");
+        assert_eq!(failed_tranche.status, TrancheStatus::Failed);
+        assert_eq!(failed_tranche.transfer_id, None);
+
+        let after_failure = contract
+            .get_escrow_status(U64(CONTRACT_ID))
+            .expect("escrow view should exist");
+        assert_eq!(after_failure.pending_yocto.0, 0);
+        assert_eq!(after_failure.paid_yocto.0, 0);
+        assert_eq!(after_failure.free_yocto.0, TRANCHE_AMOUNT);
+        assert!(contract.pending_transfers.get(&TRANSFER_ID).is_none());
+        assert_eq!(
+            contract
+                .commitments
+                .get(&CONTRACT_ID)
+                .unwrap()
+                .pending_transfer_count,
+            0
+        );
+        assert!(
+            contract
+                .can_claim_tranche(U64(CONTRACT_ID))
+                .expect("eligibility view should exist")
+                .eligible
+        );
+
+        testing_env!(context(beneficiary, 10_u128.pow(23)));
+        let retry_transfer_id = contract.claim_tranche(U64(CONTRACT_ID));
+        assert_eq!(retry_transfer_id.0, TRANSFER_ID + 1);
+        assert_eq!(
+            contract
+                .get_tranche(U64(CONTRACT_ID), U64(u64::from(EPOCH)))
+                .unwrap()
+                .status,
+            TrancheStatus::Pending
+        );
+
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_tranche_transfer(retry_transfer_id);
+        contract.on_tranche_transfer(retry_transfer_id);
+
+        let paid_tranche = contract
+            .get_tranche(U64(CONTRACT_ID), U64(u64::from(EPOCH)))
+            .expect("paid tranche should remain recorded");
+        assert_eq!(paid_tranche.status, TrancheStatus::Paid);
+        assert_eq!(paid_tranche.transfer_id, None);
+
+        let after_retry = contract
+            .get_escrow_status(U64(CONTRACT_ID))
+            .expect("escrow view should exist");
+        assert_eq!(after_retry.pending_yocto.0, 0);
+        assert_eq!(after_retry.paid_yocto.0, TRANCHE_AMOUNT);
+        assert_eq!(after_retry.free_yocto.0, 0);
+        assert!(contract
+            .pending_transfers
+            .get(&retry_transfer_id.0)
+            .is_none());
+        assert_eq!(
+            contract
+                .commitments
+                .get(&CONTRACT_ID)
+                .unwrap()
+                .pending_transfer_count,
+            0
+        );
+    }
 }
 
 fn refund_excess(account_id: near_sdk::AccountId, attached: u128, required: u128) {
