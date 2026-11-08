@@ -224,7 +224,7 @@ export class NearJsonRpcTransport implements LcpTransport {
   private readonly fetchImplementation: typeof fetch;
 
   constructor(private readonly options: NearJsonRpcTransportOptions) {
-    this.fetchImplementation = options.fetchImplementation ?? fetch;
+    this.fetchImplementation = (options.fetchImplementation ?? fetch).bind(globalThis);
   }
 
   async view<T>(contractId: string, methodName: string, args: Record<string, unknown>): Promise<T> {
