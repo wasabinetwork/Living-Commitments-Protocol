@@ -8,7 +8,7 @@
 
 ## Next
 
-- [ ] **Wallet journey:** verify selecting a commitment from the browser list; complete create, fund, activate, evidence, claim/retry, close, and refund flows. Check the older-page control when at least ten records exist.
+- [ ] **Wallet journey:** complete create, fund, activate, evidence, claim/retry, close, and refund flows. Check the older-page control when at least ten records exist.
 
 ## Complete
 
@@ -17,4 +17,5 @@
 - [x] Cover exact local boundaries for initial evidence, evidence expiry, grace, recovery, claim eligibility, and challenge timeout.
 - [x] Deploy bounded newest-first commitment discovery; confirm exclusive cursor pagination through testnet RPC.
 - [x] Verify the recent-commitment list renders in Brave against the deployed testnet contract.
+- [x] Select a recent commitment in Brave and verify its detail panel loads contract state and available actions.
 - [x] Bind the SDK JSON-RPC `fetch` implementation to `globalThis` so browser views execute correctly.
