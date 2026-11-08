@@ -64,6 +64,7 @@ interface CommitmentData {
 
 type DraftAction = "escrow" | "operations" | "activate";
 type ChallengeAction = "open" | "uphold" | "invalidate" | "expire";
+type ClosureAction = "close" | "refund";
 
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
@@ -82,6 +83,7 @@ export function Dashboard() {
   const [creating, setCreating] = useState(false);
   const [requestingEvaluation, setRequestingEvaluation] = useState(false);
   const [challengeAction, setChallengeAction] = useState<ChallengeAction | null>(null);
+  const [closureAction, setClosureAction] = useState<ClosureAction | null>(null);
   const [draftAction, setDraftAction] = useState<DraftAction | null>(null);
   const [escrowFundingNear, setEscrowFundingNear] = useState("0.03");
   const [operationsFundingNear, setOperationsFundingNear] = useState("0.01");
@@ -390,6 +392,77 @@ export function Dashboard() {
     }
   }
 
+  async function submitClosureAction(action: ClosureAction, storageDeposit = "") {
+    if (!data?.policy) return;
+    const connector = connectorRef.current;
+    if (!connector || !accountId) {
+      setError("Connect an authorized commitment wallet before closing or refunding.");
+      return;
+    }
+    const { commitment, policy } = data;
+    if (action === "close") {
+      const canClose = [commitment.creator, commitment.maintainer, commitment.arbiter, policy.budget.sponsor].includes(accountId);
+      if (!canClose) {
+        setError("Only the creator, maintainer, arbiter, or sponsor can close this commitment.");
+        return;
+      }
+      if (commitment.lifecycle === "Closed") {
+        setError("This commitment is already closed.");
+        return;
+      }
+      if (commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(commitment.escrow_pending_yocto) > 0n) {
+        setError("Resolve pending evaluations, challenges, and transfers before closing.");
+        return;
+      }
+    } else {
+      if (commitment.lifecycle !== "Closed") {
+        setError("Close the commitment before refunding residual escrow.");
+        return;
+      }
+      if (accountId !== policy.budget.sponsor) {
+        setError(`Only ${policy.budget.sponsor} can refund residual escrow.`);
+        return;
+      }
+      if (BigInt(data.escrow?.free_yocto ?? "0") === 0n) {
+        setError("There is no residual escrow to refund.");
+        return;
+      }
+    }
+
+    setClosureAction(action);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      if (action === "close") {
+        await client.closeCommitment(commitment.id);
+        const loaded = await loadCommitment(commitment.id);
+        setActionMessage(loaded
+          ? `Commitment #${commitment.id} is closed. The sponsor may request any residual escrow refund.`
+          : `Commitment #${commitment.id} was closed. Reload it to verify its current state.`);
+      } else {
+        const deposit = parseNearToYocto(storageDeposit);
+        if (BigInt(deposit) === 0n) throw new Error("Refund storage deposit must be greater than zero.");
+        const refundAmount = data.escrow?.free_yocto ?? "0";
+        const transferId = await client.refundRemaining(commitment.id, {
+          attachedDepositYocto: deposit,
+          gas: "150000000000000",
+        });
+        const loaded = await loadCommitment(commitment.id);
+        setActionMessage(loaded
+          ? `Residual refund transfer #${transferId} requested for ${formatNear(refundAmount)} NEAR.`
+          : `Residual refund transfer #${transferId} requested. Reload commitment #${commitment.id} to verify its state.`);
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The closure or refund action failed.");
+    } finally {
+      setClosureAction(null);
+    }
+  }
+
   async function claimTranche() {
     if (!data) return;
     const connector = connectorRef.current;
@@ -546,6 +619,14 @@ export function Dashboard() {
                 accountId={accountId}
                 busyAction={challengeAction}
                 onAction={submitChallengeAction}
+              />
+            )}
+            {data.policy && (
+              <ClosureControlsCard
+                data={data}
+                accountId={accountId}
+                busyAction={closureAction}
+                onAction={submitClosureAction}
               />
             )}
             <section className={`health-panel health-${health?.toLowerCase() ?? "unknown"}`}>
@@ -902,6 +983,57 @@ function ChallengeControlsCard({
               <button className="prepare-payload-button" type="submit" disabled={!canChallenge || busyAction !== null}>{busyAction === "open" ? "Opening challenge…" : "Open challenge"}</button>
             </div>
           </form>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ClosureControlsCard({
+  data,
+  accountId,
+  busyAction,
+  onAction,
+}: {
+  data: CommitmentData;
+  accountId: string | null;
+  busyAction: ClosureAction | null;
+  onAction: (action: ClosureAction, storageDeposit?: string) => Promise<void>;
+}) {
+  const { commitment, policy, escrow } = data;
+  const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
+  const canClose = Boolean(accountId && [commitment.creator, commitment.maintainer, commitment.arbiter, policy?.budget.sponsor].includes(accountId));
+  const canRefund = accountId === policy?.budget.sponsor;
+  const residualYocto = escrow?.free_yocto ?? "0";
+  const hasResidual = BigInt(residualYocto) > 0n;
+  const hasPending = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(commitment.escrow_pending_yocto) > 0n);
+
+  return (
+    <section className="content-card closure-controls">
+      <div className="card-heading">
+        <div><p className="eyebrow">CLOSE · SETTLE REMAINING ESCROW</p><h3>{commitment.lifecycle === "Closed" ? "Commitment closed." : "End this commitment."}</h3></div>
+        <span className="card-index">{commitment.lifecycle.toUpperCase()}</span>
+      </div>
+      {commitment.lifecycle === "Closed" ? (
+        <>
+          <div className="closure-balance"><span>RESIDUAL ESCROW</span><strong>{formatNear(residualYocto)} NEAR</strong></div>
+          {hasResidual ? (
+            <>
+              {!canRefund && <p className="form-wallet-hint">Connect the sponsor wallet ({policy?.budget.sponsor}) to request the remaining refund.</p>}
+              <div className="closure-refund-row">
+                <FormField label="Temporary refund storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /></FormField>
+                <button type="button" onClick={() => void onAction("refund", storageDepositNear)} disabled={!canRefund || busyAction !== null}>{busyAction === "refund" ? "Requesting refund…" : "Refund residual escrow"}</button>
+              </div>
+              <small className="closure-help">The refund is asynchronous. The contract updates the balance after transfer reconciliation; excess storage deposit is refunded.</small>
+            </>
+          ) : <p className="closure-help">No residual escrow is available to refund.</p>}
+        </>
+      ) : (
+        <>
+          <p className="closure-intro">Closing stops future evaluations and claims. After pending work settles, the sponsor can request the remaining escrow refund.</p>
+          {hasPending && <p className="form-wallet-hint">Resolve pending evaluations, challenges, and escrow transfers before closing.</p>}
+          {!canClose && <p className="form-wallet-hint">Connect the creator, maintainer, arbiter, or sponsor wallet to close this commitment.</p>}
+          <button className="close-commitment-button" type="button" onClick={() => void onAction("close")} disabled={!canClose || hasPending || busyAction !== null}>{busyAction === "close" ? "Closing commitment…" : "Close commitment"}</button>
         </>
       )}
     </section>
