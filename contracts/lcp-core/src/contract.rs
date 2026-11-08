@@ -90,8 +90,10 @@ impl Contract {
     #[payable]
     pub fn create_commitment(&mut self, args: CreateCommitmentArgs) -> U64 {
         require!(
-            !args.subject.trim().is_empty() && args.subject.len() <= MAX_SUBJECT_BYTES,
-            "subject must be non-empty and at most 128 bytes"
+            !args.subject.trim().is_empty()
+                && args.subject.len() <= MAX_SUBJECT_BYTES
+                && is_printable_ascii(&args.subject),
+            "subject must be non-empty printable ASCII and at most 128 bytes"
         );
 
         let creator = env::predecessor_account_id();
@@ -1893,6 +1895,10 @@ fn decode_32_byte_hex(input: &str) -> Option<[u8; 32]> {
         digest[index] = (hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?;
     }
     Some(digest)
+}
+
+fn is_printable_ascii(input: &str) -> bool {
+    input.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
 }
 
 fn decode_64_byte_hex(input: &str) -> Option<[u8; 64]> {

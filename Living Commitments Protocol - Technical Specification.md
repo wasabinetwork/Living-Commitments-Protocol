@@ -695,7 +695,7 @@ The v1 signed heartbeat payload is compact canonical JSON with this field order:
 }
 ```
 
-The maintainer signs the exact UTF-8 bytes of this JSON with Ed25519. `evidence_hash` is SHA-256 of those bytes. The outer evidence object contains `type`, `artifact_hash`, `maintainer_public_key`, `signature`, and the payload string, in that order. Hash strings use lowercase hexadecimal; timestamps and IDs use canonical decimal strings.
+The maintainer signs the exact UTF-8 bytes of this JSON with Ed25519. `evidence_hash` is SHA-256 of those bytes. The outer evidence object contains `type`, `artifact_hash`, `maintainer_public_key`, `signature`, and the payload string, in that order. Hash strings use lowercase hexadecimal; timestamps and IDs use canonical decimal strings. Commitment subjects are limited to printable ASCII so Rust and TypeScript produce the same canonical payload bytes.
 
 ## 6.3 Evaluator output schema
 
@@ -1342,7 +1342,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. Live testnet execution is still required to confirm evaluator hashes, response bytes, gas, and attestation mapping. The TypeScript SDK and demo remain open.
+**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. `packages/sdk` provides typed calls and views, heartbeat message construction, event parsing, and NEAR JSON-RPC reads with an injected transaction sender. Live testnet execution is still required to confirm evaluator hashes, response bytes, gas, and attestation mapping; wallet connection UI and the demo remain open.
 
 ## Milestone A — Pure engine
 

@@ -2,11 +2,11 @@
 
 ## Project Structure & Module Organization
 
-The product requirements document (`Living_Commitments_Protocol_[LCP]-PRD.md`), engineering baseline (`Living Commitments Protocol - Technical Specification.md`), and NEAR hackathon instructions (`NEAR-HACKATHON-SKILL.md`) live at the root. The NEAR contract is in `contracts/lcp-core`; the OutLayer WASI evaluator is in `evaluators/maintenance-heartbeat`. Planned SDK, schema, integration-test, and demo modules should remain in clearly named directories. Update this guide as the layout changes.
+The product requirements document (`Living_Commitments_Protocol_[LCP]-PRD.md`), engineering baseline (`Living Commitments Protocol - Technical Specification.md`), and NEAR hackathon instructions (`NEAR-HACKATHON-SKILL.md`) live at the root. The NEAR contract is in `contracts/lcp-core`; the OutLayer WASI evaluator is in `evaluators/maintenance-heartbeat`; the TypeScript client and NEAR JSON-RPC view transport are in `packages/sdk`. Put the wallet connection UI and demo in `apps/demo`, and shared JSON schemas in `packages/schemas`.
 
 ## Build, Test, and Development Commands
 
-Build the Rust workspace with `cargo build -p lcp-core -p maintenance-heartbeat`. Build the evaluator WASM with `cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release`. A test suite and deployment workflow are not configured yet. Keep examples reproducible against NEAR testnet.
+Build the Rust workspace with `cargo build -p lcp-core -p maintenance-heartbeat`. Build the evaluator WASM with `cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release`. Build the SDK with `npm --prefix packages/sdk install` followed by `npm --prefix packages/sdk run build`. A test suite and deployment workflow are not configured yet. Keep examples reproducible against NEAR testnet.
 
 ## Coding Style & Naming Conventions
 
@@ -18,7 +18,7 @@ Add tests alongside each implementation module. Cover temporal boundaries, stale
 
 ## Commit & Pull Request Guidelines
 
-The repository is initialized but has no commit history yet, so an established commit convention cannot be verified. Use concise imperative subjects, optionally with a scope (for example, `docs: clarify recovery semantics`). PRs should summarize behavior or specification changes, identify affected documents or modules, link related issues, and include test evidence. Add screenshots only for user-interface changes.
+The first commit uses a Conventional Commit subject (`feat: add NEAR commitment evaluation core`). Continue with concise `<type>: <imperative summary>` subjects, such as `docs: clarify recovery semantics`. PRs should summarize behavior or specification changes, identify affected documents or modules, link related issues, and include test evidence. Add screenshots only for user-interface changes.
 
 ## Architecture & Configuration Notes
 

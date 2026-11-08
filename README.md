@@ -16,7 +16,7 @@ TEE attestation demonstrates that the configured evaluator ran with particular i
 
 The `contracts/lcp-core` crate contains the pure temporal engine and NEAR state layer for commitment creation, separate escrow and operations funding, activation, OutLayer evaluation requests, bounded evaluation history, challenges, health-gated tranche claims, asynchronous transfer reconciliation, closure/refunds, and read views. The immutable policy pins the maintainer's heartbeat signing key and OutLayer WASM digest. Evaluation requests bind canonical signed heartbeat evidence to a commitment, evaluation ID, policy digest, and timestamp; a private callback validates the returned verdict before updating temporal evidence. Request-time storage deposits reserve enough space for callback state changes.
 
-The `evaluators/maintenance-heartbeat` crate reads one canonical JSON request, verifies the Ed25519 heartbeat signature and request binding, then writes one JSON verdict. The TypeScript SDK and demo application remain to be implemented. The OutLayer testnet execution and its returned bytes still need live integration verification; this repository does not claim a testnet deployment.
+The `evaluators/maintenance-heartbeat` crate reads one canonical JSON request, verifies the Ed25519 heartbeat signature and request binding, then writes one JSON verdict. `packages/sdk` provides typed contract calls and views, heartbeat signing-message construction, and event parsing. Its `NearJsonRpcTransport` performs finalized read-only views through NEAR JSON-RPC and delegates transaction submission to an injected wallet sender. Wallet connection UI and the demo application remain to be implemented. The OutLayer testnet execution and its returned bytes still need live integration verification; this repository does not claim a testnet deployment.
 
 The contract currently pins `near-sdk` 5.29.1 and declares Rust 1.94. The policy digest is SHA-256 over the Borsh serialization of the v1 policy struct; evaluator input JSON has its own canonical byte digest.
 
@@ -27,6 +27,13 @@ Build the contract and evaluator with:
 ```sh
 cargo build -p lcp-core -p maintenance-heartbeat
 cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release
+```
+
+Build the TypeScript SDK after installing its development dependency:
+
+```sh
+npm --prefix packages/sdk install
+npm --prefix packages/sdk run build
 ```
 
 The evaluator accepts its request on standard input and prints the verdict on standard output. Use only test keys and testnet funding while validating the full callback path.
