@@ -399,16 +399,31 @@ export async function createSignedHeartbeat(
   input: HeartbeatSigningInput,
   signer: HeartbeatSigner,
 ): Promise<SignedHeartbeatEvidence> {
+  const payload = buildHeartbeatSigningPayload(input);
+  assertLowerHex(signer.publicKeyHex, 32, "signer public key");
+  if (signer.publicKeyHex !== input.pinned_public_key_hex) {
+    throw new Error("Signer key does not match the policy-pinned maintainer key.");
+  }
+  const signature = await signer.sign(new TextEncoder().encode(payload));
+  assertLowerHex(signature, 64, "signature");
+
+  return {
+    type: "signed_maintenance_heartbeat",
+    artifact_hash: input.artifact_hash,
+    maintainer_public_key: signer.publicKeyHex,
+    signature,
+    payload,
+  };
+}
+
+/** Build the exact compact JSON bytes a maintainer must sign for a v1 heartbeat. */
+export function buildHeartbeatSigningPayload(input: HeartbeatSigningInput): string {
   assertCanonicalDecimal(input.commitment_id, "commitment_id");
   assertCanonicalDecimal(input.evaluation_id, "evaluation_id");
   assertCanonicalDecimal(input.observed_at_ns, "observed_at_ns");
   assertLowerHex(input.policy_hash, 32, "policy_hash");
   assertLowerHex(input.artifact_hash, 32, "artifact_hash");
   assertLowerHex(input.pinned_public_key_hex, 32, "pinned_public_key_hex");
-  assertLowerHex(signer.publicKeyHex, 32, "signer public key");
-  if (signer.publicKeyHex !== input.pinned_public_key_hex) {
-    throw new Error("Signer key does not match the policy-pinned maintainer key.");
-  }
   if (!Number.isInteger(input.policy_version) || input.policy_version <= 0 || input.policy_version > 0xffff_ffff) {
     throw new Error("policy_version must be a positive u32 integer.");
   }
@@ -426,16 +441,7 @@ export async function createSignedHeartbeat(
     subject: input.subject,
     artifact_hash: input.artifact_hash,
   });
-  const signature = await signer.sign(new TextEncoder().encode(payload));
-  assertLowerHex(signature, 64, "signature");
-
-  return {
-    type: "signed_maintenance_heartbeat",
-    artifact_hash: input.artifact_hash,
-    maintainer_public_key: signer.publicKeyHex,
-    signature,
-    payload,
-  };
+  return payload;
 }
 
 export async function sha256Hex(value: string | Uint8Array): Promise<Sha256Hex> {

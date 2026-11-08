@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  buildHeartbeatSigningPayload,
   LcpClient,
   NearJsonRpcTransport,
 } from "@lcp/sdk";
@@ -8,12 +9,14 @@ import type {
   ChallengeView,
   ClaimEligibilityView,
   CreateCommitmentArgs,
+  HeartbeatSigningInput,
   CommitmentPolicyView,
   CommitmentView,
   EvaluationRecordView,
   EscrowStatusView,
   NearTransactionRequest,
   NearTransactionSender,
+  SignedHeartbeatEvidence,
   TrancheView,
 } from "@lcp/sdk";
 import { useRef, useState } from "react";
@@ -74,6 +77,7 @@ export function Dashboard() {
   const [connecting, setConnecting] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [requestingEvaluation, setRequestingEvaluation] = useState(false);
   const [draftAction, setDraftAction] = useState<DraftAction | null>(null);
   const [escrowFundingNear, setEscrowFundingNear] = useState("0.03");
   const [operationsFundingNear, setOperationsFundingNear] = useState("0.01");
@@ -245,6 +249,42 @@ export function Dashboard() {
     }
   }
 
+  async function submitEvaluation(evidence: SignedHeartbeatEvidence, storageDeposit: string) {
+    if (!data) return;
+    const connector = connectorRef.current;
+    if (!connector || !accountId) {
+      setError("Connect the maintainer or sponsor wallet before requesting an evaluation.");
+      return;
+    }
+    const policy = data.policy;
+    if (!policy || (accountId !== data.commitment.maintainer && accountId !== policy.budget.sponsor)) {
+      setError(`Only ${data.commitment.maintainer} or ${policy?.budget.sponsor ?? "the configured sponsor"} can request evaluation.`);
+      return;
+    }
+
+    setRequestingEvaluation(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      const evaluationId = await client.requestEvaluation(data.commitment.id, evidence, {
+        attachedDepositYocto: storageDeposit,
+        gas: "180000000000000",
+      });
+      const loaded = await loadCommitment(data.commitment.id);
+      setActionMessage(loaded
+        ? `Evaluation #${evaluationId} requested. The commitment is waiting for its evaluator callback.`
+        : `Evaluation request #${evaluationId} returned successfully. Reload commitment #${data.commitment.id} to verify its state.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The evaluation request failed.");
+    } finally {
+      setRequestingEvaluation(false);
+    }
+  }
+
   async function claimTranche() {
     if (!data) return;
     const connector = connectorRef.current;
@@ -384,6 +424,15 @@ export function Dashboard() {
                 onOperationsFundingChange={setOperationsFundingNear}
                 onActivationStorageChange={setActivationStorageNear}
                 onAction={submitDraftAction}
+              />
+            )}
+            {data.commitment.lifecycle === "Active" && data.policy && (
+              <EvidenceSubmissionCard
+                key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+                data={data}
+                accountId={accountId}
+                busy={requestingEvaluation}
+                onSubmit={submitEvaluation}
               />
             )}
             <section className={`health-panel health-${health?.toLowerCase() ?? "unknown"}`}>
@@ -546,6 +595,120 @@ function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: 
       <div className="metric-top"><p className="eyebrow">{eyebrow}</p><span>{icon}</span></div>
       <strong className="metric-title">{title}</strong>
       <p className="metric-detail">{detail}</p>
+    </section>
+  );
+}
+
+function EvidenceSubmissionCard({
+  data,
+  accountId,
+  busy,
+  onSubmit,
+}: {
+  data: CommitmentData;
+  accountId: string | null;
+  busy: boolean;
+  onSubmit: (evidence: SignedHeartbeatEvidence, storageDeposit: string) => Promise<void>;
+}) {
+  const { commitment, policy } = data;
+  const [artifactHash, setArtifactHash] = useState("");
+  const [observedAt, setObservedAt] = useState("");
+  const [payload, setPayload] = useState("");
+  const [signature, setSignature] = useState("");
+  const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
+  const [formError, setFormError] = useState<string | null>(null);
+  const canRequest = Boolean(accountId && (accountId === commitment.maintainer || accountId === policy?.budget.sponsor));
+  const blocked = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id);
+
+  async function preparePayload() {
+    setFormError(null);
+    try {
+      if (!policy) throw new Error("Policy details are unavailable for this commitment.");
+      if (blocked) throw new Error("Resolve the pending evaluation or active challenge before preparing a new request.");
+      if (!/^[0-9a-f]{64}$/.test(artifactHash)) {
+        throw new Error("Enter the evidence artifact SHA-256 digest as 64 lowercase hexadecimal characters.");
+      }
+      const observedAtNs = await getFinalBlockTimestampNs(RPC_URL);
+      const input: HeartbeatSigningInput = {
+        commitment_id: commitment.id,
+        evaluation_id: commitment.next_evaluation_id,
+        policy_version: commitment.policy_version,
+        policy_hash: commitment.policy_hash,
+        observed_at_ns: observedAtNs,
+        subject: commitment.subject,
+        artifact_hash: artifactHash,
+        pinned_public_key_hex: policy.evidence.maintainer_public_key_hex,
+      };
+      setPayload(buildHeartbeatSigningPayload(input));
+      setObservedAt(observedAtNs);
+      setSignature("");
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "The signing payload could not be prepared.");
+    }
+  }
+
+  async function copyPayload() {
+    try {
+      await navigator.clipboard.writeText(payload);
+    } catch {
+      setFormError("Clipboard access failed. Select and copy the payload text manually.");
+    }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    try {
+      if (!policy || !payload) throw new Error("Prepare the canonical signing payload first.");
+      if (!/^[0-9a-f]{128}$/.test(signature)) {
+        throw new Error("Paste the 64-byte Ed25519 signature as 128 lowercase hexadecimal characters.");
+      }
+      const deposit = parseNearToYocto(storageDepositNear);
+      if (BigInt(deposit) === 0n) throw new Error("Request storage deposit must be greater than zero.");
+      await onSubmit({
+        type: "signed_maintenance_heartbeat",
+        artifact_hash: artifactHash,
+        maintainer_public_key: policy.evidence.maintainer_public_key_hex,
+        signature,
+        payload,
+      }, deposit);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "Check the signed evidence and try again.");
+    }
+  }
+
+  return (
+    <section className="content-card evidence-submission">
+      <div className="card-heading">
+        <div><p className="eyebrow">ACTIVE · HEARTBEAT EVIDENCE</p><h3>Submit a signed observation</h3></div>
+        <span className="card-index">NEXT · {commitment.next_evaluation_id}</span>
+      </div>
+      <p className="evidence-intro">The demo builds the exact commitment-bound message using a finalized NEAR block time. Sign its UTF-8 text offline with the maintainer key pinned in policy, then paste the lowercase hex signature within the policy’s {formatDuration(policy?.temporal.max_source_lag_ns ?? "0")} source-lag window. The private key never enters this page; regenerate the payload if it gets stale.</p>
+      {commitment.pending_evaluation_id && <p className="form-wallet-hint">Evaluation #{commitment.pending_evaluation_id} is already pending.</p>}
+      {commitment.active_challenge_id && <p className="form-wallet-hint">Resolve challenge #{commitment.active_challenge_id} before requesting another evaluation.</p>}
+      {!canRequest && <p className="form-wallet-hint">Connect the maintainer or sponsor wallet to submit an evaluation request.</p>}
+      <div className="form-grid evidence-form-grid">
+        <FormField label="Evidence artifact SHA-256 · 64 lowercase hex" wide>
+          <input className="mono-input" value={artifactHash} onChange={(event) => { setArtifactHash(event.target.value); setPayload(""); setObservedAt(""); setSignature(""); }} placeholder="Digest of the artifact or maintenance evidence" />
+        </FormField>
+      </div>
+      <button className="prepare-payload-button" type="button" onClick={() => void preparePayload()} disabled={!canRequest || blocked || busy}>
+        Prepare canonical signing payload <span aria-hidden="true">↗</span>
+      </button>
+      {payload && (
+        <form className="evidence-signing-form" onSubmit={(event) => void handleSubmit(event)}>
+          <div className="digest-row"><span>OBSERVED AT · FINAL NEAR BLOCK</span><code>{observedAt}</code></div>
+          <FormField label="Exact UTF-8 payload to sign" wide><textarea className="mono-input signing-payload" value={payload} readOnly rows={6} /></FormField>
+          <button className="copy-payload-button" type="button" onClick={() => void copyPayload()}>Copy signing payload</button>
+          <div className="form-grid evidence-form-grid">
+            <FormField label="Ed25519 signature · 128 lowercase hex" wide><input className="mono-input" value={signature} onChange={(event) => setSignature(event.target.value)} maxLength={128} placeholder="Paste the offline signature" /></FormField>
+            <FormField label="Request storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /></FormField>
+          </div>
+          {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
+          <div className="creation-submit-row"><p>Requesting evaluation spends the evaluator execution budget and reserves callback storage. The contract validates the signature and request binding.</p><button className="lookup-button" type="submit" disabled={busy || !canRequest || blocked || !signature}>{busy ? <><span className="spinner" />Requesting evaluation</> : <>Request evaluation <span aria-hidden="true">↗</span></>}</button></div>
+        </form>
+      )}
+      {!payload && formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
     </section>
   );
 }
@@ -903,6 +1066,31 @@ function createWalletSender(connector: NearConnectorPort): NearTransactionSender
     });
     return decodeTransactionOutcome<T>(outcome);
   };
+}
+
+async function getFinalBlockTimestampNs(rpcUrl: string): Promise<string> {
+  const response = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "lcp-heartbeat-time",
+      method: "block",
+      params: { finality: "final" },
+    }),
+  });
+  if (!response.ok) throw new Error(`NEAR RPC returned HTTP ${response.status} while reading block time.`);
+  const result: unknown = await response.json();
+  if (!isRecord(result)) throw new Error("NEAR RPC returned an invalid block response.");
+  if ("error" in result) throw new Error(`NEAR RPC block query failed: ${JSON.stringify(result.error)}`);
+  if (!isRecord(result.result) || !isRecord(result.result.header)) {
+    throw new Error("NEAR RPC block response is missing its finalized header.");
+  }
+  const timestamp = result.result.header.timestamp_nanosec;
+  if (typeof timestamp !== "string" || !/^(0|[1-9][0-9]*)$/.test(timestamp)) {
+    throw new Error("NEAR RPC returned an invalid finalized block timestamp.");
+  }
+  return timestamp;
 }
 
 function decodeTransactionOutcome<T>(outcome: unknown): T {
