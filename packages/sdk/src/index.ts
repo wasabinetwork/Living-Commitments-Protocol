@@ -112,6 +112,16 @@ export interface CommitmentView {
   storage_deposit_yocto: YoctoNear;
 }
 
+export interface CommitmentSummaryView {
+  id: CommitmentId;
+  subject: string;
+  lifecycle: Lifecycle;
+  effective_health: Health;
+  policy_version: number;
+  escrow_funded_yocto: YoctoNear;
+  escrow_paid_yocto: YoctoNear;
+}
+
 export interface TemporalPolicyView extends Omit<TemporalPolicyInput, "recovery_allowed"> {
   recovery_allowed: boolean;
 }
@@ -274,6 +284,16 @@ export class LcpClient {
 
   getCommitment(id: CommitmentId): Promise<CommitmentView | null> {
     return this.transport.view<CommitmentView | null>(this.contractId, "get_commitment", { commitment_id: id });
+  }
+
+  listCommitments(beforeId: CommitmentId | null, limit: number): Promise<CommitmentSummaryView[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+      return Promise.reject(new Error("Commitment page size must be an integer from 1 to 20."));
+    }
+    return this.transport.view<CommitmentSummaryView[]>(this.contractId, "list_commitments", {
+      before_id: beforeId,
+      limit,
+    });
   }
 
   getPolicy(id: CommitmentId): Promise<CommitmentPolicyView | null> {

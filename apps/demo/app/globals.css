@@ -99,6 +99,28 @@ a { color: inherit; text-decoration: none; }
 .lookup-button span { font-size: 15px; }
 .lookup-hint { margin: 9px 0 0; color: #848a81; font-size: 10px; }
 .lookup-hint code { color: #526357; font: 10px var(--mono); }
+.commitment-browser { margin-top: 12px; }
+.browser-toolbar, .browser-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.browser-toolbar p { margin: 0; color: #81877e; font-size: 10px; }
+.browser-button, .browser-text-button, .browser-more-button { min-height: 34px; border: 1px solid #cbd6c8; border-radius: 2px; padding: 0 12px; background: #f1f5ee; color: #47634a; font-size: 9px; font-weight: 600; }
+.browser-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.browser-button:disabled, .browser-text-button:disabled, .browser-more-button:disabled { opacity: .5; }
+.browser-panel { margin-top: 10px; border: 1px solid #d8d8cf; border-radius: 3px; background: var(--white); }
+.browser-panel-heading { padding: 13px 15px; border-bottom: 1px solid #e6e6de; }
+.browser-panel-heading > div { display: flex; flex-direction: column; gap: 4px; }
+.browser-panel-heading strong { color: #35463a; font: 500 15px var(--serif); }
+.browser-panel-heading span { color: #858b81; font-size: 9px; }
+.browser-text-button { min-height: 29px; }
+.commitment-list-item { width: 100%; min-width: 0; display: grid; grid-template-columns: 52px minmax(100px, 1fr) 165px 175px 16px; align-items: center; gap: 12px; padding: 12px 15px; border: 0; border-bottom: 1px solid #eeeee8; background: transparent; color: var(--ink); text-align: left; }
+.commitment-list-item:last-child { border-bottom: 0; }
+.commitment-list-item:hover:not(:disabled) { background: #f7f8f2; }
+.commitment-list-item:disabled { opacity: .55; }
+.commitment-list-id, .commitment-list-escrow { color: #68766a; font: 9px var(--mono); }
+.commitment-list-subject { overflow: hidden; color: #35463a; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.commitment-list-status { color: #718074; font-size: 9px; }
+.commitment-list-arrow { color: var(--green); font-size: 14px; }
+.browser-empty { margin: 0; padding: 17px 15px; color: #81877e; font-size: 10px; }
+.browser-more-button { display: block; min-width: 180px; margin: 12px auto; }
 .spinner { width: 12px; height: 12px; border: 1.5px solid rgba(255,255,255,.42); border-top-color: white; border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .notice { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; padding: 13px 15px; border: 1px solid; border-radius: 3px; font-size: 12px; line-height: 1.5; }
@@ -339,6 +361,12 @@ a { color: inherit; text-decoration: none; }
   .section-heading h2 { font-size: 31px; }
   .read-source { margin: 0; }
   .lookup-bar { padding: 15px; }
+  .browser-toolbar { align-items: flex-start; flex-direction: column; }
+  .browser-button { width: 100%; }
+  .commitment-list-item { grid-template-columns: 43px minmax(0, 1fr) 14px; gap: 5px 9px; padding: 11px; }
+  .commitment-list-subject { font-size: 9px; }
+  .commitment-list-status, .commitment-list-escrow { grid-column: 2; }
+  .commitment-list-arrow { grid-column: 3; grid-row: 1 / span 3; }
   .lookup-field { flex-wrap: wrap; gap: 8px; }
   .lookup-prefix { padding-right: 0; }
   .lookup-field input { min-height: 42px; flex-basis: calc(100% - 62px); }

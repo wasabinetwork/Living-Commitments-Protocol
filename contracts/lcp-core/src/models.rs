@@ -540,6 +540,18 @@ pub struct CommitmentView {
 
 #[derive(Serialize)]
 #[serde(crate = "near_sdk::serde")]
+pub struct CommitmentSummaryView {
+    pub id: U64,
+    pub subject: String,
+    pub lifecycle: Lifecycle,
+    pub effective_health: Health,
+    pub policy_version: u32,
+    pub escrow_funded_yocto: U128,
+    pub escrow_paid_yocto: U128,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
 pub struct ClaimEligibilityView {
     pub eligible: bool,
     pub reason: Option<String>,

@@ -13,7 +13,8 @@ use crate::{
     models::{
         encode_hex, BudgetPolicy, BudgetPolicyArgs, Challenge, ChallengeStatus, ChallengeView,
         ClaimEligibilityView, Commitment, CommitmentId, CommitmentPolicy, CommitmentPolicyArgs,
-        CommitmentPolicyView, CommitmentView, CreateCommitmentArgs, EscrowStatusView,
+        CommitmentPolicyView, CommitmentSummaryView, CommitmentView, CreateCommitmentArgs,
+        EscrowStatusView,
         EvaluationInput, EvaluationRecord, EvaluationRecordView, EvaluationRequest,
         EvaluationStatus, EvaluationVerdictOutput, EvaluatorPolicy, EvaluatorPolicyArgs,
         EvidencePolicy, GoodObservation, HeartbeatPayload, PendingTransfer,
@@ -31,6 +32,7 @@ const MAX_OUTLAYER_INSTRUCTIONS: u64 = 500_000_000_000;
 const MAX_OUTLAYER_MEMORY_MB: u32 = 4_096;
 const MAX_OUTLAYER_EXECUTION_SECONDS: u64 = 180;
 const MAX_EVALUATIONS_PER_COMMITMENT: u64 = 64;
+const MAX_COMMITMENTS_PAGE_SIZE: u32 = 20;
 const MAX_CHALLENGES_PER_COMMITMENT: u32 = 64;
 const MAX_PROGRAM_EPOCHS: u32 = 64;
 const MAX_EVIDENCE_BYTES: usize = 4_096;
@@ -1334,6 +1336,44 @@ impl Contract {
             pending_yocto: U128(commitment.escrow_pending_yocto),
             free_yocto: U128(free_yocto),
         })
+    }
+
+    /// Returns a bounded page of commitments, newest first. `before_id` is exclusive.
+    pub fn list_commitments(
+        &self,
+        before_id: Option<U64>,
+        limit: u32,
+    ) -> Vec<CommitmentSummaryView> {
+        let page_size = limit.min(MAX_COMMITMENTS_PAGE_SIZE);
+        if page_size == 0 {
+            return Vec::new();
+        }
+        let upper_id = before_id
+            .map(|cursor| cursor.0.saturating_sub(1))
+            .unwrap_or(self.next_commitment_id)
+            .min(self.next_commitment_id);
+        if upper_id == 0 {
+            return Vec::new();
+        }
+        let first_id = upper_id
+            .saturating_sub(u64::from(page_size - 1))
+            .max(1);
+        let now_ns = env::block_timestamp();
+
+        (first_id..=upper_id)
+            .rev()
+            .filter_map(|id| {
+                self.commitments.get(&id).map(|commitment| CommitmentSummaryView {
+                    id: U64(commitment.id),
+                    subject: commitment.subject.clone(),
+                    lifecycle: commitment.lifecycle,
+                    effective_health: health_of(commitment, now_ns),
+                    policy_version: commitment.policy.version,
+                    escrow_funded_yocto: U128(commitment.escrow_funded_yocto),
+                    escrow_paid_yocto: U128(commitment.escrow_paid_yocto),
+                })
+            })
+            .collect()
     }
 
     pub fn get_commitment(&self, commitment_id: U64) -> Option<CommitmentView> {

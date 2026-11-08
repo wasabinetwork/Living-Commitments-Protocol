@@ -1,7 +1,7 @@
 # NEAR Testnet E2E Status
 
 **Last verified:** 2026-11-08  
-**Source revision:** `84e8e50`
+**Source revision:** working-tree build based on `5ce2277`, including Task 011 bounded discovery
 **Network:** NEAR testnet
 
 ## Deployment
@@ -13,6 +13,7 @@
 - **FastFS URL:** <https://test.fastfs.io/livingcommitmentsprotocol.testnet/outlayer.testnet/a38de26a27df0c81dbc8fa099b6f5f3bd32f56dff335afad74686620e58cf44a.wasm>
 - The published evaluator was fetched from FastFS and its bytes matched the local artifact digest.
 - Callback update transaction: [DH1vPf8XAN4pCvK5c3xyqbApXzJdbDCpw3BuzHbKofuK](https://testnet.nearblocks.io/txns/DH1vPf8XAN4pCvK5c3xyqbApXzJdbDCpw3BuzHbKofuK). The current code hash is `At6Xz7m8ULZJyFKEGfM4bqDr3xWNV84e6kLnB34HASiZ` (570,002-byte WASM); the update preserved contract state.
+- Bounded-list update transaction: [BnNAwjHHECiFvqcSavm9oRpnk8kQn3kzWbTyyfEXGkWC](https://testnet.nearblocks.io/txns/BnNAwjHHECiFvqcSavm9oRpnk8kQn3kzWbTyyfEXGkWC). The current code hash is `HBnF7bhE6BPBkRqFSnAPU9KT7kXv988ZVXffqTKdgzX` (576,800-byte WASM); initialized state was preserved. The contract account retained approximately `21.4412 NEAR` after the update.
 
 ## Verified Evaluation
 
@@ -69,6 +70,10 @@ Commitment `5` repeated the mismatched-digest scenario with a 180-second request
 
 Commitment `6` used a valid evaluator artifact with an execution deposit of one yoctoNEAR. The OutLayer promise failed and evaluation request [9cVCENfnAoCBY5pbyP9eVkRCVYESWteANnGhodyvJL66](https://testnet.nearblocks.io/txns/9cVCENfnAoCBY5pbyP9eVkRCVYESWteANnGhodyvJL66) completed as `Failed / OUTLAYER_EXECUTION_FAILED`. The pending pointer cleared, and operations accounting recorded one yoctoNEAR as authorized spend. Commitment `6` was closed in [B3gADB6nAKCZnWeJuYsgZZ6GNtVyVKjL4QSVV616RJm8](https://testnet.nearblocks.io/txns/B3gADB6nAKCZnWeJuYsgZZ6GNtVyVKjL4QSVV616RJm8); its unused escrow refund reconciled in [6AzNBE9UGS2BfYxePgRVgMmAu3WGLnYjKo2JJdi9DDzX](https://testnet.nearblocks.io/txns/6AzNBE9UGS2BfYxePgRVgMmAu3WGLnYjKo2JJdi9DDzX).
 
+### Bounded commitment discovery
+
+The contract now exposes a capped newest-first view, and the demo requests ten records per page with an exclusive `before_id` cursor. After the list update, a finalized RPC view returned commitments `6` through `1`; a second view with `before_id=5` and `limit=2` returned `4` and `3`, confirming the cursor excludes its ID and preserves descending order. The SDK and production demo builds passed. The browser UI still needs a manual run against the deployed contract.
+
 ## Current Testnet State and Remaining Work
 
 - Commitment `1` is `Closed`; its unused escrow was fully refunded. It is no longer a recovery fixture.
@@ -77,15 +82,15 @@ Commitment `6` used a valid evaluator artifact with an execution deposit of one 
 - Commitment `4` is `Closed`; its unused escrow was refunded after its evaluation timed out.
 - Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
 - Commitment `6` is `Closed`; its unused escrow was refunded after an OutLayer promise failure.
-- The deployed evaluator proof, malformed-output rejection under the initial callback, updated null-result classification, promise failure, request timeout, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, closure, and successful refund callbacks are validated.
-- Still open: failed NEAR transfer recovery, arbiter uphold/invalidate challenge paths, broader temporal boundaries, and a full wallet-driven demo run.
-- Historical commitment discovery is still ID-based; design a bounded index or event-backed discovery path before expanding the public demo.
+- The deployed evaluator proof, malformed-output rejection under the initial callback, updated null-result classification, promise failure, request timeout, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, closure, successful refund callbacks, and bounded discovery pagination are validated.
+- Still open: failed NEAR transfer recovery, arbiter uphold/invalidate challenge paths, broader temporal boundaries, and the full wallet-driven demo run (including the new browser UI).
+- The bounded, newest-first commitment listing is deployed and pagination is verified through finalized RPC views. The demo browser is implemented, but its UI still needs manual validation against the deployed contract.
 
 Recommended next sequence:
 
 1. Exercise failed transfer callback recovery and confirm escrow/claim state remains retryable.
 2. Validate arbiter uphold and invalidation on fresh test commitments, then boundary-test `AtRisk`/`Breached` transitions.
-3. Run the complete browser-wallet journey and decide on a bounded discovery/indexing design.
+3. Run the browser against the deployed contract, validate the recent/older commitment list UI, then complete the full wallet-driven journey.
 
 ## Local Configuration and Verifier Note
 

@@ -8,6 +8,7 @@ import {
 import type {
   ChallengeView,
   ClaimEligibilityView,
+  CommitmentSummaryView,
   CreateCommitmentArgs,
   HeartbeatSigningInput,
   CommitmentPolicyView,
@@ -72,10 +73,16 @@ const NEAR_NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK_ID?.trim() === "mai
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
 const EVALUATION_HISTORY_LIMIT = 10;
+const COMMITMENT_PAGE_SIZE = 10;
 
 export function Dashboard() {
   const connectorRef = useRef<NearConnectorPort | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
+  const [commitments, setCommitments] = useState<CommitmentSummaryView[]>([]);
+  const [commitmentsVisible, setCommitmentsVisible] = useState(false);
+  const [commitmentCursor, setCommitmentCursor] = useState<string | null>(null);
+  const [hasMoreCommitments, setHasMoreCommitments] = useState(false);
+  const [loadingCommitments, setLoadingCommitments] = useState(false);
   const [data, setData] = useState<CommitmentData | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
   const [depositNear, setDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
@@ -93,6 +100,27 @@ export function Dashboard() {
   const [activationStorageNear, setActivationStorageNear] = useState(DEFAULT_STORAGE_DEPOSIT);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  async function loadCommitmentPage(beforeId: string | null, append: boolean) {
+    if (!CONTRACT_ID) {
+      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local to browse commitments.");
+      return;
+    }
+    setLoadingCommitments(true);
+    setError(null);
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+      const page = await client.listCommitments(beforeId, COMMITMENT_PAGE_SIZE);
+      setCommitments((current) => append ? [...current, ...page] : page);
+      setCommitmentCursor(page.length > 0 ? page[page.length - 1].id : append ? beforeId : null);
+      setHasMoreCommitments(page.length === COMMITMENT_PAGE_SIZE);
+      setCommitmentsVisible(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Recent commitments could not be loaded.");
+    } finally {
+      setLoadingCommitments(false);
+    }
+  }
 
   async function loadCommitment(id = commitmentId): Promise<boolean> {
     const normalizedId = id.trim();
@@ -617,6 +645,58 @@ export function Dashboard() {
             {CONTRACT_ID ? <>Reading <code>{CONTRACT_ID}</code> via NEAR Testnet RPC.</> : <>Configure <code>NEXT_PUBLIC_LCP_CONTRACT_ID</code> to begin.</>}
           </p>
         </form>
+
+        <section className="commitment-browser" aria-label="Recent commitments">
+          <div className="browser-toolbar">
+            <p>Browse commitments in reverse creation order.</p>
+            <button
+              className="browser-button"
+              type="button"
+              disabled={loadingCommitments || !CONTRACT_ID}
+              onClick={() => {
+                if (commitmentsVisible) setCommitmentsVisible(false);
+                else void loadCommitmentPage(null, false);
+              }}
+            >
+              {loadingCommitments ? "Loading recent commitments…" : commitmentsVisible ? "Hide recent commitments" : "Browse recent commitments"}
+            </button>
+          </div>
+          {commitmentsVisible && (
+            <div className="browser-panel">
+              <div className="browser-panel-heading">
+                <div><strong>Recent commitments</strong><span>Latest on-chain state · page size {COMMITMENT_PAGE_SIZE}</span></div>
+                <button className="browser-text-button" type="button" disabled={loadingCommitments} onClick={() => void loadCommitmentPage(null, false)}>Latest</button>
+              </div>
+              {commitments.length > 0 ? (
+                <div className="commitment-list" role="list">
+                  {commitments.map((commitment) => (
+                    <button
+                      className="commitment-list-item"
+                      type="button"
+                      role="listitem"
+                      key={commitment.id}
+                      disabled={loading}
+                      onClick={() => void loadCommitment(commitment.id)}
+                    >
+                      <span className="commitment-list-id">#{commitment.id}</span>
+                      <span className="commitment-list-subject">{commitment.subject}</span>
+                      <span className="commitment-list-status">{commitment.lifecycle} · {commitment.effective_health}</span>
+                      <span className="commitment-list-escrow">{formatNear(commitment.escrow_paid_yocto)} / {formatNear(commitment.escrow_funded_yocto)} NEAR paid</span>
+                      <span className="commitment-list-arrow" aria-hidden="true">↗</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="browser-empty">{loadingCommitments ? "Reading recent commitments…" : "No commitments found yet."}</p>
+              )}
+              {hasMoreCommitments && commitmentCursor && (
+                <button className="browser-more-button" type="button" disabled={loadingCommitments} onClick={() => void loadCommitmentPage(commitmentCursor, true)}>
+                  {loadingCommitments ? "Loading…" : "Load older commitments"}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
 
         <details className="create-commitment">
           <summary><span className="create-plus">＋</span><span><strong>Create a commitment</strong><small>Set a policy and create a draft on NEAR Testnet</small></span><span className="summary-arrow">⌄</span></summary>
