@@ -77,7 +77,7 @@ The contract now exposes a capped newest-first view, and the demo requests ten r
 ## Current Testnet State and Remaining Work
 
 - Commitment `1` is `Closed`; its unused escrow was fully refunded. It is no longer a recovery fixture.
-- Commitment `2` remains `Active` and `Healthy`; its only tranche is `Paid` to the distinct beneficiary.
+- Commitment `2` remains `Active`; its effective health is now `Breached` because the accepted heartbeat evidence has aged beyond its freshness window. Its only funded tranche remains `Paid` to the distinct beneficiary.
 - Commitment `3` is `Closed`; its unused escrow was fully refunded after the malformed evaluator output was rejected.
 - Commitment `4` is `Closed`; its unused escrow was refunded after its evaluation timed out.
 - Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
