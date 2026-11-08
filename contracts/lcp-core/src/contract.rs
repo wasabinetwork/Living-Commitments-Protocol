@@ -1,3 +1,5 @@
+#[cfg(feature = "testnet-transfer-failure-fixture")]
+use near_sdk::AccountId;
 use near_sdk::{
     borsh::BorshSerialize,
     env,
@@ -53,6 +55,8 @@ enum StorageKey {
     EvaluationRecords,
     Tranches,
     PendingTransfers,
+    #[cfg(feature = "testnet-transfer-failure-fixture")]
+    TestTransferFailureRecipients,
 }
 
 #[near(contract_state)]
@@ -68,6 +72,8 @@ pub struct Contract {
     evaluation_records: LookupMap<(CommitmentId, u64), EvaluationRecord>,
     tranches: LookupMap<(CommitmentId, u32), Tranche>,
     pending_transfers: LookupMap<u64, PendingTransfer>,
+    #[cfg(feature = "testnet-transfer-failure-fixture")]
+    test_transfer_failure_recipients: LookupMap<CommitmentId, AccountId>,
 }
 
 #[near]
@@ -85,6 +91,10 @@ impl Contract {
             evaluation_records: LookupMap::new(StorageKey::EvaluationRecords),
             tranches: LookupMap::new(StorageKey::Tranches),
             pending_transfers: LookupMap::new(StorageKey::PendingTransfers),
+            #[cfg(feature = "testnet-transfer-failure-fixture")]
+            test_transfer_failure_recipients: LookupMap::new(
+                StorageKey::TestTransferFailureRecipients,
+            ),
         }
     }
 
@@ -966,6 +976,15 @@ impl Contract {
         let tranche_key = (commitment_id.0, epoch);
 
         let tranche_amount = commitment.policy.budget.tranche_yocto;
+        #[cfg(feature = "testnet-transfer-failure-fixture")]
+        let recipient = self
+            .test_transfer_failure_recipients
+            .remove(&commitment_id.0)
+            .unwrap_or_else(|| commitment.policy.budget.beneficiary.clone());
+        #[cfg(feature = "testnet-transfer-failure-fixture")]
+        self.test_transfer_failure_recipients.flush();
+        #[cfg(not(feature = "testnet-transfer-failure-fixture"))]
+        let recipient = commitment.policy.budget.beneficiary.clone();
 
         let transfer_id = self
             .next_transfer_id
@@ -988,7 +1007,7 @@ impl Contract {
             commitment_id: commitment_id.0,
             kind: TransferKind::Tranche,
             epoch: Some(epoch),
-            recipient: commitment.policy.budget.beneficiary.clone(),
+            recipient: recipient.clone(),
             amount_yocto: tranche_amount,
         };
 
@@ -1025,7 +1044,7 @@ impl Contract {
             "transfer_id": U64(transfer_id),
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize tranche callback"));
-        let _transfer_promise = Promise::new(pending_transfer.recipient.clone())
+        let _transfer_promise = Promise::new(recipient)
             .transfer(NearToken::from_yoctonear(pending_transfer.amount_yocto))
             .then(Promise::new(env::current_account_id()).function_call(
                 "on_tranche_transfer".to_string(),
@@ -1046,6 +1065,36 @@ impl Contract {
             }),
         );
         U64(transfer_id)
+    }
+
+    /// One-shot receiver override available only in the dedicated testnet fixture build.
+    #[cfg(feature = "testnet-transfer-failure-fixture")]
+    pub fn testnet_set_next_transfer_recipient(
+        &mut self,
+        commitment_id: U64,
+        recipient: AccountId,
+    ) {
+        require!(
+            env::current_account_id().as_str()
+                == "failed-transfer-fixture.livingcommitmentsprotocol.testnet",
+            "transfer failure hook is restricted to its dedicated testnet contract"
+        );
+        let commitment = self.load_commitment(commitment_id.0);
+        require!(
+            env::predecessor_account_id() == commitment.policy.budget.sponsor,
+            "only the configured sponsor may arm the test transfer"
+        );
+        require!(
+            commitment.lifecycle == Lifecycle::Active,
+            "test transfer target can only be set on an active commitment"
+        );
+        require!(
+            recipient != commitment.policy.budget.beneficiary,
+            "test transfer target must differ from the beneficiary"
+        );
+        self.test_transfer_failure_recipients
+            .insert(commitment_id.0, recipient);
+        self.test_transfer_failure_recipients.flush();
     }
 
     #[private]

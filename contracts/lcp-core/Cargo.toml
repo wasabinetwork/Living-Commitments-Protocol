@@ -8,6 +8,9 @@ rust-version.workspace = true
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+testnet-transfer-failure-fixture = []
+
 [dependencies]
 near-sdk.workspace = true
 bs58.workspace = true
