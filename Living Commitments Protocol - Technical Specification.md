@@ -1342,7 +1342,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. `packages/sdk` provides typed calls and views, heartbeat message construction, event parsing, and NEAR JSON-RPC reads with an injected transaction sender. Live testnet execution is still required to confirm evaluator hashes, response bytes, gas, and attestation mapping; wallet connection UI and the demo remain open.
+**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. `packages/sdk` provides typed calls and views, heartbeat message construction, event parsing, and NEAR JSON-RPC reads with an injected transaction sender. `apps/demo` provides commitment-by-ID reads, testnet wallet connection, and an eligible beneficiary tranche claim. Commitment creation, evidence signing/submission, historical indexing, and the OutLayer execution link remain open. Live testnet execution is still required to confirm evaluator hashes, response bytes, gas, and attestation mapping.
 
 ## Milestone A — Pure engine
 

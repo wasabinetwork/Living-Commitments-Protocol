@@ -1,0 +1,13 @@
+{
+  "name": "living-commitments-protocol",
+  "private": true,
+  "workspaces": [
+    "packages/sdk",
+    "apps/demo"
+  ],
+  "scripts": {
+    "build:sdk": "npm run build --workspace=@lcp/sdk",
+    "dev": "npm run dev --workspace=@lcp/demo",
+    "build": "npm run build --workspace=@lcp/demo"
+  }
+}
