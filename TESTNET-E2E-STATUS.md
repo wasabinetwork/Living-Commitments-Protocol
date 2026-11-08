@@ -63,19 +63,22 @@ Commitment `4` used the mismatched-digest fixture against the updated contract. 
 
 Commitment `4` was closed in [9YwHqZyFUTtyoYgRJBpru3Boxp6adzhAZqxrKHrSenAr](https://testnet.nearblocks.io/txns/9YwHqZyFUTtyoYgRJBpru3Boxp6adzhAZqxrKHrSenAr) and its unused escrow refund reconciled in [E5ncJXMB8QdZX8KGFU5WefCcHa7ZmfcxwhsahvtPNPW](https://testnet.nearblocks.io/txns/E5ncJXMB8QdZX8KGFU5WefCcHa7ZmfcxwhsahvtPNPW).
 
+Commitment `5` repeated the mismatched-digest scenario with a 180-second request deadline. Evaluation request [DDzr53ZFHb28qRowupk5R7EAMGH9sVZLyTy7r5LNThQf](https://testnet.nearblocks.io/txns/DDzr53ZFHb28qRowupk5R7EAMGH9sVZLyTy7r5LNThQf) returned JSON `null` before the deadline. The updated callback recorded `Failed / MISSING_OUTLAYER_RESULT`, preserved output hash `74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b`, and cleared the pending pointer. Commitment `5` was closed in [5NaMLAsb8JbXGf8kRkB3hLoCHmfs6aT2iM11zTtWb8pj](https://testnet.nearblocks.io/txns/5NaMLAsb8JbXGf8kRkB3hLoCHmfs6aT2iM11zTtWb8pj) and its unused escrow refund reconciled in [AFcg1Gk9QhRW9QdKWQpJaGe9eywyGQ5xUJNyPtRcYKeo](https://testnet.nearblocks.io/txns/AFcg1Gk9QhRW9QdKWQpJaGe9eywyGQ5xUJNyPtRcYKeo).
+
 ## Current Testnet State and Remaining Work
 
 - Commitment `1` is `Closed`; its unused escrow was fully refunded. It is no longer a recovery fixture.
 - Commitment `2` remains `Active` and `Healthy`; its only tranche is `Paid` to the distinct beneficiary.
 - Commitment `3` is `Closed`; its unused escrow was fully refunded after the malformed evaluator output was rejected.
 - Commitment `4` is `Closed`; its unused escrow was refunded after its evaluation timed out.
-- The deployed evaluator proof, malformed-output rejection, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, one OutLayer request timeout, closure, and successful refund callbacks are validated.
-- Still open: genuine OutLayer promise rejection, a post-update JSON `null` response, failed NEAR transfer recovery, arbiter uphold/invalidate challenge paths, broader temporal boundaries, and a full wallet-driven demo run.
+- Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
+- The deployed evaluator proof, malformed-output rejection under the initial callback, updated null-result classification, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, one OutLayer request timeout, closure, and successful refund callbacks are validated.
+- Still open: genuine OutLayer promise rejection, failed NEAR transfer recovery, arbiter uphold/invalidate challenge paths, broader temporal boundaries, and a full wallet-driven demo run.
 - Historical commitment discovery is still ID-based; design a bounded index or event-backed discovery path before expanding the public demo.
 
 Recommended next sequence:
 
-1. Reproduce a genuine OutLayer promise rejection and a post-update JSON `null` result; confirm `Failed` status mapping for each.
+1. Reproduce a genuine OutLayer promise rejection and confirm the `OUTLAYER_EXECUTION_FAILED` status mapping.
 2. Exercise failed transfer callback recovery and confirm escrow/claim state remains retryable.
 3. Validate arbiter uphold and invalidation on fresh test commitments, then boundary-test `AtRisk`/`Breached` transitions.
 4. Run the complete browser-wallet journey and decide on a bounded discovery/indexing design.
