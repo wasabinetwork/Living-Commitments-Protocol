@@ -7,6 +7,7 @@ import {
 import type {
   ChallengeView,
   ClaimEligibilityView,
+  CreateCommitmentArgs,
   CommitmentPolicyView,
   CommitmentView,
   EvaluationRecordView,
@@ -16,6 +17,7 @@ import type {
   TrancheView,
 } from "@lcp/sdk";
 import { useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 
 interface WalletAction {
   type: "FunctionCall";
@@ -56,6 +58,8 @@ interface CommitmentData {
   tranche: TrancheView | null;
 }
 
+type DraftAction = "escrow" | "operations" | "activate";
+
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
@@ -69,18 +73,23 @@ export function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [draftAction, setDraftAction] = useState<DraftAction | null>(null);
+  const [escrowFundingNear, setEscrowFundingNear] = useState("0.03");
+  const [operationsFundingNear, setOperationsFundingNear] = useState("0.01");
+  const [activationStorageNear, setActivationStorageNear] = useState(DEFAULT_STORAGE_DEPOSIT);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
-  async function loadCommitment(id = commitmentId) {
+  async function loadCommitment(id = commitmentId): Promise<boolean> {
     const normalizedId = id.trim();
     if (!CONTRACT_ID) {
       setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local to connect this demo to a deployed contract.");
-      return;
+      return false;
     }
     if (!/^(0|[1-9][0-9]*)$/.test(normalizedId)) {
       setError("Enter a commitment ID as a whole number, such as 1.");
-      return;
+      return false;
     }
 
     setCommitmentId(normalizedId);
@@ -102,7 +111,7 @@ export function Dashboard() {
       if (!commitment) {
         setData(null);
         setError(`Commitment ${normalizedId} was not found on ${CONTRACT_ID}.`);
-        return;
+        return false;
       }
 
       const [challenge, tranche] = await Promise.all([
@@ -112,9 +121,11 @@ export function Dashboard() {
         epoch ? client.getTranche(normalizedId, epoch) : Promise.resolve(null),
       ]);
       setData({ commitment, policy, evaluation, challenge, eligibility, escrow, epoch, tranche });
+      return true;
     } catch (cause) {
       setData(null);
       setError(cause instanceof Error ? cause.message : "The commitment could not be loaded.");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -137,6 +148,100 @@ export function Dashboard() {
       setError(cause instanceof Error ? cause.message : "Wallet connection was not completed.");
     } finally {
       setConnecting(false);
+    }
+  }
+
+  async function createCommitment(args: CreateCommitmentArgs, storageDeposit: string) {
+    if (!CONTRACT_ID) {
+      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local before creating a commitment.");
+      return;
+    }
+    const connector = connectorRef.current;
+    if (!connector || !accountId) {
+      setError("Connect a testnet wallet before creating a commitment.");
+      return;
+    }
+
+    setCreating(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const transport = new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      });
+      const newId = await new LcpClient(CONTRACT_ID, transport).createCommitment(args, {
+        attachedDepositYocto: storageDeposit,
+        gas: "150000000000000",
+      });
+      const id = String(newId);
+      setCommitmentId(id);
+      const loaded = await loadCommitment(id);
+      setActionMessage(loaded
+        ? `Draft commitment #${id} created. Fund its escrow and evaluator budget, then activate it.`
+        : `Draft creation returned ID #${id}. Reload the commitment to verify its current state.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The commitment could not be created.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function submitDraftAction(action: DraftAction) {
+    if (!data) return;
+    const connector = connectorRef.current;
+    if (!connector || !accountId) {
+      setError("Connect a testnet wallet before changing this draft.");
+      return;
+    }
+    const { commitment, policy } = data;
+    const isSponsor = accountId === policy?.budget.sponsor;
+    const canActivate = accountId === commitment.creator
+      || accountId === commitment.maintainer
+      || isSponsor;
+    if ((action === "escrow" || action === "operations") && !isSponsor) {
+      setError(`Only ${policy?.budget.sponsor} can fund this commitment.`);
+      return;
+    }
+    if (action === "activate" && !canActivate) {
+      setError("Only the creator, maintainer, or sponsor can activate this commitment.");
+      return;
+    }
+
+    setDraftAction(action);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      if (action === "escrow") {
+        const amount = parseNearToYocto(escrowFundingNear);
+        if (BigInt(amount) === 0n) throw new Error("Escrow funding must be greater than zero.");
+        await client.fundCommitment(commitment.id, amount, { gas: "100000000000000" });
+      } else if (action === "operations") {
+        const amount = parseNearToYocto(operationsFundingNear);
+        if (BigInt(amount) === 0n) throw new Error("Operations funding must be greater than zero.");
+        await client.fundOperations(commitment.id, amount, { gas: "100000000000000" });
+      } else {
+        const storageDeposit = parseNearToYocto(activationStorageNear);
+        if (BigInt(storageDeposit) === 0n) throw new Error("Activation storage deposit must be greater than zero.");
+        await client.activateCommitment(commitment.id, {
+          attachedDepositYocto: storageDeposit,
+          gas: "150000000000000",
+        });
+      }
+      const loaded = await loadCommitment(commitment.id);
+      setActionMessage(loaded
+        ? action === "activate"
+          ? `Commitment #${commitment.id} is active.`
+          : `${action === "escrow" ? "Escrow" : "Evaluator operations"} funding transaction submitted.`
+        : `The ${action === "activate" ? "activation" : "funding"} transaction returned successfully. Reload commitment #${commitment.id} to verify its current state.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The draft action could not be completed.");
+    } finally {
+      setDraftAction(null);
     }
   }
 
@@ -252,11 +357,35 @@ export function Dashboard() {
           </p>
         </form>
 
+        <details className="create-commitment">
+          <summary><span className="create-plus">＋</span><span><strong>Create a commitment</strong><small>Set a policy and create a draft on NEAR Testnet</small></span><span className="summary-arrow">⌄</span></summary>
+          <CreateCommitmentForm
+            connectedAccountId={accountId}
+            contractConfigured={Boolean(CONTRACT_ID)}
+            busy={creating}
+            onCreate={createCommitment}
+          />
+        </details>
+
         {error && <div className="notice notice-error" role="alert"><span className="notice-icon">!</span>{error}</div>}
         {actionMessage && <div className="notice notice-success" role="status"><span className="notice-icon">✓</span>{actionMessage}</div>}
 
         {data ? (
           <div className="record-view">
+            {data.commitment.lifecycle === "Draft" && data.policy && (
+              <DraftSetupCard
+                data={data}
+                accountId={accountId}
+                escrowFundingNear={escrowFundingNear}
+                operationsFundingNear={operationsFundingNear}
+                activationStorageNear={activationStorageNear}
+                busyAction={draftAction}
+                onEscrowFundingChange={setEscrowFundingNear}
+                onOperationsFundingChange={setOperationsFundingNear}
+                onActivationStorageChange={setActivationStorageNear}
+                onAction={submitDraftAction}
+              />
+            )}
             <section className={`health-panel health-${health?.toLowerCase() ?? "unknown"}`}>
               <div className="health-panel-top">
                 <div>
@@ -421,6 +550,342 @@ function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: 
   );
 }
 
+function DraftSetupCard({
+  data,
+  accountId,
+  escrowFundingNear,
+  operationsFundingNear,
+  activationStorageNear,
+  busyAction,
+  onEscrowFundingChange,
+  onOperationsFundingChange,
+  onActivationStorageChange,
+  onAction,
+}: {
+  data: CommitmentData;
+  accountId: string | null;
+  escrowFundingNear: string;
+  operationsFundingNear: string;
+  activationStorageNear: string;
+  busyAction: DraftAction | null;
+  onEscrowFundingChange: (value: string) => void;
+  onOperationsFundingChange: (value: string) => void;
+  onActivationStorageChange: (value: string) => void;
+  onAction: (action: DraftAction) => Promise<void>;
+}) {
+  const { commitment, policy } = data;
+  if (!policy) return null;
+  const escrowTarget = BigInt(policy.budget.max_epochs) * BigInt(policy.budget.tranche_yocto);
+  const escrowFunded = BigInt(commitment.escrow_funded_yocto);
+  const operationsTarget = BigInt(policy.evaluator.execution_deposit_yocto);
+  const operationsFunded = BigInt(commitment.operations_funded_yocto);
+  const escrowReady = escrowFunded >= escrowTarget;
+  const operationsReady = operationsFunded >= operationsTarget;
+  const sponsorCanFund = accountId === policy.budget.sponsor;
+  const canActivate = accountId === commitment.creator || accountId === commitment.maintainer || sponsorCanFund;
+  const busy = busyAction !== null;
+
+  return (
+    <section className="content-card draft-setup">
+      <div className="card-heading">
+        <div><p className="eyebrow">DRAFT · REQUIRED BEFORE EVIDENCE</p><h3>Prepare this commitment</h3></div>
+        <span className="card-index">SETUP</span>
+      </div>
+      <p className="draft-intro">Each step is a separate wallet transaction. The contract will not activate this commitment until its full escrow and one evaluator execution are funded.</p>
+      <div className="setup-grid">
+        <div className="setup-step">
+          <div className="setup-step-title"><span className={escrowReady ? "setup-check ready" : "setup-check"}>{escrowReady ? "✓" : "1"}</span><div><strong>Fund commitment escrow</strong><small>{formatNear(escrowFunded)} / {formatNear(escrowTarget)} NEAR</small></div></div>
+          <label htmlFor="escrow-funding">Amount to attach <span>NEAR</span></label>
+          <div className="setup-input-row"><input id="escrow-funding" inputMode="decimal" value={escrowFundingNear} onChange={(event) => onEscrowFundingChange(event.target.value)} /><button onClick={() => void onAction("escrow")} disabled={busy || !sponsorCanFund}>{busyAction === "escrow" ? "Sending…" : !sponsorCanFund ? "Sponsor wallet required" : escrowReady ? "Add escrow" : "Fund escrow"}</button></div>
+          <small className="setup-help">Target reserves {policy.budget.max_epochs} tranches at {formatNear(policy.budget.tranche_yocto)} NEAR each.</small>
+        </div>
+        <div className="setup-step">
+          <div className="setup-step-title"><span className={operationsReady ? "setup-check ready" : "setup-check"}>{operationsReady ? "✓" : "2"}</span><div><strong>Fund evaluator operations</strong><small>{formatNear(operationsFunded)} / {formatNear(operationsTarget)} NEAR</small></div></div>
+          <label htmlFor="operations-funding">Amount to attach <span>NEAR</span></label>
+          <div className="setup-input-row"><input id="operations-funding" inputMode="decimal" value={operationsFundingNear} onChange={(event) => onOperationsFundingChange(event.target.value)} /><button onClick={() => void onAction("operations")} disabled={busy || !sponsorCanFund}>{busyAction === "operations" ? "Sending…" : !sponsorCanFund ? "Sponsor wallet required" : operationsReady ? "Add operations funds" : "Fund operations"}</button></div>
+          <small className="setup-help">At least one evaluator execution deposit is required before activation.</small>
+        </div>
+        <div className="setup-step setup-step-activate">
+          <div className="setup-step-title"><span className={escrowReady && operationsReady ? "setup-check ready" : "setup-check"}>{escrowReady && operationsReady ? "✓" : "3"}</span><div><strong>Activate the commitment</strong><small>{escrowReady && operationsReady ? "Funding requirements met" : "Waiting for both funding steps"}</small></div></div>
+          <label htmlFor="activation-storage">Temporary storage deposit <span>NEAR</span></label>
+          <div className="setup-input-row"><input id="activation-storage" inputMode="decimal" value={activationStorageNear} onChange={(event) => onActivationStorageChange(event.target.value)} /><button onClick={() => void onAction("activate")} disabled={busy || !escrowReady || !operationsReady || !canActivate}>{busyAction === "activate" ? "Sending…" : !canActivate ? "Authorized wallet required" : "Activate"}</button></div>
+          <small className="setup-help">Excess storage deposit is refunded by the contract.</small>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+interface CreationFields {
+  subject: string;
+  maintainer: string;
+  arbiter: string;
+  sponsor: string;
+  beneficiary: string;
+  maintainerPublicKey: string;
+  wasmUrl: string;
+  wasmSha256: string;
+  initialWindowSeconds: string;
+  evidenceTtlSeconds: string;
+  graceSeconds: string;
+  maxSourceLagSeconds: string;
+  challengeWindowSeconds: string;
+  resolutionTimeoutSeconds: string;
+  recoveryAllowed: boolean;
+  epochSeconds: string;
+  maxEpochs: string;
+  trancheNear: string;
+  executionDepositNear: string;
+  maxInstructions: string;
+  maxMemoryMb: string;
+  maxExecutionSeconds: string;
+  requestTimeoutSeconds: string;
+  storageDepositNear: string;
+}
+
+function CreateCommitmentForm({
+  connectedAccountId,
+  contractConfigured,
+  busy,
+  onCreate,
+}: {
+  connectedAccountId: string | null;
+  contractConfigured: boolean;
+  busy: boolean;
+  onCreate: (args: CreateCommitmentArgs, storageDeposit: string) => Promise<void>;
+}) {
+  const [fields, setFields] = useState<CreationFields>({
+    subject: "Open source service maintenance",
+    maintainer: "",
+    arbiter: "",
+    sponsor: "",
+    beneficiary: "",
+    maintainerPublicKey: "",
+    wasmUrl: "",
+    wasmSha256: "",
+    initialWindowSeconds: "60",
+    evidenceTtlSeconds: "240",
+    graceSeconds: "120",
+    maxSourceLagSeconds: "30",
+    challengeWindowSeconds: "60",
+    resolutionTimeoutSeconds: "120",
+    recoveryAllowed: true,
+    epochSeconds: "300",
+    maxEpochs: "3",
+    trancheNear: "0.01",
+    executionDepositNear: "0.01",
+    maxInstructions: "1000000000",
+    maxMemoryMb: "64",
+    maxExecutionSeconds: "10",
+    requestTimeoutSeconds: "30",
+    storageDepositNear: DEFAULT_STORAGE_DEPOSIT,
+  });
+  const [formError, setFormError] = useState<string | null>(null);
+
+  function update<K extends keyof CreationFields>(key: K, value: CreationFields[K]) {
+    setFields((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    try {
+      const args = buildCreateCommitmentArgs(fields, connectedAccountId);
+      const storageDeposit = parseNearToYocto(fields.storageDepositNear);
+      if (BigInt(storageDeposit) === 0n) throw new Error("Storage deposit must be greater than zero.");
+      await onCreate(args, storageDeposit);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "Check the commitment details and try again.");
+    }
+  }
+
+  const escrowPreview = previewEscrow(fields.maxEpochs, fields.trancheNear);
+  const account = (value: string) => value || connectedAccountId || "";
+
+  return (
+    <form className="creation-form" onSubmit={(event) => void handleSubmit(event)}>
+      <div className="creation-intro"><p>Creation stores an immutable policy and makes a Draft. Funding and activation are separate transactions below.</p><span>TESTNET ONLY · NO SAMPLE POLICY</span></div>
+      <div className="creation-section-heading"><span>01</span><div><strong>People &amp; promise</strong><small>Who commits, funds, arbitrates, and receives support.</small></div></div>
+      <div className="form-grid">
+        <FormField label="Commitment subject" wide><input maxLength={128} value={fields.subject} onChange={(event) => update("subject", event.target.value)} placeholder="e.g. Maintain the community API" required /></FormField>
+        <FormField label="Maintainer account"><input value={account(fields.maintainer)} onChange={(event) => update("maintainer", event.target.value)} placeholder="maintainer.testnet" required /></FormField>
+        <FormField label="Arbiter account"><input value={account(fields.arbiter)} onChange={(event) => update("arbiter", event.target.value)} placeholder="arbiter.testnet" required /></FormField>
+        <FormField label="Sponsor account"><input value={account(fields.sponsor)} onChange={(event) => update("sponsor", event.target.value)} placeholder="sponsor.testnet" required /></FormField>
+        <FormField label="Beneficiary account"><input value={account(fields.beneficiary)} onChange={(event) => update("beneficiary", event.target.value)} placeholder="beneficiary.testnet" required /></FormField>
+      </div>
+
+      <div className="creation-section-heading"><span>02</span><div><strong>Evidence &amp; evaluator</strong><small>Pin the maintainer’s public key and the exact evaluator artifact.</small></div></div>
+      <div className="form-grid">
+        <FormField label="Maintainer Ed25519 public key · 64 lowercase hex" wide><input className="mono-input" value={fields.maintainerPublicKey} onChange={(event) => update("maintainerPublicKey", event.target.value)} placeholder="Public key only — never enter a private key" required /></FormField>
+        <FormField label="Evaluator WASM HTTPS URL" wide><input value={fields.wasmUrl} onChange={(event) => update("wasmUrl", event.target.value)} placeholder="https://…/maintenance-heartbeat.wasm" required /></FormField>
+        <FormField label="Evaluator WASM SHA-256 · 64 lowercase hex" wide><input className="mono-input" value={fields.wasmSha256} onChange={(event) => update("wasmSha256", event.target.value)} placeholder="Digest of the exact uploaded WASM file" required /></FormField>
+      </div>
+
+      <div className="creation-section-heading"><span>03</span><div><strong>Time &amp; consequence</strong><small>Short windows suit a testnet walkthrough. NEAR block time governs the real state.</small></div></div>
+      <div className="form-grid form-grid-3">
+        <FormField label="Initial evidence window · sec"><input type="number" min="1" step="1" value={fields.initialWindowSeconds} onChange={(event) => update("initialWindowSeconds", event.target.value)} required /></FormField>
+        <FormField label="Evidence freshness TTL · sec"><input type="number" min="1" step="1" value={fields.evidenceTtlSeconds} onChange={(event) => update("evidenceTtlSeconds", event.target.value)} required /></FormField>
+        <FormField label="Grace period · sec"><input type="number" min="1" step="1" value={fields.graceSeconds} onChange={(event) => update("graceSeconds", event.target.value)} required /></FormField>
+        <FormField label="Max source lag · sec"><input type="number" min="1" step="1" value={fields.maxSourceLagSeconds} onChange={(event) => update("maxSourceLagSeconds", event.target.value)} required /></FormField>
+        <FormField label="Challenge window · sec"><input type="number" min="1" step="1" value={fields.challengeWindowSeconds} onChange={(event) => update("challengeWindowSeconds", event.target.value)} required /></FormField>
+        <FormField label="Resolution timeout · sec"><input type="number" min="1" step="1" value={fields.resolutionTimeoutSeconds} onChange={(event) => update("resolutionTimeoutSeconds", event.target.value)} required /></FormField>
+        <FormField label="Budget epoch · sec"><input type="number" min="1" step="1" value={fields.epochSeconds} onChange={(event) => update("epochSeconds", event.target.value)} required /></FormField>
+        <FormField label="Maximum epochs · 1–64"><input type="number" min="1" max="64" step="1" value={fields.maxEpochs} onChange={(event) => update("maxEpochs", event.target.value)} required /></FormField>
+        <FormField label="Tranche per epoch · NEAR"><input inputMode="decimal" value={fields.trancheNear} onChange={(event) => update("trancheNear", event.target.value)} required /></FormField>
+        <label className="recovery-toggle"><input type="checkbox" checked={fields.recoveryAllowed} onChange={(event) => update("recoveryAllowed", event.target.checked)} /><span><strong>Allow recovery</strong><small>A fresh compliant evaluation may restore future eligibility.</small></span></label>
+      </div>
+
+      <div className="creation-section-heading"><span>04</span><div><strong>OutLayer execution limits</strong><small>Configure the testnet evaluator account and execution budget.</small></div></div>
+      <div className="form-grid form-grid-3">
+        <FormField label="OutLayer account"><select value="outlayer.testnet" disabled><option value="outlayer.testnet">outlayer.testnet</option></select></FormField>
+        <FormField label="Build target"><select value="wasm32-wasip2" disabled><option value="wasm32-wasip2">wasm32-wasip2</option></select></FormField>
+        <FormField label="Execution deposit · NEAR"><input inputMode="decimal" value={fields.executionDepositNear} onChange={(event) => update("executionDepositNear", event.target.value)} required /></FormField>
+        <FormField label="Maximum instructions"><input inputMode="numeric" value={fields.maxInstructions} onChange={(event) => update("maxInstructions", event.target.value)} required /></FormField>
+        <FormField label="Memory limit · MB"><input type="number" min="1" max="4096" step="1" value={fields.maxMemoryMb} onChange={(event) => update("maxMemoryMb", event.target.value)} required /></FormField>
+        <FormField label="Execution limit · sec"><input type="number" min="1" max="180" step="1" value={fields.maxExecutionSeconds} onChange={(event) => update("maxExecutionSeconds", event.target.value)} required /></FormField>
+        <FormField label="Request timeout · sec"><input type="number" min="1" step="1" value={fields.requestTimeoutSeconds} onChange={(event) => update("requestTimeoutSeconds", event.target.value)} required /></FormField>
+        <FormField label="Create storage deposit · NEAR"><input inputMode="decimal" value={fields.storageDepositNear} onChange={(event) => update("storageDepositNear", event.target.value)} required /></FormField>
+      </div>
+
+      <div className="creation-summary"><span>FULL ESCROW TARGET</span><strong>{escrowPreview} NEAR</strong><small>Calculated from max epochs × tranche size; fund this separately after creation.</small></div>
+      {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
+      {!connectedAccountId && <p className="form-wallet-hint">Connect a testnet wallet to create the draft. Your wallet account becomes the on-chain creator.</p>}
+      {!contractConfigured && <p className="form-wallet-hint">Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local before creating.</p>}
+      <div className="creation-submit-row"><p>Storage bond excess is refunded. The evaluator URL and digest should refer to the same uploaded WASM artifact.</p><button className="lookup-button" type="submit" disabled={busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Create draft <span aria-hidden="true">↗</span></>}</button></div>
+    </form>
+  );
+}
+
+function FormField({ label, wide = false, children }: { label: string; wide?: boolean; children: ReactNode }) {
+  return <label className={`form-field ${wide ? "form-field-wide" : ""}`}><span>{label}</span>{children}</label>;
+}
+
+function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: string | null): CreateCommitmentArgs {
+  const subject = fields.subject.trim();
+  if (!subject || subject.length > 128 || !/^[\x20-\x7e]+$/.test(subject)) {
+    throw new Error("Subject must be non-empty printable ASCII and no longer than 128 characters.");
+  }
+  if (!/^[0-9a-f]{64}$/.test(fields.maintainerPublicKey)) {
+    throw new Error("Enter the maintainer's 32-byte Ed25519 public key as 64 lowercase hexadecimal characters.");
+  }
+  if (!/^[0-9a-f]{64}$/.test(fields.wasmSha256)) {
+    throw new Error("Enter the evaluator WASM SHA-256 digest as 64 lowercase hexadecimal characters.");
+  }
+  if (new TextEncoder().encode(fields.wasmUrl).length > 512 || !fields.wasmUrl.startsWith("https://")) {
+    throw new Error("Evaluator WASM URL must use HTTPS and be no longer than 512 characters.");
+  }
+  try {
+    new URL(fields.wasmUrl);
+  } catch {
+    throw new Error("Enter a valid HTTPS URL for the evaluator WASM file.");
+  }
+
+  const initialWindow = secondsToNanoseconds(fields.initialWindowSeconds, "Initial evidence window");
+  const evidenceTtl = secondsToNanoseconds(fields.evidenceTtlSeconds, "Evidence freshness TTL");
+  const grace = secondsToNanoseconds(fields.graceSeconds, "Grace period");
+  const maxSourceLag = secondsToNanoseconds(fields.maxSourceLagSeconds, "Maximum source lag");
+  const challengeWindow = secondsToNanoseconds(fields.challengeWindowSeconds, "Challenge window");
+  const resolutionTimeout = secondsToNanoseconds(fields.resolutionTimeoutSeconds, "Resolution timeout");
+  const epoch = secondsToNanoseconds(fields.epochSeconds, "Budget epoch");
+  if (BigInt(challengeWindow) >= BigInt(evidenceTtl)) throw new Error("Challenge window must be shorter than evidence TTL.");
+  if (BigInt(maxSourceLag) + BigInt(challengeWindow) >= BigInt(evidenceTtl)) {
+    throw new Error("Evidence TTL must exceed maximum source lag plus the challenge window.");
+  }
+  const maximumU64 = 0xffff_ffff_ffff_ffffn;
+  if (BigInt(initialWindow) + BigInt(grace) > maximumU64 || BigInt(evidenceTtl) + BigInt(grace) > maximumU64) {
+    throw new Error("Evidence windows and grace period exceed the supported timestamp range.");
+  }
+  const executionSeconds = integerString(fields.maxExecutionSeconds, "Maximum execution time", 1, 180);
+  const requestTimeoutSeconds = integerString(fields.requestTimeoutSeconds, "Request timeout", 1, 180);
+  if (BigInt(requestTimeoutSeconds) < BigInt(executionSeconds)) {
+    throw new Error("Request timeout must cover the maximum execution time.");
+  }
+  const maxInstructions = integerString(fields.maxInstructions, "Maximum instructions", 1, 500_000_000_000);
+  const maxMemoryMb = Number(integerString(fields.maxMemoryMb, "Memory limit", 1, 4096));
+  const maxEpochs = Number(integerString(fields.maxEpochs, "Maximum epochs", 1, 64));
+  const trancheYocto = parseNearToYocto(fields.trancheNear);
+  const executionDepositYocto = parseNearToYocto(fields.executionDepositNear);
+  if (BigInt(trancheYocto) === 0n) throw new Error("Tranche amount must be greater than zero.");
+  if (BigInt(executionDepositYocto) === 0n) throw new Error("Evaluator execution deposit must be greater than zero.");
+  if (BigInt(trancheYocto) * BigInt(maxEpochs) > 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffffn) {
+    throw new Error("Total escrow target exceeds the supported 128-bit amount range.");
+  }
+
+  const maintainer = fields.maintainer.trim() || connectedAccountId || "";
+  const arbiter = fields.arbiter.trim() || connectedAccountId || "";
+  const sponsor = fields.sponsor.trim() || connectedAccountId || "";
+  const beneficiary = fields.beneficiary.trim() || connectedAccountId || "";
+  if (![maintainer, arbiter, sponsor, beneficiary].every(Boolean)) {
+    throw new Error("Connect a wallet or enter all commitment account IDs.");
+  }
+  for (const account of [maintainer, arbiter, sponsor, beneficiary]) {
+    if (account.length < 2 || account.length > 64 || !/^(?:[a-z0-9]+(?:[-_.][a-z0-9]+)*|[a-f0-9]{64})$/.test(account)) {
+      throw new Error(`Invalid NEAR account ID: ${account}`);
+    }
+  }
+
+  return {
+    subject,
+    maintainer,
+    arbiter,
+    policy: {
+      temporal: {
+        initial_window_ns: initialWindow,
+        evidence_ttl_ns: evidenceTtl,
+        grace_ns: grace,
+        max_source_lag_ns: maxSourceLag,
+        challenge_window_ns: challengeWindow,
+        resolution_timeout_ns: resolutionTimeout,
+        recovery_allowed: fields.recoveryAllowed,
+      },
+      evidence: { maintainer_public_key_hex: fields.maintainerPublicKey },
+      evaluator: {
+        outlayer_account: "outlayer.testnet",
+        wasm_url: fields.wasmUrl,
+        wasm_sha256_hex: fields.wasmSha256,
+        build_target: "wasm32-wasip2",
+        max_instructions: maxInstructions,
+        max_memory_mb: maxMemoryMb,
+        max_execution_seconds: executionSeconds,
+        request_timeout_ns: (BigInt(requestTimeoutSeconds) * 1_000_000_000n).toString(),
+        execution_deposit_yocto: executionDepositYocto,
+      },
+      budget: {
+        sponsor,
+        beneficiary,
+        epoch_ns: epoch,
+        max_epochs: maxEpochs,
+        tranche_yocto: trancheYocto,
+      },
+    },
+  };
+}
+
+function secondsToNanoseconds(value: string, label: string): string {
+  const seconds = integerString(value, label, 1, Number.MAX_SAFE_INTEGER);
+  const nanoseconds = BigInt(seconds) * 1_000_000_000n;
+  if (nanoseconds > 0xffff_ffff_ffff_ffffn) throw new Error(`${label} is too large.`);
+  return nanoseconds.toString();
+}
+
+function integerString(value: string, label: string, minimum: number, maximum: number): string {
+  if (!/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${label} must be a whole number.`);
+  const parsed = BigInt(value);
+  if (parsed < BigInt(minimum) || parsed > BigInt(maximum)) {
+    throw new Error(`${label} must be between ${minimum} and ${maximum}.`);
+  }
+  return value;
+}
+
+function previewEscrow(maxEpochs: string, trancheNear: string): string {
+  try {
+    const epochs = BigInt(maxEpochs);
+    return formatNear(epochs * BigInt(parseNearToYocto(trancheNear)));
+  } catch {
+    return "—";
+  }
+}
+
 function createWalletSender(connector: NearConnectorPort): NearTransactionSender {
   return async function send<T = unknown>(request: NearTransactionRequest): Promise<T> {
     const wallet = await connector.wallet();
@@ -457,7 +922,11 @@ function parseNearToYocto(amount: string): string {
   const match = /^(0|[1-9][0-9]*)(?:\.([0-9]{0,24}))?$/.exec(amount.trim());
   if (!match) throw new Error("Enter a non-negative NEAR amount with up to 24 decimal places.");
   const fraction = (match[2] ?? "").padEnd(24, "0");
-  return `${match[1]}${fraction}`.replace(/^0+(?=[0-9])/, "");
+  const yocto = `${match[1]}${fraction}`.replace(/^0+(?=[0-9])/, "");
+  if (BigInt(yocto) > 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffffn) {
+    throw new Error("NEAR amount exceeds the supported 128-bit range.");
+  }
+  return yocto;
 }
 
 function formatNear(yocto: string): string {
