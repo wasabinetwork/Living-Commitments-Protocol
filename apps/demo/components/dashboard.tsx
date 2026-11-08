@@ -54,6 +54,7 @@ interface CommitmentData {
   commitment: CommitmentView;
   policy: CommitmentPolicyView | null;
   evaluation: EvaluationRecordView | null;
+  evaluationHistory: EvaluationRecordView[];
   challenge: ChallengeView | null;
   eligibility: ClaimEligibilityView | null;
   escrow: EscrowStatusView | null;
@@ -67,6 +68,7 @@ type ChallengeAction = "open" | "uphold" | "invalidate" | "expire";
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
+const EVALUATION_HISTORY_LIMIT = 10;
 
 export function Dashboard() {
   const connectorRef = useRef<NearConnectorPort | null>(null);
@@ -120,6 +122,18 @@ export function Dashboard() {
         return false;
       }
 
+      const latestEvaluationId = BigInt(commitment.next_evaluation_id) - 1n;
+      const firstEvaluationId = latestEvaluationId > BigInt(EVALUATION_HISTORY_LIMIT)
+        ? latestEvaluationId - BigInt(EVALUATION_HISTORY_LIMIT) + 1n
+        : 1n;
+      const evaluationIds: string[] = [];
+      for (let id = latestEvaluationId; id >= firstEvaluationId && id > 0n; id -= 1n) {
+        evaluationIds.push(id.toString());
+      }
+      const evaluationHistory = (await Promise.all(
+        evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)),
+      )).filter((record): record is EvaluationRecordView => record !== null);
+
       const [activeChallenge, tranche] = await Promise.all([
         commitment.active_challenge_id
           ? client.getChallenge(commitment.active_challenge_id)
@@ -129,7 +143,7 @@ export function Dashboard() {
       const challenge = activeChallenge ?? (evaluation
         ? await client.getChallengeForEvaluation(normalizedId, evaluation.evaluation_id)
         : null);
-      setData({ commitment, policy, evaluation, challenge, eligibility, escrow, epoch, tranche });
+      setData({ commitment, policy, evaluation, evaluationHistory, challenge, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
       setData(null);
@@ -614,8 +628,24 @@ export function Dashboard() {
                     <div className="digest-row"><span>INPUT HASH</span><code>{data.evaluation.input_hash}</code></div>
                     {data.evaluation.output_hash && <div className="digest-row"><span>OUTPUT HASH</span><code>{data.evaluation.output_hash}</code></div>}
                     <div className="attestation-note"><span>↗</span><p>OutLayer execution reference is not included in the current on-chain evaluation view.</p></div>
+                    {data.evaluationHistory.filter((record) => record.evaluation_id !== data.evaluation?.evaluation_id).length > 0 && (
+                      <div className="evaluation-history">
+                        <p className="eyebrow">PREVIOUS EVALUATIONS · RECENT 9</p>
+                        <ol>
+                          {data.evaluationHistory
+                            .filter((record) => record.evaluation_id !== data.evaluation?.evaluation_id)
+                            .map((record) => (
+                              <li key={record.evaluation_id}>
+                                <span className={`status-pill status-${record.status.toLowerCase()}`}>{record.status}</span>
+                                <strong>#{record.evaluation_id} · {record.verdict ?? "Pending"}</strong>
+                                <time>{formatDate(record.accepted_at_ns ?? record.observed_at_ns)}</time>
+                              </li>
+                            ))}
+                        </ol>
+                      </div>
+                    )}
                   </>
-                ) : <p className="empty-copy">No evaluation has been recorded yet. Evaluation history is not indexed by this demo.</p>}
+                ) : <p className="empty-copy">No evaluation has been recorded on chain yet.</p>}
               </section>
             </div>
 

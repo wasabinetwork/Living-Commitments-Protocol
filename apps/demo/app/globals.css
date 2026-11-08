@@ -242,6 +242,13 @@ a { color: inherit; text-decoration: none; }
 .attestation-note { display: flex; gap: 9px; margin-top: 14px; padding: 10px 11px; background: #f5f4ef; color: #787f75; }
 .attestation-note > span { color: #879781; }
 .attestation-note p { margin: 0; font-size: 10px; line-height: 1.5; }
+.evaluation-history { margin-top: 17px; padding-top: 13px; border-top: 1px solid #eeede7; }
+.evaluation-history > .eyebrow { margin: 0 0 8px; color: #858a80; font-size: 8px; }
+.evaluation-history ol { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.evaluation-history li { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; min-width: 0; }
+.evaluation-history li .status-pill { padding: 4px 7px; font-size: 8px; }
+.evaluation-history li strong { overflow: hidden; color: #526055; font-size: 9px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.evaluation-history li time { color: #8c9189; font: 8px var(--mono); text-align: right; }
 .empty-copy { margin: 0; color: #858a81; font-size: 12px; line-height: 1.6; }
 
 .escrow-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 17px; padding-bottom: 19px; }
