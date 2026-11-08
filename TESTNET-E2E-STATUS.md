@@ -80,6 +80,12 @@ The contract now exposes a capped newest-first view, and the demo requests ten r
 
 Commitment `19` was topped up with `0.002 NEAR` surplus ([top-up](https://testnet.nearblocks.io/txns/5cQn2n6N9a7eHg6kJdYaCXj7Jiat1VdY778BNvoLo4Vs)), then evaluation `1` was accepted/compliant ([evaluation request](https://testnet.nearblocks.io/txns/4wKuNoznN3xjJJmXWjZox38CWVSCMniinewwyR21ZuGG)). Once its five-minute challenge window elapsed, the beneficiary claimed the `0.001 NEAR` tranche ([claim](https://testnet.nearblocks.io/txns/GuqCpRMHJ1XpQA6CTCEbNqQ1N7kk3U5HRjRREaLYFyeY)); the tranche view reported `Paid`. The sponsor closed the commitment ([close](https://testnet.nearblocks.io/txns/Gk3uN4kwqffLwCwyiXZ5CBaXgtVt2qgMJ2NwSE5GRDc1)) and received the remaining `0.002 NEAR` escrow ([refund](https://testnet.nearblocks.io/txns/65bFzqkKXuQdYW1STcaNkXzpWM6foKSH5HpWECHHnzV5)). Final state: `Closed`, `funded=0.003 NEAR`, `paid=0.001 NEAR`, `refunded=0.002 NEAR`, `pending=0`, `free=0`.
 
+### Isolated failed-transfer recovery
+
+A separate testnet contract, `failed-transfer-fixture.livingcommitmentsprotocol.testnet`, was deployed with the compile-time-only `testnet-transfer-failure-fixture` feature from commit `b29468a`. The fixture method is restricted to that exact testnet account and the commitment sponsor; the production contract was not upgraded. Deployment: [4EAop8Gc2Ji87txgXQzLpApCvFw1VUwiFUWHy2nCtsRC](https://testnet.nearblocks.io/txns/4EAop8Gc2Ji87txgXQzLpApCvFw1VUwiFUWHy2nCtsRC). The 570,675-byte WASM SHA-256 is `aff7530e3e28943acf6f679fb0f748c23c09ea668702d4e0e0d3fd7448c089dd`, with code hash `Cqu5mAP8cqtEUQospmxS3H4W6mzFmgaYqndjMmkaQtUC`. The account received 8 NEAR; estimated code storage was 5.70675 NEAR.
+
+Fixture commitment `1` was created, funded with one `0.001 NEAR` tranche and `0.01 NEAR` evaluator operations, activated, and evaluated `Accepted / Compliant`. After its 30-second challenge window elapsed, the sponsor armed a one-shot transfer to the verified nonexistent account `missing-lcp-transfer-a335793427.testnet` ([arm failure target](https://testnet.nearblocks.io/txns/3AkoRVG4GkprNJc4uzrhQt4JwSJirNEeMYeVNNH33DFj)). The first claim ([claim](https://testnet.nearblocks.io/txns/4XkVJfh2ZZWsoVb14w4YLNJhBbkxDv6p6xU31vh7PEZ6), transfer `1`) settled as `Failed`; escrow returned to `pending=0`, `free=0.001 NEAR`, and `can_claim_tranche` returned `eligible=true`. The retry ([claim](https://testnet.nearblocks.io/txns/DJf9KLicUYrjSceoFiNGaCoK33AwV7cM4eVTRZ7481xx), transfer `2`) paid the configured beneficiary exactly once: `paid=0.001 NEAR`, `pending=0`, `free=0`. The commitment was then closed in [6szdotnoETu5xy9b8VEoDLUJY1PYA6eouWpgfTm4m4LN](https://testnet.nearblocks.io/txns/6szdotnoETu5xy9b8VEoDLUJY1PYA6eouWpgfTm4m4LN).
+
 ## Current Testnet State and Remaining Work
 
 - Commitment `1` is `Closed`; its unused escrow was fully refunded. It is no longer a recovery fixture.
@@ -112,15 +118,14 @@ The contract models an initial evidence deadline as `activated_at_ns + initial_w
 
 - Playground commitment `8` accepted compliant evaluation `1`; challenge `2` was upheld, preserving `Healthy` evidence. Claims were held during the configured post-evaluation challenge window. [Evaluation request](https://testnet.nearblocks.io/txns/5or7nERU8uk2qKobG2WxaxCWyP7tesqVnuz7wACZSLYe) · [Upheld resolution](https://testnet.nearblocks.io/txns/Cb9URBfVDVqUJH5qJgJzzUWGEuNP9kLA7RhsG4YoTewC).
 - Playground commitment `9` accepted evaluation `1`, then challenge `3` invalidated that evidence and put it `AtRisk`. A fresh compliant evaluation `2` restored `Healthy` and cleared the negative period. [Invalidation resolution](https://testnet.nearblocks.io/txns/HAyVNDmVXjww68nzVQdAammtoqLmZXnmaZLopt4e87WC) · [Recovery evaluation](https://testnet.nearblocks.io/txns/8p47a9eqNUicY99hT1VuqUxdYKqnjMuSMY6KXNYQR2TL).
-- Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, claim eligibility, recovery, and exact initial-window, evidence-expiry, grace, challenge-window, and timeout boundaries. Live failed-transfer recovery and natural testnet temporal transitions remain open.
-- Still open: a safe live failed NEAR transfer fixture, natural expiry/grace observations on the new cohort, and the remaining browser wallet UI journey. The signer-driven on-chain payout, close, and refund path is verified on commitment `19`. In Brave, the recent list and selection of commitment `2` were verified before the cohort was added.
+- Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, claim eligibility, recovery, and exact initial-window, evidence-expiry, grace, challenge-window, and timeout boundaries. The separate live fixture now confirms failed-transfer recovery on testnet; natural transitions on the five-day cohort remain open.
+- Still open: natural expiry/grace observations on the new cohort and completion of the browser wallet UI journey. The user reports no browser journey bugs so far. The signer-driven payout, close, and refund path is verified on commitment `19`, and the failed-transfer recovery is verified on the isolated fixture. In Brave, the recent list and selection of commitment `2` were verified before the cohort was added.
 - Testnet RPC pagination returns IDs `21`–`12`, then `11`–`2`, then `1`, confirming the exclusive cursor. The user subsequently confirmed the browser older-page control works with all 21 records and the wallet connector connects.
 
 Recommended next sequence:
 
-1. Find a safe deterministic live failed-transfer fixture; keep the mock-runtime retry test as the verified fallback.
-2. Observe natural temporal transitions as the playground deadlines pass.
-3. Continue the browser wallet journey through create, funding, activation, evidence, payout/retry, closure, and refund.
+1. Observe natural temporal transitions as the playground deadlines pass.
+2. Finish the browser wallet journey through create, funding, activation, evidence, payout/retry, closure, and refund.
 
 ## Local Configuration and Verifier Note
 

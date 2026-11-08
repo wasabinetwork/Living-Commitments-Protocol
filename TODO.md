@@ -2,9 +2,8 @@
 
 ## In progress
 
-- [ ] **Live failed tranche recovery:** find a safe deterministic testnet fixture for a failed transfer; the local mock-runtime test already confirms the failure callback accounting and exactly-once retry behavior.
 - [ ] **Live temporal boundaries:** observe expiry, grace, and recovery on the new short-horizon testnet commitments; exact local timestamp boundaries are covered.
-- [ ] **Demo wallet journey:** exercise create, fund, activate, evidence, claim/retry, close, and refund through the browser wallet UI.
+- [ ] **Demo wallet journey:** finish checking create, fund, activate, evidence, claim/retry, close, and refund through the browser wallet UI; the user reports no bugs so far.
 
 ## Complete
 
@@ -13,6 +12,7 @@
 - [x] Cover exact local boundaries for initial evidence, evidence expiry, grace, recovery, claim eligibility, and challenge timeout.
 - [x] Create and activate 15 funded testnet playground commitments with varied policies and initial evidence deadlines staggered across the five-day horizon.
 - [x] Validate live upheld, invalidated, and recovery outcomes on playground commitments `8` and `9`.
+- [x] Validate failed transfer recovery on a separate feature-gated testnet fixture: force one transfer to a verified missing account, confirm eligibility and escrow recovery, retry payment successfully, and close the fixture commitment.
 - [x] Complete an on-chain payout and close/refund journey on playground commitment `19` using the testnet signer: pay one tranche, close, and refund the remaining escrow.
 - [x] Add a visible wallet disconnect action to the demo header.
 - [x] Confirm wallet disconnect succeeds in the browser (user confirmed).
