@@ -232,3 +232,95 @@ pub fn effective_health(
         Health::Breached
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const POLICY: TemporalPolicy = TemporalPolicy {
+        initial_window_ns: 10,
+        evidence_ttl_ns: 100,
+        grace_ns: 20,
+        max_source_lag_ns: 10,
+        challenge_window_ns: 5,
+        resolution_timeout_ns: 10,
+        recovery_allowed: true,
+    };
+
+    fn snapshot(
+        activated_at_ns: Option<u64>,
+        last_good_observed_at_ns: Option<u64>,
+        negative_since_ns: Option<u64>,
+    ) -> TemporalSnapshot {
+        TemporalSnapshot {
+            lifecycle: Lifecycle::Active,
+            activated_at_ns,
+            last_good_observed_at_ns,
+            negative_since_ns,
+            breach_latched: false,
+        }
+    }
+
+    #[test]
+    fn initial_evidence_window_transitions_at_exact_boundaries() {
+        let state = snapshot(Some(100), None, None);
+
+        assert_eq!(
+            effective_health(&state, &POLICY, 109).unwrap(),
+            Health::AwaitingEvidence
+        );
+        assert_eq!(
+            effective_health(&state, &POLICY, 110).unwrap(),
+            Health::AtRisk
+        );
+        assert_eq!(
+            effective_health(&state, &POLICY, 129).unwrap(),
+            Health::AtRisk
+        );
+        assert_eq!(
+            effective_health(&state, &POLICY, 130).unwrap(),
+            Health::Breached
+        );
+    }
+
+    #[test]
+    fn evidence_expiry_and_grace_transition_at_exact_boundaries() {
+        let state = snapshot(Some(100), Some(200), None);
+
+        assert_eq!(
+            effective_health(&state, &POLICY, 299).unwrap(),
+            Health::Healthy
+        );
+        assert_eq!(
+            effective_health(&state, &POLICY, 300).unwrap(),
+            Health::AtRisk
+        );
+        assert_eq!(
+            effective_health(&state, &POLICY, 319).unwrap(),
+            Health::AtRisk
+        );
+        assert_eq!(
+            effective_health(&state, &POLICY, 320).unwrap(),
+            Health::Breached
+        );
+    }
+
+    #[test]
+    fn negative_period_breaches_at_exact_grace_deadline_and_recovery_clears_it() {
+        let negative_state = snapshot(Some(100), Some(200), Some(400));
+        assert_eq!(
+            effective_health(&negative_state, &POLICY, 419).unwrap(),
+            Health::AtRisk
+        );
+        assert_eq!(
+            effective_health(&negative_state, &POLICY, 420).unwrap(),
+            Health::Breached
+        );
+
+        let recovered_state = snapshot(Some(100), Some(415), None);
+        assert_eq!(
+            effective_health(&recovered_state, &POLICY, 420).unwrap(),
+            Health::Healthy
+        );
+    }
+}

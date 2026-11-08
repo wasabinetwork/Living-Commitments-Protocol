@@ -83,14 +83,14 @@ The contract now exposes a capped newest-first view, and the demo requests ten r
 - Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
 - Commitment `6` is `Closed`; its unused escrow was refunded after an OutLayer promise failure.
 - The deployed evaluator proof, malformed-output rejection under the initial callback, updated null-result classification, promise failure, request timeout, breach-gated payment, recovery, one successful beneficiary payout, challenge timeout/invalidation, closure, successful refund callbacks, and bounded discovery pagination are validated.
-- Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, and claim eligibility. Contract callbacks mark a failed tranche `Failed`; retry remains eligible while the commitment is healthy and the epoch is active, and the demo labels it `Retry payout`. Live failed-transfer and arbiter-path validation remain open.
-- Still open: live failed NEAR transfer recovery, live arbiter uphold/invalidate challenge paths, broader temporal boundaries, and the full wallet-driven demo run. The recent-commitment list was rendered in Brave; selecting a commitment and wallet-driven actions still need manual validation.
+- Deterministic Rust unit tests simulate a failed tranche promise followed by a successful retry, checking pending/paid/free escrow, retry eligibility, pending-transfer cleanup, and duplicate-callback idempotency. They also cover upheld/invalidation challenge outcomes, evidence state, claim eligibility, recovery, and exact initial-window, evidence-expiry, grace, challenge-window, and timeout boundaries. Contract callbacks mark a failed tranche `Failed`; retry remains eligible while the commitment is healthy and the epoch is active, and the demo labels it `Retry payout`. Live failed-transfer, arbiter, and temporal-boundary validation remain open.
+- Still open: live failed NEAR transfer recovery, live arbiter uphold/invalidate challenge paths, testnet temporal-boundary checks, and the full wallet-driven demo run. The recent-commitment list was rendered in Brave; selecting a commitment and wallet-driven actions still need manual validation.
 - The bounded, newest-first commitment listing is deployed and pagination is verified through finalized RPC views. The older-page control has not been exercised in the browser because the current testnet account has fewer than ten records.
 
 Recommended next sequence:
 
 1. Exercise failed transfer callback recovery and confirm escrow/claim state remains retryable.
-2. Validate arbiter uphold and invalidation on fresh test commitments, then boundary-test `AtRisk`/`Breached` transitions.
+2. Validate arbiter uphold and invalidation on fresh test commitments, then boundary-test `AtRisk`/`Breached`, recovery, challenge-window, and timeout transitions.
 3. Run the browser against the deployed contract, validate the recent/older commitment list UI, then complete the full wallet-driven journey.
 
 ## Local Configuration and Verifier Note

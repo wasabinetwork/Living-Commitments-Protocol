@@ -1992,10 +1992,18 @@ mod tests {
     const NOW_NS: u64 = 1_000_000_200;
 
     fn context(predecessor: AccountId, attached_deposit: u128) -> near_sdk::VMContext {
+        context_at(predecessor, attached_deposit, NOW_NS)
+    }
+
+    fn context_at(
+        predecessor: AccountId,
+        attached_deposit: u128,
+        now_ns: u64,
+    ) -> near_sdk::VMContext {
         VMContextBuilder::new()
             .current_account_id(accounts(0))
             .predecessor_account_id(predecessor)
-            .block_timestamp(NOW_NS)
+            .block_timestamp(now_ns)
             .attached_deposit(NearToken::from_yoctonear(attached_deposit))
             .build()
     }
@@ -2200,6 +2208,44 @@ mod tests {
             contract.claim_eligibility(&commitment, NOW_NS),
             Err("commitment health must be Healthy to claim")
         );
+    }
+
+    #[test]
+    fn claim_eligibility_opens_at_the_exact_challenge_window_deadline() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        let challenge_window_end_ns = 1_000_000_000 + 100;
+
+        testing_env!(context_at(accounts(3), 0, challenge_window_end_ns - 1));
+        assert_eq!(
+            contract.claim_eligibility(&commitment, challenge_window_end_ns - 1),
+            Err("evaluation challenge window is still open")
+        );
+
+        testing_env!(context_at(accounts(3), 0, challenge_window_end_ns));
+        assert_eq!(
+            contract.claim_eligibility(&commitment, challenge_window_end_ns),
+            Ok(EPOCH)
+        );
+    }
+
+    #[test]
+    fn challenge_timeout_is_applied_at_the_exact_resolution_deadline() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        add_open_challenge(&mut contract);
+        let resolution_deadline_ns = NOW_NS + 1_000;
+
+        testing_env!(context_at(accounts(0), 0, resolution_deadline_ns));
+        contract.expire_challenge(U64(TRANSFER_ID));
+
+        let challenge = contract.get_challenge(U64(TRANSFER_ID)).unwrap();
+        assert_eq!(challenge.status, ChallengeStatus::TimedOut);
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(commitment.active_challenge_id, None);
+        assert!(commitment.last_good.is_none());
+        assert_eq!(commitment.negative_since_ns, Some(resolution_deadline_ns));
     }
 
     #[test]
