@@ -596,19 +596,32 @@ impl Contract {
         };
 
         let output_hash = env::sha256_array(&output_bytes);
-        let output: EvaluationVerdictOutput = match near_sdk::serde_json::from_slice(&output_bytes)
-        {
-            Ok(output) => output,
-            Err(_) => {
-                self.reject_evaluation(
-                    &mut commitment,
-                    &mut request,
-                    "MALFORMED_VERDICT",
-                    Some(output_hash),
-                    now_ns,
-                );
-                return;
-            }
+        let output: Option<EvaluationVerdictOutput> =
+            match near_sdk::serde_json::from_slice(&output_bytes) {
+                Ok(output) => output,
+                Err(_) => {
+                    self.reject_evaluation(
+                        &mut commitment,
+                        &mut request,
+                        "MALFORMED_VERDICT",
+                        Some(output_hash),
+                        now_ns,
+                    );
+                    return;
+                }
+            };
+        let Some(output) = output else {
+            self.finish_evaluation(
+                &mut commitment,
+                &mut request,
+                EvaluationStatus::Failed,
+                None,
+                vec!["MISSING_OUTLAYER_RESULT".to_string()],
+                Some(output_hash),
+                None,
+                now_ns,
+            );
+            return;
         };
         let Some(request_transaction_hash) =
             parse_near_transaction_hash(&output.request_transaction_hash)
