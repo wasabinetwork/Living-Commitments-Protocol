@@ -1,7 +1,7 @@
 # NEAR Testnet E2E Status
 
 **Last verified:** 2026-11-09
-**Source revision:** `e8b8f4d`
+**Source revision:** `bb4ada3`
 **Network:** NEAR testnet
 
 ## Deployment
@@ -15,6 +15,8 @@
 - Callback update transaction: [DH1vPf8XAN4pCvK5c3xyqbApXzJdbDCpw3BuzHbKofuK](https://testnet.nearblocks.io/txns/DH1vPf8XAN4pCvK5c3xyqbApXzJdbDCpw3BuzHbKofuK). The current code hash is `At6Xz7m8ULZJyFKEGfM4bqDr3xWNV84e6kLnB34HASiZ` (570,002-byte WASM); the update preserved contract state.
 - Bounded-list update transaction: [BnNAwjHHECiFvqcSavm9oRpnk8kQn3kzWbTyyfEXGkWC](https://testnet.nearblocks.io/txns/BnNAwjHHECiFvqcSavm9oRpnk8kQn3kzWbTyyfEXGkWC). The current code hash is `HBnF7bhE6BPBkRqFSnAPU9KT7kXv988ZVXffqTKdgzX` (576,800-byte WASM); initialized state was preserved. The contract account retained approximately `21.4412 NEAR` after the update.
 - Historical-timeline update transaction: [6md8rayhN3WmiMEP8dGgUyVYUowkBciovGr2Kppdx9cF](https://testnet.nearblocks.io/txns/6md8rayhN3WmiMEP8dGgUyVYUowkBciovGr2Kppdx9cF). The deployed code hash is `4ycAFEtJryaNGUSMd76rWWxSoEAqqRHPrYtkdWZVHMk3` (577,506-byte WASM). It preserved contract state; finalized reads confirmed commitments `8`, `9`, `19`, and `21` remained intact. Storage usage after the update was `603195` bytes. Older challenge `3` returns `completed_at_ns: null`, as its completion time predates the new storage slot.
+- NEP-413 wallet-evidence update transaction: [HPhtBQgHYgCzJBobDxx3MiGkCzP9WnW6v6MGpKWzeTjc](https://testnet.nearblocks.io/txns/HPhtBQgHYgCzJBobDxx3MiGkCzP9WnW6v6MGpKWzeTjc). The deployed code hash is `bK4nSCpE52DF4b2AbNunaEMy2FCfRDbsgwjZAVaWfDR` (608,567-byte WASM). The deployment helper verified the prior code hash, signer permissions, storage balance, and new code hash. Finalized reads afterward confirmed commitments `8`, `9`, `19`, and `21` plus the legacy challenge remained intact.
+- NEP-413 evaluator SHA-256: `17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97`. The OutLayer CLI submitted FastFS transaction [FKu4oqhLLY9kLqpBEdtrDiP8EDUCy34kzV3n96vEyGoy](https://testnet.nearblocks.io/txns/FKu4oqhLLY9kLqpBEdtrDiP8EDUCy34kzV3n96vEyGoy) and returned <https://test.fastfs.io/livingcommitmentsprotocol.testnet/outlayer.testnet/17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97.wasm>. The CLI uses a 1-gas FastFS call; RPC shows top-level `Failure` and a successful refund receipt, and the CLI expects the indexer to read upload data from transaction arguments. As of this check, the new URL returns HTTP 404; the previously published evaluator URL remains fetchable and its bytes match its recorded digest. Do not create a v2 fixture until the new artifact URL resolves and matches the digest.
 
 ## Verified Evaluation
 

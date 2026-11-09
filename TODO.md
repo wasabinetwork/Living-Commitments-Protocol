@@ -2,12 +2,15 @@
 
 ## In progress
 
-- [ ] **Wallet-signature policy v2:** compile and review contract, evaluator, SDK, and demo support for NEP-413 while preserving v1 commitments; deploy and create a fresh wallet-signing fixture after local checks.
+- [ ] **NEP-413 testnet fixture:** confirm the uploaded evaluator is served by FastFS (its returned URL currently gives 404), then create a fresh v2 commitment through the connected wallet and validate maintainer-key pinning plus evidence signing end to end.
 - [ ] **Live temporal boundaries:** keep the #21 monitor through its initial-evidence and grace deadlines (Nov 9, 00:21 and 01:21 AST); exact local timestamp boundaries are covered.
 - [ ] **Demo wallet journey:** finish checking create, fund, activate, evidence, claim/retry, close, and refund through the browser wallet UI; the user reports no bugs so far.
 
 ## Complete
 
+- [x] Implement NEP-413 wallet evidence across the contract, evaluator, SDK, and demo while preserving v1 evidence behavior; build checks passed.
+- [x] Deploy the v2-capable contract to testnet and verify the new code hash plus existing commitment state. [Deployment transaction](https://testnet.nearblocks.io/txns/HPhtBQgHYgCzJBobDxx3MiGkCzP9WnW6v6MGpKWzeTjc)
+- [x] Submit the v2 evaluator artifact to testnet FastFS and record its returned transaction and URL; keep public URL retrieval as an open validation item because the current response is 404.
 - [x] Add a deterministic contract unit test covering failed callback accounting, restored eligibility, successful retry, and duplicate-callback idempotency.
 - [x] Add deterministic contract tests for upheld and invalidated challenge outcomes.
 - [x] Cover exact local boundaries for initial evidence, evidence expiry, grace, recovery, claim eligibility, and challenge timeout.
