@@ -365,10 +365,10 @@ a { color: inherit; text-decoration: none; }
 .claim-copy strong { font-size: 11px; font-weight: 600; }
 .claim-copy > div > span { color: #7c8379; font-size: 10px; line-height: 1.45; }
 .claim-controls { margin: 16px 0 0 30px; }
-.claim-controls label { display: flex; justify-content: space-between; margin-bottom: 7px; color: #747c72; font: 9px var(--mono); }
-.claim-controls label span { letter-spacing: .1em; }
 .claim-form-row { display: flex; gap: 8px; }
-.claim-form-row input { width: 100px; border: 1px solid #d8d9d0; border-radius: 2px; padding: 0 9px; background: white; color: var(--ink); font: 11px var(--mono); }
+.claim-storage-deposit { display: flex; flex: 0 0 150px; min-height: 39px; flex-direction: column; justify-content: center; gap: 3px; padding: 5px 9px; border: 1px solid #d8d9d0; background: #f8f8f3; }
+.claim-storage-deposit span { color: #858a80; font: 7px var(--mono); letter-spacing: .06em; }
+.claim-storage-deposit strong { color: #344b39; font: 10px var(--mono); }
 .claim-button { flex: 1; min-width: 0; min-height: 39px; gap: 9px; padding: 0 10px; font-size: 10px; }
 .claim-button:disabled { opacity: .53; }
 .claim-disclaimer { margin: 7px 0 0; color: #898d84; font-size: 9px; line-height: 1.5; }
@@ -476,12 +476,13 @@ a { color: inherit; text-decoration: none; }
 :root[data-theme="dark"] .form-field select,
 :root[data-theme="dark"] .form-field textarea,
 :root[data-theme="dark"] .setup-input-row input,
-:root[data-theme="dark"] .claim-form-row input,
+:root[data-theme="dark"] .claim-storage-deposit,
 :root[data-theme="dark"] .artifact-digest-row input {
   border-color: #46564b;
   background: #141c17;
   color: var(--ink);
 }
+:root[data-theme="dark"] .claim-storage-deposit strong { color: var(--ink); }
 :root[data-theme="dark"] .artifact-file-input::file-selector-button { border-color: #46564b; background: #26372b; color: var(--ink); }
 :root[data-theme="dark"] .artifact-help,
 :root[data-theme="dark"] .artifact-file-status { color: var(--ink-soft); }
@@ -615,7 +616,7 @@ a { color: inherit; text-decoration: none; }
   .content-card { padding: 18px 16px; }
   .claim-controls { margin-left: 0; }
   .claim-form-row { flex-wrap: wrap; }
-  .claim-form-row input { width: 100%; min-height: 39px; }
+  .claim-storage-deposit { flex-basis: 100%; }
   .claim-button { flex-basis: 100%; }
   .setup-input-row { flex-wrap: wrap; }
   .setup-input-row input { width: 100%; min-height: 34px; }

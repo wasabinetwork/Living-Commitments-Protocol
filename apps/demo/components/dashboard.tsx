@@ -100,7 +100,6 @@ export function Dashboard() {
   const [loadingCommitments, setLoadingCommitments] = useState(false);
   const [data, setData] = useState<CommitmentData | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
-  const [depositNear, setDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -645,13 +644,7 @@ export function Dashboard() {
       return;
     }
 
-    let attachedDeposit: string;
-    try {
-      attachedDeposit = parseNearToYocto(depositNear);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Enter a valid storage deposit.");
-      return;
-    }
+    const attachedDeposit = parseNearToYocto(DEFAULT_STORAGE_DEPOSIT);
 
     setClaiming(true);
     setError(null);
@@ -1033,15 +1026,14 @@ export function Dashboard() {
                   </div>
                   {data.eligibility?.eligible && (
                     <div className="claim-controls">
-                      <label htmlFor="storage-deposit">Temporary storage deposit <span>NEAR</span></label>
                       <div className="claim-form-row">
-                        <input id="storage-deposit" inputMode="decimal" value={depositNear} onChange={(event) => setDepositNear(event.target.value)} aria-label="Storage deposit in NEAR" />
+                        <div className="claim-storage-deposit"><span>CLAIM REQUEST STORAGE BOND</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
                         <button className="claim-button" onClick={() => void claimTranche()} disabled={!canSubmitClaim}>
                           {claiming ? "Submitting…" : !accountId ? "Connect to claim" : !correctBeneficiary ? "Beneficiary wallet required" : retryingFailedPayout ? "Retry payout" : "Claim tranche"}
                           <span aria-hidden="true">↗</span>
                         </button>
                       </div>
-                      <p className="claim-disclaimer">The contract calculates its required storage bond and refunds any excess attached deposit.</p>
+                      <p className="claim-disclaimer">The app attaches {DEFAULT_STORAGE_DEPOSIT} NEAR for claim storage, separate from the tranche payout. The contract calculates the required bond and returns any excess.</p>
                     </div>
                   )}
                 </div>
