@@ -2,7 +2,7 @@
 
 ## In progress
 
-- [ ] **NEP-413 testnet fixture:** use the verified R2 testnet mirror at `https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97.wasm` and digest `17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97`; create a fresh v2 commitment through the connected wallet and validate maintainer-key pinning plus evidence signing end to end. FastFS remains unresolved.
+- [ ] **NEP-413 testnet fixture:** commitment `24` is a finalized v2 Draft with the wallet-pinned maintainer fingerprint and verified R2 evaluator URL/digest. Next fund `0.03 NEAR` escrow and `0.01 NEAR` evaluator operations, activate, then validate wallet-signed evidence end to end. FastFS remains unresolved.
 - [x] **Live temporal boundaries:** commitment `21` transitioned from `AwaitingEvidence` to `AtRisk` at 00:21:58 AST and from `AtRisk` to `Breached` at 01:21:59 AST in finalized samples. The monitor removed its own cron entry after breach; exact timestamp boundaries are also covered by deterministic tests.
 - [ ] **Demo wallet journey:** user will manually verify create, fund, activate, evidence, claim/retry, close, and refund in Firefox; the user reports no bugs so far.
 - [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
