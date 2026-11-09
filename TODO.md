@@ -2,7 +2,7 @@
 
 ## In progress
 
-- [ ] **NEP-413 testnet fixture:** confirm the uploaded evaluator is served by FastFS (its returned URL currently gives 404), then create a fresh v2 commitment through the connected wallet and validate maintainer-key pinning plus evidence signing end to end.
+- [ ] **NEP-413 testnet fixture:** FastFS still returns 404 for the verified upload URL after 9h 41m; the decoded transaction contains the correct path and artifact. Recheck availability, then create a fresh v2 commitment through the connected wallet and validate maintainer-key pinning plus evidence signing end to end.
 - [x] **Live temporal boundaries:** commitment `21` transitioned from `AwaitingEvidence` to `AtRisk` at 00:21:58 AST and from `AtRisk` to `Breached` at 01:21:59 AST in finalized samples. The monitor removed its own cron entry after breach; exact timestamp boundaries are also covered by deterministic tests.
 - [ ] **Demo wallet journey:** finish checking create, fund, activate, evidence, claim/retry, close, and refund through the browser wallet UI; the user reports no bugs so far.
 
