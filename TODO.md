@@ -4,8 +4,6 @@
 
 - [ ] **Live temporal boundaries:** keep the #21 monitor through its initial-evidence and grace deadlines (Nov 9, 00:21 and 01:21 AST); exact local timestamp boundaries are covered.
 - [ ] **Demo wallet journey:** finish checking create, fund, activate, evidence, claim/retry, close, and refund through the browser wallet UI; the user reports no bugs so far.
-- [x] **Historical timeline and status UI:** deploy the challenge completion-time view, exercise invalidation and recovery on #22, and confirm the ordered timeline and OutLayer hash-binding status in the browser.
-- [ ] **Attestation verification integration:** the app now reports public record availability and compares transaction/input/output/WASM hashes. Add an in-app cryptographic pass/fail only if OutLayer exposes a supported verifier API or embeddable verifier.
 
 ## Complete
 
@@ -23,6 +21,8 @@
 - [x] Reconcile sampled testnet OutLayer charges/refunds and callback gas for accepted, JSON-null, promise-failure, and timeout outcomes; retain remaining-operation accounting as a documented prototype limitation.
 - [x] Deploy the historical challenge completion timestamp view without changing persisted contract state layout; verify prior state and a new invalidation/recovery timeline on testnet commitment `22`.
 - [x] Confirm the refreshed `22` dashboard shows recorded recovery events and derived freshness/grace deadlines, and that evaluation `2` matches its public OutLayer transaction/input/output/WASM hashes.
+- [x] Confirm the historical timeline and OutLayer hash-binding status render correctly in the user's browser.
+- [x] Keep in-app attestation status scoped to public-record and hash-binding checks; use OutLayer's report **Verify** action or standalone verifier for TEE quote verification unless an embeddable verifier interface is documented.
 - [x] Inspect commitment `21`'s health clock in the browser; the user confirmed its `AwaitingEvidence` state and displayed initial/grace deadlines match the pre-deadline monitor state.
 - [x] Prepare a browser walkthrough for verified testnet fixtures and the remaining wallet-driven journey.
 - [x] Install a bounded, once-per-minute cron monitor for commitment `21`; record finalized health samples in `/private/tmp/lcp-temporal-monitor-21.jsonl` and remove only its own entries after breach/closure or the 03:00 AST cutoff.
