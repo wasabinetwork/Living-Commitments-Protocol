@@ -2,12 +2,12 @@
 
 ## In progress
 
-- [x] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, evaluation, close, and refund in Firefox. Its 3-epoch × 5-minute budget ended at epoch 25, so no tranche could be claimed. Finalized read at block `276955602` confirms `Closed`, transfer `#9` settled, and all 0.03 NEAR refunded with 0 pending. The user confirmed the ended-program timer and simplified refund-complete UI in Firefox.
-- [ ] **Retry-transfer UI fixture:** isolated feature-testnet contract `failed-transfer-fixture.livingcommitmentsprotocol.testnet`, commitment `2`. Claim transaction `9KpNC7viTLimjLJcpctisJMLih2Cdoky5ASEEnLkEN9i` completed, then transfer `#3` failed because the one-time test recipient does not exist. Finalized read at block `276960845` shows tranche `Failed`, claim eligible again, and 0.001 NEAR free with nothing pending. Demo is available at `http://127.0.0.1:3001`; confirm the UI's retry state, retry as `wasabinetwork.testnet`, and verify one successful payment.
 - [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
 
 ## Complete
 
+- [x] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, evaluation, close, and refund in Firefox. Its 3-epoch × 5-minute budget ended at epoch 25, so no tranche could be claimed. Finalized read at block `276955602` confirms `Closed`, transfer `#9` settled, and all 0.03 NEAR refunded with 0 pending. The user confirmed the ended-program timer and simplified refund-complete UI in Firefox.
+- [x] **P0 retry-transfer UI:** isolated feature-testnet commitment `2` displayed the failed-transfer retry state in Firefox. Initial claim transaction `9KpNC7viTLimjLJcpctisJMLih2Cdoky5ASEEnLkEN9i` succeeded while payout transfer `#3` failed for the one-time nonexistent recipient; the user retried in the UI. Finalized read at block `276961592` confirms tranche `Paid`, 0.001 NEAR paid, and no pending or free escrow.
 - [x] **NEP-413 testnet fixture:** commitment `24` is active and evaluation `1` was accepted/compliant in [7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc](https://testnet.nearblocks.io/txns/7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc). OutLayer executed the R2-mirrored evaluator; it verified the wallet signature and artifact-digest format. FastFS remains unavailable, but the R2 fallback completed the test.
 - [x] Add browser-side SHA-256 calculation for selected evidence files (maximum 25 MiB); the file stays local, and changing/removing it invalidates the prepared payload and signature. The user confirmed the Firefox flow.
 - [x] Raise the evaluation storage-deposit default to `0.05 NEAR` after the first `0.01 NEAR` request trapped on storage underpayment; the retry succeeded, and contract excess is refunded.
