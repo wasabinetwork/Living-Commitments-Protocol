@@ -127,7 +127,7 @@ The contract models an initial evidence deadline as `activated_at_ns + initial_w
 Recommended next sequence:
 
 1. Review commitment `21` monitor samples for the `AwaitingEvidence` → `AtRisk` → `Breached` transitions; refresh its dashboard snapshot at the same boundaries, then observe other staggered playground deadlines.
-2. Finish the browser wallet journey through create, funding, activation, evidence, payout/retry, closure, and refund; the user reports no bugs so far.
+2. Follow `DEMO-WALKTHROUGH.md` to finish the browser wallet journey through draft creation, funding, activation, evidence, payout/retry, closure, and refund; the user reports no bugs so far.
 
 ## Local Configuration and Verifier Note
 

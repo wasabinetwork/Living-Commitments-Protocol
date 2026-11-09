@@ -16,6 +16,7 @@
 - [x] Complete an on-chain payout and close/refund journey on playground commitment `19` using the testnet signer: pay one tranche, close, and refund the remaining escrow.
 - [x] Add a commitment health timeline that separates recorded activation/evidence from policy-derived deadlines and uses finalized NEAR time.
 - [x] Inspect commitment `21`'s health clock in the browser; the user confirmed its `AwaitingEvidence` state and displayed initial/grace deadlines match the pre-deadline monitor state.
+- [x] Prepare a browser walkthrough for verified testnet fixtures and the remaining wallet-driven journey.
 - [x] Install a bounded, once-per-minute cron monitor for commitment `21`; record finalized health samples in `/private/tmp/lcp-temporal-monitor-21.jsonl` and remove only its own entries after breach/closure or the 03:00 AST cutoff.
 - [x] Add a visible wallet disconnect action to the demo header.
 - [x] Confirm wallet disconnect succeeds in the browser (user confirmed).
