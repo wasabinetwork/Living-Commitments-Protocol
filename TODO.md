@@ -2,15 +2,17 @@
 
 ## In progress
 
-- [ ] **NEP-413 testnet fixture:** FastFS still returns 404 for the verified upload URL after 9h 41m; the decoded transaction contains the correct path and artifact. Recheck availability, then create a fresh v2 commitment through the connected wallet and validate maintainer-key pinning plus evidence signing end to end.
+- [ ] **NEP-413 testnet fixture:** use the verified R2 testnet mirror at `https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97.wasm` and digest `17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97`; create a fresh v2 commitment through the connected wallet and validate maintainer-key pinning plus evidence signing end to end. FastFS remains unresolved.
 - [x] **Live temporal boundaries:** commitment `21` transitioned from `AwaitingEvidence` to `AtRisk` at 00:21:58 AST and from `AtRisk` to `Breached` at 01:21:59 AST in finalized samples. The monitor removed its own cron entry after breach; exact timestamp boundaries are also covered by deterministic tests.
 - [ ] **Demo wallet journey:** finish checking create, fund, activate, evidence, claim/retry, close, and refund through the browser wallet UI; the user reports no bugs so far.
+- [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
 
 ## Complete
 
 - [x] Implement NEP-413 wallet evidence across the contract, evaluator, SDK, and demo while preserving v1 evidence behavior; build checks passed.
 - [x] Deploy the v2-capable contract to testnet and verify the new code hash plus existing commitment state. [Deployment transaction](https://testnet.nearblocks.io/txns/HPhtBQgHYgCzJBobDxx3MiGkCzP9WnW6v6MGpKWzeTjc)
-- [x] Submit the v2 evaluator artifact to testnet FastFS and record its returned transaction and URL; keep public URL retrieval as an open validation item because the current response is 404.
+- [x] Submit the v2 evaluator artifact to testnet FastFS and record its returned transaction and URL; FastFS currently returns 404.
+- [x] Publish a testnet-only R2 mirror of the v2 evaluator, then fetch it publicly and verify the exact byte count and SHA-256.
 - [x] Add a deterministic contract unit test covering failed callback accounting, restored eligibility, successful retry, and duplicate-callback idempotency.
 - [x] Add deterministic contract tests for upheld and invalidated challenge outcomes.
 - [x] Cover exact local boundaries for initial evidence, evidence expiry, grace, recovery, claim eligibility, and challenge timeout.
