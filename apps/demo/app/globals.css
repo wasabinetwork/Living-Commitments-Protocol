@@ -197,6 +197,15 @@ a { color: inherit; text-decoration: none; }
 .evidence-submission { margin-bottom: 13px; border-color: #d8d9ce; background: #fffefa; }
 .evidence-intro { margin: -9px 0 17px; color: #737c71; font-size: 10px; line-height: 1.55; }
 .evidence-form-grid { margin-top: 13px; }
+.form-field .artifact-file-input { height: auto; min-height: 40px; padding: 5px 8px; font: 10px var(--sans); }
+.artifact-file-input::file-selector-button { margin-right: 10px; border: 1px solid #cbd6c8; border-radius: 2px; padding: 7px 10px; background: #f1f5ee; color: #47634a; font: 9px var(--sans); font-weight: 600; cursor: pointer; }
+.artifact-help { color: #737c71; font: 10px/1.55 var(--sans); }
+.artifact-file-status, .artifact-digest-row { grid-column: 1 / -1; min-width: 0; margin: 0; }
+.artifact-file-status { color: #647165; font-size: 10px; overflow-wrap: anywhere; }
+.artifact-file-status strong { color: var(--ink); font-weight: 600; }
+.artifact-digest-row { display: flex; align-items: center; gap: 7px; }
+.artifact-digest-row input { flex: 1; min-width: 0; height: 38px; border: 1px solid #dbdcd3; border-radius: 2px; padding: 0 10px; background: #fffefa; color: #283a2f; font: 10px var(--mono); }
+.artifact-digest-row .copy-payload-button { flex: 0 0 auto; margin-top: 0; }
 .prepare-payload-button, .copy-payload-button { min-height: 35px; border: 1px solid #cbd6c8; border-radius: 2px; padding: 0 12px; background: #f1f5ee; color: #47634a; font-size: 9px; font-weight: 600; }
 .prepare-payload-button:disabled { opacity: .48; }
 .evidence-signing-form { margin-top: 15px; padding-top: 13px; border-top: 1px solid #e5e5dd; }
@@ -446,11 +455,15 @@ a { color: inherit; text-decoration: none; }
 :root[data-theme="dark"] .form-field select,
 :root[data-theme="dark"] .form-field textarea,
 :root[data-theme="dark"] .setup-input-row input,
-:root[data-theme="dark"] .claim-form-row input {
+:root[data-theme="dark"] .claim-form-row input,
+:root[data-theme="dark"] .artifact-digest-row input {
   border-color: #46564b;
   background: #141c17;
   color: var(--ink);
 }
+:root[data-theme="dark"] .artifact-file-input::file-selector-button { border-color: #46564b; background: #26372b; color: var(--ink); }
+:root[data-theme="dark"] .artifact-help,
+:root[data-theme="dark"] .artifact-file-status { color: var(--ink-soft); }
 :root[data-theme="dark"] .pending-evaluation,
 :root[data-theme="dark"] .notice-warning { border-color: #665339; background: #30291d; color: #e4c185; }
 :root[data-theme="dark"] .notice-error { border-color: #69423b; background: #352421; color: #e5a095; }

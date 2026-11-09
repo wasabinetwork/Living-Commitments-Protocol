@@ -25,7 +25,7 @@ import type {
   TrancheView,
 } from "@lcp/sdk";
 import { useEffect, useRef, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { ChangeEvent, FormEvent, ReactNode } from "react";
 
 interface WalletAction {
   type: "FunctionCall";
@@ -80,6 +80,8 @@ const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
 const NEAR_NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK_ID?.trim() === "mainnet" ? "mainnet" : "testnet";
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
+const DEFAULT_EVALUATION_STORAGE_DEPOSIT = "0.05";
+const MAX_EVIDENCE_ARTIFACT_BYTES = 25 * 1024 * 1024;
 const EVALUATION_HISTORY_LIMIT = 10;
 const COMMITMENT_PAGE_SIZE = 10;
 const THEME_STORAGE_KEY = "lcp-color-theme";
@@ -1401,25 +1403,80 @@ function EvidenceSubmissionCard({
   onSignMessage: (message: string, nonce: Uint8Array, recipient: string, callbackUrl: string) => Promise<NearSignedMessage>;
 }) {
   const { commitment, policy } = data;
+  const artifactFileInputRef = useRef<HTMLInputElement | null>(null);
   const [artifactHash, setArtifactHash] = useState("");
+  const [artifactFileName, setArtifactFileName] = useState("");
+  const [artifactFileSize, setArtifactFileSize] = useState(0);
+  const [hashingArtifact, setHashingArtifact] = useState(false);
   const [observedAt, setObservedAt] = useState("");
   const [payload, setPayload] = useState("");
   const [signature, setSignature] = useState("");
   const [walletEvidence, setWalletEvidence] = useState<Extract<SignedHeartbeatEvidence, { signature_scheme: "near_nep413" }> | null>(null);
   const [signing, setSigning] = useState(false);
-  const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
+  const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_EVALUATION_STORAGE_DEPOSIT);
   const [formError, setFormError] = useState<string | null>(null);
   const canRequest = Boolean(accountId && (accountId === commitment.maintainer
     || (policy?.version === 1 && accountId === policy.budget.sponsor)));
   const blocked = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id);
+
+  function invalidatePreparedEvidence() {
+    setArtifactHash("");
+    setArtifactFileName("");
+    setArtifactFileSize(0);
+    setPayload("");
+    setObservedAt("");
+    setSignature("");
+    setWalletEvidence(null);
+  }
+
+  async function handleArtifactFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+
+    setFormError(null);
+    invalidatePreparedEvidence();
+    if (file.size === 0) {
+      event.currentTarget.value = "";
+      setFormError("Choose a non-empty evidence file.");
+      return;
+    }
+    if (file.size > MAX_EVIDENCE_ARTIFACT_BYTES) {
+      event.currentTarget.value = "";
+      setFormError("Evidence files must be 25 MiB or smaller so the browser can hash them safely.");
+      return;
+    }
+
+    setHashingArtifact(true);
+    try {
+      if (!globalThis.crypto?.subtle) {
+        throw new Error("This browser does not support secure local file hashing.");
+      }
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+      const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      setArtifactHash(hash);
+      setArtifactFileName(file.name);
+      setArtifactFileSize(file.size);
+    } catch (cause) {
+      if (artifactFileInputRef.current) artifactFileInputRef.current.value = "";
+      setFormError(cause instanceof Error ? cause.message : "The evidence file could not be hashed.");
+    } finally {
+      setHashingArtifact(false);
+    }
+  }
+
+  function clearArtifactFile() {
+    if (artifactFileInputRef.current) artifactFileInputRef.current.value = "";
+    invalidatePreparedEvidence();
+    setFormError(null);
+  }
 
   async function preparePayload() {
     setFormError(null);
     try {
       if (!policy) throw new Error("Policy details are unavailable for this commitment.");
       if (blocked) throw new Error("Resolve the pending evaluation or active challenge before preparing a new request.");
-      if (!/^[0-9a-f]{64}$/.test(artifactHash)) {
-        throw new Error("Enter the evidence artifact SHA-256 digest as 64 lowercase hexadecimal characters.");
+      if (!artifactFileName || !/^[0-9a-f]{64}$/.test(artifactHash)) {
+        throw new Error("Choose an evidence file and wait for its SHA-256 digest to finish.");
       }
       const observedAtNs = await getFinalBlockTimestampNs(RPC_URL);
       const input: HeartbeatSigningInput = {
@@ -1446,6 +1503,14 @@ function EvidenceSubmissionCard({
       await navigator.clipboard.writeText(payload);
     } catch {
       setFormError("Clipboard access failed. Select and copy the payload text manually.");
+    }
+  }
+
+  async function copyArtifactHash() {
+    try {
+      await navigator.clipboard.writeText(artifactHash);
+    } catch {
+      setFormError("Clipboard access failed. Select and copy the digest manually.");
     }
   }
 
@@ -1542,11 +1607,23 @@ function EvidenceSubmissionCard({
       {!canRequest && !commitment.pending_evaluation_id && <p className="form-wallet-hint">{policy?.version === 2 ? `Connect the maintainer wallet ${commitment.maintainer} to sign this evaluation.` : "Connect the maintainer or sponsor wallet to submit an evaluation request."}</p>}
       {policy?.version === 2 && accountId && accountId !== commitment.maintainer && <p className="form-wallet-hint">NEP-413 evidence must be signed by the maintainer account {commitment.maintainer}.</p>}
       <div className="form-grid evidence-form-grid">
-        <FormField label="Evidence artifact SHA-256 · 64 lowercase hex" wide>
-          <input className="mono-input" value={artifactHash} onChange={(event) => { setArtifactHash(event.target.value); setPayload(""); setObservedAt(""); setSignature(""); }} placeholder="Digest of the artifact or maintenance evidence" />
+        <FormField label="Evidence artifact file" wide>
+          <input ref={artifactFileInputRef} className="artifact-file-input" type="file" onChange={(event) => void handleArtifactFileChange(event)} disabled={hashingArtifact || signing || busy} aria-describedby="artifact-file-help" />
+          <small id="artifact-file-help" className="artifact-help">Choose the report or record for this observation. SHA-256 is calculated in this browser; the file stays on this device and is not uploaded. Share it separately with reviewers who need to inspect it. Maximum size: 25 MiB.</small>
         </FormField>
+        {hashingArtifact && <p className="artifact-file-status" role="status" aria-live="polite">Calculating SHA-256 locally…</p>}
+        {artifactHash && (
+          <>
+            <p className="artifact-file-status" role="status" aria-live="polite">Ready: <strong>{artifactFileName}</strong> · {artifactFileSize.toLocaleString()} bytes</p>
+            <div className="artifact-digest-row">
+              <input className="mono-input" aria-label="Computed evidence artifact SHA-256" value={artifactHash} readOnly />
+              <button className="copy-payload-button" type="button" onClick={() => void copyArtifactHash()}>Copy digest</button>
+              <button className="copy-payload-button" type="button" onClick={clearArtifactFile} disabled={signing || busy}>Remove file</button>
+            </div>
+          </>
+        )}
       </div>
-      <button className="prepare-payload-button" type="button" onClick={() => void preparePayload()} disabled={!canRequest || blocked || busy}>
+      <button className="prepare-payload-button" type="button" onClick={() => void preparePayload()} disabled={!canRequest || blocked || busy || hashingArtifact || !artifactHash}>
         Prepare canonical signing payload <span aria-hidden="true">↗</span>
       </button>
       {payload && policy && (
@@ -1569,7 +1646,7 @@ function EvidenceSubmissionCard({
           )}
           <div className="form-grid evidence-form-grid">
             {policy.version === 1 && <FormField label="Legacy Ed25519 signature · 128 lowercase hex" wide><input className="mono-input" value={signature} onChange={(event) => setSignature(event.target.value)} maxLength={128} placeholder="Paste legacy signature" /></FormField>}
-            <FormField label="Request storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /></FormField>
+            <FormField label="Request storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /><small>Includes the maximum evaluator callback reserve. The contract refunds any excess.</small></FormField>
           </div>
           {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
           <div className="creation-submit-row"><p>Requesting evaluation spends the evaluator execution budget and reserves callback storage. The contract validates the signature scheme, key pin, and request binding.</p><button className="lookup-button" type="submit" disabled={busy || signing || !canRequest || blocked || (policy.version === 1 ? !signature : !walletEvidence)}>{busy ? <><span className="spinner" />Requesting evaluation</> : <>Request evaluation <span aria-hidden="true">↗</span></>}</button></div>

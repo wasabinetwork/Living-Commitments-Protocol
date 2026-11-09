@@ -21,7 +21,7 @@
 
 ### NEP-413 fixture: commitment 24
 
-The user pinned `wasabinetwork.testnet`'s maintainer key through the Firefox wallet flow and created commitment `24`. Finalized views confirm `Draft`, policy version `2`, signature scheme `near_nep413`, and maintainer-key fingerprint `5e230b28892b61057f3300fc9db3effdbccf1942de36b1c9f949e14333d46e6b`, matching the wallet display. The policy references the R2 evaluator URL above and its matching digest. The draft has `0.00747 NEAR` recorded for storage, with escrow and evaluator operations still unfunded. Next: fund the `0.03 NEAR` escrow and `0.01 NEAR` evaluator operations budget, then activate with the default `0.01 NEAR` storage deposit before testing wallet-signed evidence.
+The user pinned `wasabinetwork.testnet`'s maintainer key through the Firefox wallet flow and created commitment `24`. The commitment was funded with `0.03 NEAR` escrow and `0.01 NEAR` evaluator operations, then activated. Evaluation `1` was requested in Firefox in [7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc](https://testnet.nearblocks.io/txns/7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc) and accepted as **Compliant**. The OutLayer callback cleared the pending request. OutLayer executed the evaluator from the R2 mirror and returned `SIGNATURE_VALID` and `ARTIFACT_HASH_FORMAT_VALID`; this verifies the NEP-413 signature and digest formatting, not the evidence file's contents. The first request attached `0.01 NEAR` and trapped because it did not cover the maximum callback storage reservation. The demo default is now `0.05 NEAR`; the successful retry used that amount, and the contract refunds excess storage deposit.
 
 ## Verified Evaluation
 
@@ -122,6 +122,7 @@ The evaluation `2` panel found the public OutLayer record and matched its transa
 - Commitment `4` is `Closed`; its unused escrow was refunded after its evaluation timed out.
 - Commitment `5` is `Closed`; its unused escrow was refunded after the updated callback classified JSON `null` as a failed result.
 - Commitment `6` is `Closed`; its unused escrow was refunded after an OutLayer promise failure.
+- Commitment `24` is `Active`; evaluation `1` is `Accepted / Compliant` after the NEP-413 wallet evidence flow. Refresh finalized time to determine current effective health as evidence ages.
 - Commitments `7`–`21` are a 15-record playground cohort, funded for one to three tranches and initially provisioned with one evaluator run each. Commitment `9` received an additional run for recovery. Commitment `19` is now `Closed` after the payout/refund journey; the others remain available for scenarios. Initial evidence deadlines were staggered from six hours to five days after activation; evidence TTL, grace, challenge windows, resolution timeouts, recovery policy, and epoch counts vary. Subjects identify their intended scenarios.
 - Commitment `22` is a separate historical-timeline fixture. It is `Active` and `Healthy` after challenge `4` invalidated evaluation `1` and evaluation `2` restored compliant evidence. It has one `0.001 NEAR` tranche; the latest dashboard view showed the claim blocked until the challenge window ends.
 

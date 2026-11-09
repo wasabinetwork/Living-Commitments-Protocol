@@ -2,13 +2,15 @@
 
 ## In progress
 
-- [ ] **NEP-413 testnet fixture:** commitment `24` is a finalized v2 Draft with the wallet-pinned maintainer fingerprint and verified R2 evaluator URL/digest. Next fund `0.03 NEAR` escrow and `0.01 NEAR` evaluator operations, activate, then validate wallet-signed evidence end to end. FastFS remains unresolved.
-- [x] **Live temporal boundaries:** commitment `21` transitioned from `AwaitingEvidence` to `AtRisk` at 00:21:58 AST and from `AtRisk` to `Breached` at 01:21:59 AST in finalized samples. The monitor removed its own cron entry after breach; exact timestamp boundaries are also covered by deterministic tests.
-- [ ] **Demo wallet journey:** user will manually verify create, fund, activate, evidence, claim/retry, close, and refund in Firefox; the user reports no bugs so far.
+- [ ] **P0 Firefox wallet journey:** commitment `24` has completed create, fund, activate, and wallet-signed evaluation in Firefox. Continue manual checks through an eligible claim, retry after a failed transfer, close, and refund. Choose a suitable live fixture for those remaining actions.
 - [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
 
 ## Complete
 
+- [x] **NEP-413 testnet fixture:** commitment `24` is active and evaluation `1` was accepted/compliant in [7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc](https://testnet.nearblocks.io/txns/7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc). OutLayer executed the R2-mirrored evaluator; it verified the wallet signature and artifact-digest format. FastFS remains unavailable, but the R2 fallback completed the test.
+- [x] Add browser-side SHA-256 calculation for selected evidence files (maximum 25 MiB); the file stays local, and changing/removing it invalidates the prepared payload and signature. The user confirmed the Firefox flow.
+- [x] Raise the evaluation storage-deposit default to `0.05 NEAR` after the first `0.01 NEAR` request trapped on storage underpayment; the retry succeeded, and contract excess is refunded.
+- [x] **Live temporal boundaries:** commitment `21` transitioned from `AwaitingEvidence` to `AtRisk` at 00:21:58 AST and from `AtRisk` to `Breached` at 01:21:59 AST in finalized samples. The monitor removed its own cron entry after breach; exact timestamp boundaries are also covered by deterministic tests.
 - [x] Implement NEP-413 wallet evidence across the contract, evaluator, SDK, and demo while preserving v1 evidence behavior; build checks passed.
 - [x] Deploy the v2-capable contract to testnet and verify the new code hash plus existing commitment state. [Deployment transaction](https://testnet.nearblocks.io/txns/HPhtBQgHYgCzJBobDxx3MiGkCzP9WnW6v6MGpKWzeTjc)
 - [x] Submit the v2 evaluator artifact to testnet FastFS and record its returned transaction and URL; FastFS currently returns 404.
@@ -41,3 +43,9 @@
 - [x] Verify the recent-commitment list renders in Brave against the deployed testnet contract.
 - [x] Select a recent commitment in Brave and verify its detail panel loads contract state and available actions.
 - [x] Bind the SDK JSON-RPC `fetch` implementation to `globalThis` so browser views execute correctly.
+
+## Deferred product decision: private evidence access
+
+- Do not expose maintainer email/Telegram details or create a public upload inbox. Keep evidence private by default; any future sharing should require a reviewer wallet request and explicit maintainer approval, with scoped temporary access and no public contact data.
+- The current browser hashes a local file but does not upload it. The public digest is only a maintainer-signed commitment; the evaluator checks signature, binding, and digest format, not the artifact's contents. Reviewers need the original file to independently verify it.
+- Before production, choose between intentionally public artifacts and private encrypted storage. Review hash correlation/dictionary risks and version any salted or encrypted commitment format before implementation.
