@@ -1859,7 +1859,7 @@ function healthDescription(health?: string, eligibility?: ClaimEligibilityView |
     case "Healthy": return "Current evidence satisfies the policy. The contract still checks the active epoch and challenge window before a claim.";
     case "AtRisk": return "Evidence has reached its freshness boundary. A fresh compliant evaluation may restore eligibility if policy allows.";
     case "Breached": return "The configured grace period has elapsed. The contract blocks future claims until its recovery policy is satisfied.";
-    case "AwaitingEvidence": return "The commitment has not received qualifying evidence within its initial window yet.";
+    case "AwaitingEvidence": return "No qualifying evidence has been accepted yet; the initial evidence window is still open.";
     case "Closed": return "This commitment is closed. Its lifecycle no longer advances.";
     default: return "Effective health is calculated by the contract from accepted evidence, policy, and NEAR block time.";
   }
