@@ -3,6 +3,7 @@ use std::{
     process::ExitCode,
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -26,6 +27,8 @@ struct EvaluationRequest {
     observed_at_ns: String,
     subject: String,
     evidence: SignedHeartbeatEvidence,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contract_id: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -37,6 +40,14 @@ struct SignedHeartbeatEvidence {
     maintainer_public_key: String,
     signature: String,
     payload: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signature_scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nonce_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recipient: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    callback_url: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -143,7 +154,7 @@ fn evaluate_stdin() -> Result<String, &'static str> {
         && is_lower_hex_32(&request.policy_hash)
         && is_lower_hex_32(&request.evidence.artifact_hash);
 
-    let signature_valid = verify_signature(&request.evidence, request.evidence.payload.as_bytes());
+    let signature_valid = verify_signature(&request);
     let compliant = payload_is_bound && signature_valid;
     let reason_codes = if compliant {
         vec!["SIGNATURE_VALID", "ARTIFACT_HASH_FORMAT_VALID"]
@@ -173,26 +184,133 @@ fn evaluate_stdin() -> Result<String, &'static str> {
     serde_json::to_string(&output).map_err(|_| "verdict serialization failed")
 }
 
-fn verify_signature(evidence: &SignedHeartbeatEvidence, message: &[u8]) -> bool {
-    if evidence
-        .maintainer_public_key
-        .bytes()
-        .chain(evidence.signature.bytes())
-        .any(|byte| byte.is_ascii_uppercase())
-    {
-        return false;
-    }
-    let Some(public_key_bytes) = decode_hex::<32>(&evidence.maintainer_public_key) else {
-        return false;
-    };
-    let Some(signature_bytes) = decode_hex::<64>(&evidence.signature) else {
-        return false;
+fn verify_signature(request: &EvaluationRequest) -> bool {
+    let evidence = &request.evidence;
+    let (public_key_bytes, signature_bytes, message) = match request.policy_version {
+        1 => {
+            if evidence.signature_scheme.is_some()
+                || evidence.nonce_hex.is_some()
+                || evidence.recipient.is_some()
+                || evidence.callback_url.is_some()
+                || evidence
+                    .maintainer_public_key
+                    .bytes()
+                    .chain(evidence.signature.bytes())
+                    .any(|byte| byte.is_ascii_uppercase())
+            {
+                return false;
+            }
+            let Some(public_key_bytes) = decode_hex::<32>(&evidence.maintainer_public_key) else {
+                return false;
+            };
+            let Some(signature_bytes) = decode_hex::<64>(&evidence.signature) else {
+                return false;
+            };
+            (
+                public_key_bytes,
+                signature_bytes,
+                evidence.payload.as_bytes().to_vec(),
+            )
+        }
+        2 => {
+            if evidence.signature_scheme.as_deref() != Some("near_nep413") {
+                return false;
+            }
+            let Some(encoded_key) = evidence.maintainer_public_key.strip_prefix("ed25519:") else {
+                return false;
+            };
+            let Ok(public_key_bytes) = bs58::decode(encoded_key).into_vec() else {
+                return false;
+            };
+            if public_key_bytes.len() != 32
+                || bs58::encode(&public_key_bytes).into_string() != encoded_key
+            {
+                return false;
+            }
+            let Ok(public_key_bytes) = <[u8; 32]>::try_from(public_key_bytes) else {
+                return false;
+            };
+            let Some(nonce_hex) = evidence.nonce_hex.as_deref() else {
+                return false;
+            };
+            let Some(nonce) = decode_hex::<32>(nonce_hex) else {
+                return false;
+            };
+            if encode_hex(&nonce) != nonce_hex {
+                return false;
+            }
+            let Some(recipient) = evidence.recipient.as_deref() else {
+                return false;
+            };
+            if request.contract_id.as_deref() != Some(recipient) {
+                return false;
+            }
+            let Some(callback_url) = evidence.callback_url.as_deref() else {
+                return false;
+            };
+            if callback_url.is_empty() || callback_url.len() > 2_048 {
+                return false;
+            }
+            let Ok(signature_vec) = BASE64_STANDARD.decode(&evidence.signature) else {
+                return false;
+            };
+            if signature_vec.len() != 64
+                || BASE64_STANDARD.encode(&signature_vec) != evidence.signature
+            {
+                return false;
+            }
+            let Ok(signature_bytes) = <[u8; 64]>::try_from(signature_vec) else {
+                return false;
+            };
+            let Some(message) =
+                nep413_message_hash(&evidence.payload, nonce, recipient, callback_url)
+            else {
+                return false;
+            };
+            (public_key_bytes, signature_bytes, message.to_vec())
+        }
+        _ => return false,
     };
     let Ok(verifying_key) = VerifyingKey::from_bytes(&public_key_bytes) else {
         return false;
     };
     let signature = Signature::from_bytes(&signature_bytes);
-    verifying_key.verify_strict(message, &signature).is_ok()
+    verifying_key.verify_strict(&message, &signature).is_ok()
+}
+
+fn nep413_message_hash(
+    message: &str,
+    nonce: [u8; 32],
+    recipient: &str,
+    callback_url: &str,
+) -> Option<[u8; 32]> {
+    const NEP413_TAG: u32 = (1 << 31) + 413;
+    let message_bytes = message.as_bytes();
+    let recipient_bytes = recipient.as_bytes();
+    let callback_url_bytes = callback_url.as_bytes();
+    let message_len = u32::try_from(message_bytes.len()).ok()?;
+    let recipient_len = u32::try_from(recipient_bytes.len()).ok()?;
+    let callback_url_len = u32::try_from(callback_url_bytes.len()).ok()?;
+    let mut payload = Vec::with_capacity(
+        4 + 4
+            + message_bytes.len()
+            + 32
+            + 4
+            + recipient_bytes.len()
+            + 1
+            + 4
+            + callback_url_bytes.len(),
+    );
+    payload.extend_from_slice(&NEP413_TAG.to_le_bytes());
+    payload.extend_from_slice(&message_len.to_le_bytes());
+    payload.extend_from_slice(message_bytes);
+    payload.extend_from_slice(&nonce);
+    payload.extend_from_slice(&recipient_len.to_le_bytes());
+    payload.extend_from_slice(recipient_bytes);
+    payload.push(1); // callbackUrl: Some(url)
+    payload.extend_from_slice(&callback_url_len.to_le_bytes());
+    payload.extend_from_slice(callback_url_bytes);
+    Some(Sha256::digest(payload).into())
 }
 
 fn sha256_hex(input: &[u8]) -> String {

@@ -2,6 +2,7 @@
 
 ## In progress
 
+- [ ] **Wallet-signature policy v2:** compile and review contract, evaluator, SDK, and demo support for NEP-413 while preserving v1 commitments; deploy and create a fresh wallet-signing fixture after local checks.
 - [ ] **Live temporal boundaries:** keep the #21 monitor through its initial-evidence and grace deadlines (Nov 9, 00:21 and 01:21 AST); exact local timestamp boundaries are covered.
 - [ ] **Demo wallet journey:** finish checking create, fund, activate, evidence, claim/retry, close, and refund through the browser wallet UI; the user reports no bugs so far.
 

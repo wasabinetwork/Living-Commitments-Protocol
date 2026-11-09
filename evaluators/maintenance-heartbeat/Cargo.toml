@@ -9,6 +9,7 @@ name = "maintenance-heartbeat"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
 bs58.workspace = true
 ed25519-dalek.workspace = true
 serde = { workspace = true }

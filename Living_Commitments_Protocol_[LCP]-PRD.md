@@ -1154,6 +1154,7 @@ Shows challenge status and permitted resolution actions.
 * Distinguish time-derived status from recorded events.
 * Never present TEE execution as proof of real-world truth.
 * Make wallet transactions and financial consequences explicit.
+* Use the NEAR wallet `signMessage` standard (NEP-413) for new maintainer evidence so users approve signatures in their connected wallet; version signature schemes and preserve verification for existing commitments.
 
 ---
 

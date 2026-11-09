@@ -26,9 +26,11 @@ export interface TemporalPolicyInput {
   recovery_allowed: boolean;
 }
 
-export interface EvidencePolicyInput {
-  maintainer_public_key_hex: Ed25519PublicKeyHex;
-}
+export type EvidencePolicyInput =
+  | { signature_scheme: "ed25519_raw_v1"; maintainer_public_key_hex: Ed25519PublicKeyHex }
+  | { signature_scheme: "near_nep413"; maintainer_public_key: NearEd25519PublicKey };
+
+export type NearEd25519PublicKey = `ed25519:${string}`;
 
 export interface EvaluatorPolicyInput {
   outlayer_account: string;
@@ -62,12 +64,32 @@ export interface CreateCommitmentArgs {
   };
 }
 
-export interface SignedHeartbeatEvidence {
+interface SignedHeartbeatEvidenceBase {
   type: "signed_maintenance_heartbeat";
   artifact_hash: Sha256Hex;
+  payload: string;
+}
+
+export interface LegacySignedHeartbeatEvidence extends SignedHeartbeatEvidenceBase {
   maintainer_public_key: Ed25519PublicKeyHex;
   signature: Ed25519SignatureHex;
-  payload: string;
+}
+
+export interface Nep413SignedHeartbeatEvidence extends SignedHeartbeatEvidenceBase {
+  maintainer_public_key: NearEd25519PublicKey;
+  signature: string;
+  signature_scheme: "near_nep413";
+  nonce_hex: string;
+  recipient: string;
+  callback_url: string;
+}
+
+export type SignedHeartbeatEvidence = LegacySignedHeartbeatEvidence | Nep413SignedHeartbeatEvidence;
+
+export interface NearSignedMessage {
+  accountId: string;
+  publicKey: string;
+  signature: string;
 }
 
 export interface HeartbeatSigningInput {
@@ -78,7 +100,7 @@ export interface HeartbeatSigningInput {
   observed_at_ns: Nanoseconds;
   subject: string;
   artifact_hash: Sha256Hex;
-  pinned_public_key_hex: Ed25519PublicKeyHex;
+  pinned_public_key_hex?: Ed25519PublicKeyHex;
 }
 
 export interface HeartbeatSigner {
@@ -129,7 +151,11 @@ export interface TemporalPolicyView extends Omit<TemporalPolicyInput, "recovery_
 export interface CommitmentPolicyView {
   version: number;
   temporal: TemporalPolicyView;
-  evidence: { maintainer_public_key_hex: Ed25519PublicKeyHex };
+  evidence: {
+    signature_scheme?: "ed25519_raw_v1" | "near_nep413";
+    maintainer_public_key_hex?: Ed25519PublicKeyHex;
+    maintainer_key_fingerprint_hex?: Sha256Hex;
+  };
   evaluator: Omit<EvaluatorPolicyInput, "wasm_sha256_hex"> & { wasm_sha256_hex: Sha256Hex };
   budget: BudgetPolicyInput;
 }
@@ -434,10 +460,10 @@ export class LcpClient {
 export async function createSignedHeartbeat(
   input: HeartbeatSigningInput,
   signer: HeartbeatSigner,
-): Promise<SignedHeartbeatEvidence> {
+): Promise<LegacySignedHeartbeatEvidence> {
   const payload = buildHeartbeatSigningPayload(input);
   assertLowerHex(signer.publicKeyHex, 32, "signer public key");
-  if (signer.publicKeyHex !== input.pinned_public_key_hex) {
+  if (!input.pinned_public_key_hex || signer.publicKeyHex !== input.pinned_public_key_hex) {
     throw new Error("Signer key does not match the policy-pinned maintainer key.");
   }
   const signature = await signer.sign(new TextEncoder().encode(payload));
@@ -459,7 +485,9 @@ export function buildHeartbeatSigningPayload(input: HeartbeatSigningInput): stri
   assertCanonicalDecimal(input.observed_at_ns, "observed_at_ns");
   assertLowerHex(input.policy_hash, 32, "policy_hash");
   assertLowerHex(input.artifact_hash, 32, "artifact_hash");
-  assertLowerHex(input.pinned_public_key_hex, 32, "pinned_public_key_hex");
+  if (input.pinned_public_key_hex !== undefined) {
+    assertLowerHex(input.pinned_public_key_hex, 32, "pinned_public_key_hex");
+  }
   if (!Number.isInteger(input.policy_version) || input.policy_version <= 0 || input.policy_version > 0xffff_ffff) {
     throw new Error("policy_version must be a positive u32 integer.");
   }
@@ -478,6 +506,76 @@ export function buildHeartbeatSigningPayload(input: HeartbeatSigningInput): stri
     artifact_hash: input.artifact_hash,
   });
   return payload;
+}
+
+/** Build the v2 envelope returned by a NEP-413 compatible NEAR wallet. */
+export async function createNep413HeartbeatEvidence(
+  input: HeartbeatSigningInput,
+  signedMessage: NearSignedMessage,
+  expectedAccountId: string,
+  expectedPublicKeyFingerprintHex: Sha256Hex,
+  nonceHex: string,
+  recipient: string,
+  callbackUrl: string,
+): Promise<Nep413SignedHeartbeatEvidence> {
+  if (!expectedAccountId || signedMessage.accountId !== expectedAccountId) {
+    throw new Error("The wallet signature came from a different account than the commitment maintainer.");
+  }
+  if (!/^ed25519:[1-9A-HJ-NP-Za-km-z]+$/.test(signedMessage.publicKey)) {
+    throw new Error("The connected wallet returned an unsupported NEAR public key type.");
+  }
+  validateBase58Ed25519Key(signedMessage.publicKey);
+  assertLowerHex(expectedPublicKeyFingerprintHex, 32, "pinned maintainer key fingerprint");
+  if (await sha256Hex(signedMessage.publicKey) !== expectedPublicKeyFingerprintHex) {
+    throw new Error("The connected wallet key does not match the key pinned by this commitment.");
+  }
+  assertLowerHex(nonceHex, 32, "NEP-413 nonce");
+  if (!recipient.trim() || recipient.length > 64) {
+    throw new Error("The NEP-413 recipient must be this commitment contract account.");
+  }
+  if (!callbackUrl || new TextEncoder().encode(callbackUrl).length > 2_048) {
+    throw new Error("The NEP-413 callback URL must be non-empty and at most 2048 bytes.");
+  }
+  if (!/^(?:[A-Za-z0-9+/]{4}){21}[A-Za-z0-9+/]{2}==$/.test(signedMessage.signature)) {
+    throw new Error("The wallet returned a malformed NEP-413 signature.");
+  }
+  const payload = buildHeartbeatSigningPayload(input);
+  return {
+    type: "signed_maintenance_heartbeat",
+    artifact_hash: input.artifact_hash,
+    maintainer_public_key: signedMessage.publicKey as NearEd25519PublicKey,
+    signature: signedMessage.signature,
+    payload,
+    signature_scheme: "near_nep413",
+    nonce_hex: nonceHex,
+    recipient,
+    callback_url: callbackUrl,
+  };
+}
+
+export async function nearPublicKeyFingerprintHex(publicKey: NearEd25519PublicKey | string): Promise<Sha256Hex> {
+  if (!/^ed25519:[1-9A-HJ-NP-Za-km-z]+$/.test(publicKey)) {
+    throw new Error("Expected an ed25519 NEAR public key.");
+  }
+  validateBase58Ed25519Key(publicKey);
+  return sha256Hex(publicKey);
+}
+
+function validateBase58Ed25519Key(publicKey: string): void {
+  const encoded = publicKey.slice("ed25519:".length);
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let value = 0n;
+  for (const character of encoded) {
+    const digit = alphabet.indexOf(character);
+    if (digit < 0) throw new Error("The wallet returned a malformed base58 NEAR public key.");
+    value = value * 58n + BigInt(digit);
+  }
+  let byteCount = 0;
+  for (let rest = value; rest > 0n; rest >>= 8n) byteCount += 1;
+  const leadingZeroBytes = encoded.match(/^1*/)?.[0].length ?? 0;
+  if (byteCount + leadingZeroBytes !== 32) {
+    throw new Error("The wallet returned a NEAR Ed25519 public key with an invalid byte length.");
+  }
 }
 
 export async function sha256Hex(value: string | Uint8Array): Promise<Sha256Hex> {

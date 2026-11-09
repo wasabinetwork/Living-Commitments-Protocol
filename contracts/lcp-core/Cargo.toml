@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 testnet-transfer-failure-fixture = []
 
 [dependencies]
+base64.workspace = true
 near-sdk.workspace = true
 bs58.workspace = true
 

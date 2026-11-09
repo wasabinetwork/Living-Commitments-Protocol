@@ -251,6 +251,14 @@ pub struct SignedHeartbeatEvidence {
     pub maintainer_public_key: String,
     pub signature: String,
     pub payload: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callback_url: Option<String>,
 }
 
 /// Canonical signed payload used by the heartbeat maintainer.
@@ -280,6 +288,8 @@ pub struct EvaluationInput<'a> {
     pub observed_at_ns: String,
     pub subject: &'a str,
     pub evidence: &'a SignedHeartbeatEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -433,7 +443,12 @@ pub struct TemporalPolicyArgs {
 #[derive(Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct EvidencePolicyArgs {
-    pub maintainer_public_key_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintainer_public_key_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintainer_public_key: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -509,7 +524,11 @@ pub struct CommitmentPolicyView {
 #[derive(Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct EvidencePolicyView {
-    pub maintainer_public_key_hex: String,
+    pub signature_scheme: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maintainer_public_key_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maintainer_key_fingerprint_hex: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -591,7 +610,15 @@ impl From<&CommitmentPolicy> for CommitmentPolicyView {
             version: policy.version,
             temporal: TemporalPolicyView::from(&policy.temporal),
             evidence: EvidencePolicyView {
-                maintainer_public_key_hex: encode_hex(&policy.evidence.maintainer_public_key),
+                signature_scheme: if policy.version == 2 {
+                    "near_nep413".to_string()
+                } else {
+                    "ed25519_raw_v1".to_string()
+                },
+                maintainer_public_key_hex: (policy.version == 1)
+                    .then(|| encode_hex(&policy.evidence.maintainer_public_key)),
+                maintainer_key_fingerprint_hex: (policy.version == 2)
+                    .then(|| encode_hex(&policy.evidence.maintainer_public_key)),
             },
             evaluator: EvaluatorPolicyView {
                 outlayer_account: policy.evaluator.outlayer_account.clone(),

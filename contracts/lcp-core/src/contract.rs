@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 #[cfg(feature = "testnet-transfer-failure-fixture")]
 use near_sdk::AccountId;
 use near_sdk::{
@@ -110,6 +111,7 @@ impl Contract {
 
         let creator = env::predecessor_account_id();
         let policy = build_policy(args.policy);
+        let policy_version = policy.version;
         let policy_bytes = near_sdk::borsh::to_vec(&policy)
             .unwrap_or_else(|_| env::panic_str("failed to serialize commitment policy"));
         let policy_hash = env::sha256_array(&policy_bytes);
@@ -172,7 +174,7 @@ impl Contract {
             json!({
                 "commitment_id": id.to_string(),
                 "creator": creator,
-                "policy_version": 1,
+                "policy_version": policy_version,
                 "policy_hash": encode_hex(&policy_hash),
             }),
         );
@@ -383,6 +385,8 @@ impl Contract {
             observed_at_ns: observed_at_ns.to_string(),
             subject: &commitment.subject,
             evidence: &evidence,
+            contract_id: (commitment.policy.version == 2)
+                .then(|| env::current_account_id().to_string()),
         };
         let input_data = near_sdk::serde_json::to_string(&input)
             .unwrap_or_else(|_| env::panic_str("failed to serialize evaluator input"));
@@ -1762,24 +1766,79 @@ fn validate_heartbeat_binding(
         evidence.evidence_type == HEARTBEAT_EVIDENCE_TYPE,
         "unsupported evidence type"
     );
-    let signer = decode_32_byte_hex(&evidence.maintainer_public_key).unwrap_or_else(|| {
-        env::panic_str("maintainer public key must be 64 hexadecimal characters")
-    });
-    require!(
-        encode_hex(&signer) == evidence.maintainer_public_key,
-        "maintainer public key must use lowercase hexadecimal"
-    );
-    require!(
-        signer == commitment.policy.evidence.maintainer_public_key,
-        "heartbeat signer does not match the policy-pinned maintainer key"
-    );
-    let signature = decode_64_byte_hex(&evidence.signature).unwrap_or_else(|| {
-        env::panic_str("heartbeat signature must be 128 hexadecimal characters")
-    });
-    require!(
-        encode_hex(&signature) == evidence.signature,
-        "heartbeat signature must use lowercase hexadecimal"
-    );
+    match commitment.policy.version {
+        1 => {
+            require!(
+                evidence.signature_scheme.is_none()
+                    && evidence.nonce_hex.is_none()
+                    && evidence.recipient.is_none()
+                    && evidence.callback_url.is_none(),
+                "v1 evidence cannot include wallet-signature fields"
+            );
+            let signer = decode_32_byte_hex(&evidence.maintainer_public_key).unwrap_or_else(|| {
+                env::panic_str("maintainer public key must be 64 hexadecimal characters")
+            });
+            require!(
+                encode_hex(&signer) == evidence.maintainer_public_key,
+                "maintainer public key must use lowercase hexadecimal"
+            );
+            require!(
+                signer == commitment.policy.evidence.maintainer_public_key,
+                "heartbeat signer does not match the policy-pinned maintainer key"
+            );
+            let signature = decode_64_byte_hex(&evidence.signature).unwrap_or_else(|| {
+                env::panic_str("heartbeat signature must be 128 hexadecimal characters")
+            });
+            require!(
+                encode_hex(&signature) == evidence.signature,
+                "heartbeat signature must use lowercase hexadecimal"
+            );
+        }
+        2 => {
+            require!(
+                evidence.signature_scheme.as_deref() == Some("near_nep413"),
+                "v2 evidence requires the near_nep413 signature scheme"
+            );
+            let key_bytes = decode_near_ed25519_public_key(&evidence.maintainer_public_key)
+                .unwrap_or_else(|| {
+                    env::panic_str("maintainer key must be a canonical ed25519 NEAR key")
+                });
+            require!(
+                env::sha256_array(evidence.maintainer_public_key.as_bytes())
+                    == commitment.policy.evidence.maintainer_public_key,
+                "heartbeat signer does not match the policy-pinned maintainer key"
+            );
+            require!(
+                key_bytes.len() == 32,
+                "maintainer key must contain 32 bytes"
+            );
+            let nonce = evidence.nonce_hex.as_deref().unwrap_or("");
+            let nonce_bytes = decode_32_byte_hex(nonce).unwrap_or_else(|| {
+                env::panic_str("NEP-413 nonce must be 64 lowercase hexadecimal characters")
+            });
+            require!(
+                encode_hex(&nonce_bytes) == nonce,
+                "NEP-413 nonce must use lowercase hexadecimal"
+            );
+            require!(
+                evidence.recipient.as_deref() == Some(env::current_account_id().as_str()),
+                "NEP-413 recipient must be this commitment contract"
+            );
+            let callback_url = evidence.callback_url.as_deref().unwrap_or("");
+            require!(
+                !callback_url.is_empty() && callback_url.len() <= 2_048,
+                "NEP-413 callback URL must be non-empty and at most 2048 bytes"
+            );
+            let signature = BASE64_STANDARD
+                .decode(&evidence.signature)
+                .unwrap_or_else(|_| env::panic_str("NEP-413 signature must be base64"));
+            require!(
+                signature.len() == 64 && BASE64_STANDARD.encode(&signature) == evidence.signature,
+                "NEP-413 signature must be a canonical 64-byte Ed25519 signature"
+            );
+        }
+        _ => env::panic_str("unsupported commitment signature policy version"),
+    }
     let artifact_hash = decode_32_byte_hex(&evidence.artifact_hash)
         .unwrap_or_else(|| env::panic_str("artifact hash must be 64 hexadecimal characters"));
     require!(
@@ -1902,6 +1961,15 @@ fn parse_near_transaction_hash(value: &str) -> Option<[u8; 32]> {
     decoded.try_into().ok()
 }
 
+fn decode_near_ed25519_public_key(value: &str) -> Option<Vec<u8>> {
+    let encoded = value.strip_prefix("ed25519:")?;
+    let decoded = bs58::decode(encoded).into_vec().ok()?;
+    if decoded.len() != 32 || bs58::encode(&decoded).into_string() != encoded {
+        return None;
+    }
+    Some(decoded)
+}
+
 fn build_policy(args: CommitmentPolicyArgs) -> CommitmentPolicy {
     let temporal = TemporalPolicy {
         initial_window_ns: args.temporal.initial_window_ns.0,
@@ -1916,16 +1984,46 @@ fn build_policy(args: CommitmentPolicyArgs) -> CommitmentPolicy {
         env::panic_str(&format!("invalid temporal policy: {error}"));
     }
 
-    let evidence = EvidencePolicy {
-        maintainer_public_key: decode_32_byte_hex(&args.evidence.maintainer_public_key_hex)
-            .unwrap_or_else(|| {
+    let (version, pinned_key) = match args.evidence.signature_scheme.as_deref() {
+        None | Some("ed25519_raw_v1") => {
+            require!(
+                args.evidence.maintainer_public_key.is_none(),
+                "legacy evidence policy cannot include a typed NEAR public key"
+            );
+            let key = args
+                .evidence
+                .maintainer_public_key_hex
+                .as_deref()
+                .unwrap_or("");
+            let decoded = decode_32_byte_hex(key).unwrap_or_else(|| {
                 env::panic_str("maintainer public key must be 64 hexadecimal characters")
-            }),
+            });
+            require!(
+                encode_hex(&decoded) == key,
+                "maintainer public key must use lowercase hexadecimal"
+            );
+            (1, decoded)
+        }
+        Some("near_nep413") => {
+            require!(
+                args.evidence.maintainer_public_key_hex.is_none(),
+                "NEP-413 evidence policy cannot include a legacy hexadecimal key"
+            );
+            let key = args.evidence.maintainer_public_key.as_deref().unwrap_or("");
+            decode_near_ed25519_public_key(key).unwrap_or_else(|| {
+                env::panic_str("maintainer key must be a canonical ed25519 NEAR key")
+            });
+            (2, env::sha256_array(key.as_bytes()))
+        }
+        Some(_) => env::panic_str("unsupported evidence signature scheme"),
+    };
+    let evidence = EvidencePolicy {
+        maintainer_public_key: pinned_key,
     };
     let evaluator = build_evaluator_policy(args.evaluator);
     let budget = build_budget_policy(args.budget);
     let policy = CommitmentPolicy {
-        version: 1,
+        version,
         temporal,
         evidence,
         evaluator,

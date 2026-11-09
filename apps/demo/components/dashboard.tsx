@@ -2,8 +2,10 @@
 
 import {
   buildHeartbeatSigningPayload,
+  createNep413HeartbeatEvidence,
   LcpClient,
   NearJsonRpcTransport,
+  nearPublicKeyFingerprintHex,
 } from "@lcp/sdk";
 import type {
   ChallengeView,
@@ -17,6 +19,8 @@ import type {
   EscrowStatusView,
   NearTransactionRequest,
   NearTransactionSender,
+  NearEd25519PublicKey,
+  NearSignedMessage,
   SignedHeartbeatEvidence,
   TrancheView,
 } from "@lcp/sdk";
@@ -38,6 +42,7 @@ interface NearWalletPort {
     receiverId: string;
     actions: WalletAction[];
   }): Promise<unknown>;
+  signMessage?(input: { message: string; recipient: string; nonce: Uint8Array; callbackUrl?: string; network?: "mainnet" | "testnet" }): Promise<NearSignedMessage | void>;
 }
 
 interface ConnectorAccountEvent {
@@ -256,6 +261,47 @@ export function Dashboard() {
     } finally {
       setDisconnecting(false);
     }
+  }
+
+  async function signWalletMessage(message: string, nonce: Uint8Array, recipient: string, callbackUrl: string): Promise<NearSignedMessage> {
+    const connector = connectorRef.current;
+    if (!connector) throw new Error("Connect a NEAR wallet before requesting a message signature.");
+    const wallet = await connector.wallet();
+    if (!wallet.signMessage) {
+      throw new Error("This connected wallet does not expose NEP-413 message signing. Choose a NEAR wallet that supports signMessage.");
+    }
+    const signed = await wallet.signMessage({ message, nonce, recipient, callbackUrl, network: NEAR_NETWORK_ID });
+    if (!signed) {
+      throw new Error("The wallet did not return a signed message in this browser session. Reconnect with a wallet that returns NEP-413 signatures directly.");
+    }
+    return signed;
+  }
+
+  async function pinMaintainerKey(targetAccountId: string): Promise<{
+    accountId: string;
+    publicKey: NearEd25519PublicKey;
+    fingerprint: string;
+  }> {
+    if (!CONTRACT_ID) throw new Error("Set NEXT_PUBLIC_LCP_CONTRACT_ID before pinning a maintainer key.");
+    const intendedAccount = targetAccountId.trim() || accountId || "";
+    if (!intendedAccount) throw new Error("Enter the maintainer account or connect that account's wallet first.");
+    const nonce = crypto.getRandomValues(new Uint8Array(32));
+    const callbackUrl = window.location.href.split("#", 1)[0];
+    const signed = await signWalletMessage(
+      `Pin this NEAR key for Living Commitments Protocol maintainer ${intendedAccount}.`,
+      nonce,
+      CONTRACT_ID,
+      callbackUrl,
+    );
+    if (signed.accountId !== intendedAccount) {
+      throw new Error(`The wallet signed as ${signed.accountId}; connect the maintainer account ${intendedAccount} to pin its key.`);
+    }
+    const fingerprint = await nearPublicKeyFingerprintHex(signed.publicKey);
+    return {
+      accountId: signed.accountId,
+      publicKey: signed.publicKey as NearEd25519PublicKey,
+      fingerprint,
+    };
   }
 
   async function createCommitment(args: CreateCommitmentArgs, storageDeposit: string) {
@@ -793,6 +839,7 @@ export function Dashboard() {
             contractConfigured={Boolean(CONTRACT_ID)}
             busy={creating}
             onCreate={createCommitment}
+            onPinMaintainerKey={pinMaintainerKey}
           />
         </details>
 
@@ -824,6 +871,7 @@ export function Dashboard() {
                 pendingTimeoutNs={data.evaluationTimeoutNs}
                 onExpire={expirePendingEvaluation}
                 onSubmit={submitEvaluation}
+                onSignMessage={signWalletMessage}
               />
             )}
             {data.commitment.lifecycle === "Active" && data.policy && (
@@ -896,7 +944,13 @@ export function Dashboard() {
                       <Fact label="GRACE PERIOD" value={formatDuration(data.policy.temporal.grace_ns)} />
                       <Fact label="RECOVERY" value={data.policy.temporal.recovery_allowed ? "Allowed by policy" : "Breach remains latched"} />
                       <Fact label="EVALUATOR" value={data.policy.evaluator.outlayer_account} mono />
-                      <Fact label="MAINTAINER KEY" value={data.policy.evidence.maintainer_public_key_hex} mono />
+                      <Fact
+                        label={data.policy.version === 2 ? "MAINTAINER KEY FINGERPRINT" : "MAINTAINER KEY"}
+                        value={data.policy.version === 2
+                          ? data.policy.evidence.maintainer_key_fingerprint_hex ?? "Unavailable"
+                          : data.policy.evidence.maintainer_public_key_hex ?? "Unavailable"}
+                        mono
+                      />
                     </div>
                     <div className="digest-row"><span>POLICY DIGEST</span><code>{data.commitment.policy_hash}</code></div>
                     <div className="digest-row"><span>WASM SHA-256</span><code>{data.policy.evaluator.wasm_sha256_hex}</code></div>
@@ -1336,6 +1390,7 @@ function EvidenceSubmissionCard({
   pendingTimeoutNs,
   onExpire,
   onSubmit,
+  onSignMessage,
 }: {
   data: CommitmentData;
   accountId: string | null;
@@ -1343,15 +1398,19 @@ function EvidenceSubmissionCard({
   pendingTimeoutNs: string | null;
   onExpire: () => Promise<void>;
   onSubmit: (evidence: SignedHeartbeatEvidence, storageDeposit: string) => Promise<void>;
+  onSignMessage: (message: string, nonce: Uint8Array, recipient: string, callbackUrl: string) => Promise<NearSignedMessage>;
 }) {
   const { commitment, policy } = data;
   const [artifactHash, setArtifactHash] = useState("");
   const [observedAt, setObservedAt] = useState("");
   const [payload, setPayload] = useState("");
   const [signature, setSignature] = useState("");
+  const [walletEvidence, setWalletEvidence] = useState<Extract<SignedHeartbeatEvidence, { signature_scheme: "near_nep413" }> | null>(null);
+  const [signing, setSigning] = useState(false);
   const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
   const [formError, setFormError] = useState<string | null>(null);
-  const canRequest = Boolean(accountId && (accountId === commitment.maintainer || accountId === policy?.budget.sponsor));
+  const canRequest = Boolean(accountId && (accountId === commitment.maintainer
+    || (policy?.version === 1 && accountId === policy.budget.sponsor)));
   const blocked = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id);
 
   async function preparePayload() {
@@ -1371,11 +1430,12 @@ function EvidenceSubmissionCard({
         observed_at_ns: observedAtNs,
         subject: commitment.subject,
         artifact_hash: artifactHash,
-        pinned_public_key_hex: policy.evidence.maintainer_public_key_hex,
+        pinned_public_key_hex: policy.version === 1 ? policy.evidence.maintainer_public_key_hex : undefined,
       };
       setPayload(buildHeartbeatSigningPayload(input));
       setObservedAt(observedAtNs);
       setSignature("");
+      setWalletEvidence(null);
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : "The signing payload could not be prepared.");
     }
@@ -1394,20 +1454,70 @@ function EvidenceSubmissionCard({
     setFormError(null);
     try {
       if (!policy || !payload) throw new Error("Prepare the canonical signing payload first.");
-      if (!/^[0-9a-f]{128}$/.test(signature)) {
-        throw new Error("Paste the 64-byte Ed25519 signature as 128 lowercase hexadecimal characters.");
+      let evidence: SignedHeartbeatEvidence;
+      if (policy.version === 2) {
+        if (!walletEvidence) throw new Error("Sign this observation with the connected maintainer wallet first.");
+        evidence = walletEvidence;
+      } else {
+        if (!policy.evidence.maintainer_public_key_hex) throw new Error("This legacy policy is missing its pinned Ed25519 public key.");
+        if (!/^[0-9a-f]{128}$/.test(signature)) {
+          throw new Error("Legacy v1 commitments require a 64-byte Ed25519 signature as 128 lowercase hexadecimal characters.");
+        }
+        evidence = {
+          type: "signed_maintenance_heartbeat",
+          artifact_hash: artifactHash,
+          maintainer_public_key: policy.evidence.maintainer_public_key_hex,
+          signature,
+          payload,
+        };
       }
       const deposit = parseNearToYocto(storageDepositNear);
       if (BigInt(deposit) === 0n) throw new Error("Request storage deposit must be greater than zero.");
-      await onSubmit({
-        type: "signed_maintenance_heartbeat",
-        artifact_hash: artifactHash,
-        maintainer_public_key: policy.evidence.maintainer_public_key_hex,
-        signature,
-        payload,
-      }, deposit);
+      await onSubmit(evidence, deposit);
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : "Check the signed evidence and try again.");
+    }
+  }
+
+  async function signWithWallet() {
+    setSigning(true);
+    setFormError(null);
+    try {
+      if (!policy?.evidence.maintainer_key_fingerprint_hex) {
+        throw new Error("This v2 policy does not expose its pinned NEAR key fingerprint.");
+      }
+      if (!accountId || accountId !== commitment.maintainer) {
+        throw new Error(`Connect the maintainer wallet ${commitment.maintainer} before signing this observation.`);
+      }
+      const nonce = crypto.getRandomValues(new Uint8Array(32));
+      const callbackUrl = window.location.href.split("#", 1)[0];
+      const signed = await onSignMessage(payload, nonce, CONTRACT_ID, callbackUrl);
+      const nonceHex = Array.from(nonce, (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const input: HeartbeatSigningInput = {
+        commitment_id: commitment.id,
+        evaluation_id: commitment.next_evaluation_id,
+        policy_version: commitment.policy_version,
+        policy_hash: commitment.policy_hash,
+        observed_at_ns: observedAt,
+        subject: commitment.subject,
+        artifact_hash: artifactHash,
+      };
+      const evidence = await createNep413HeartbeatEvidence(
+        input,
+        signed,
+        commitment.maintainer,
+        policy.evidence.maintainer_key_fingerprint_hex,
+        nonceHex,
+        CONTRACT_ID,
+        callbackUrl,
+      );
+      setWalletEvidence(evidence);
+      setFormError(null);
+    } catch (cause) {
+      setWalletEvidence(null);
+      setFormError(cause instanceof Error ? cause.message : "The connected wallet could not sign this observation.");
+    } finally {
+      setSigning(false);
     }
   }
 
@@ -1417,7 +1527,7 @@ function EvidenceSubmissionCard({
         <div><p className="eyebrow">ACTIVE · HEARTBEAT EVIDENCE</p><h3>Submit a signed observation</h3></div>
         <span className="card-index">NEXT · {commitment.next_evaluation_id}</span>
       </div>
-      <p className="evidence-intro">The demo builds the exact commitment-bound message using a finalized NEAR block time. Sign its UTF-8 text offline with the maintainer key pinned in policy, then paste the lowercase hex signature within the policy’s {formatDuration(policy?.temporal.max_source_lag_ns ?? "0")} source-lag window. The private key never enters this page; regenerate the payload if it gets stale.</p>
+      <p className="evidence-intro">The demo builds a commitment-bound message using finalized NEAR block time. {policy?.version === 2 ? "Your connected NEAR wallet signs it with NEP-413; the private key stays in the wallet." : "This older policy uses the original raw Ed25519 format and cannot use NEP-413 wallet signing."} Submit it within the policy’s {formatDuration(policy?.temporal.max_source_lag_ns ?? "0")} source-lag window; regenerate it if it gets stale.</p>
       {commitment.pending_evaluation_id && (
         <div className="pending-evaluation">
           <p className="form-wallet-hint">Evaluation #{commitment.pending_evaluation_id} is pending{pendingTimeoutNs ? ` until ${formatDate(pendingTimeoutNs)}` : ""}.</p>
@@ -1429,7 +1539,8 @@ function EvidenceSubmissionCard({
         </div>
       )}
       {commitment.active_challenge_id && <p className="form-wallet-hint">Resolve challenge #{commitment.active_challenge_id} before requesting another evaluation.</p>}
-      {!canRequest && !commitment.pending_evaluation_id && <p className="form-wallet-hint">Connect the maintainer or sponsor wallet to submit an evaluation request.</p>}
+      {!canRequest && !commitment.pending_evaluation_id && <p className="form-wallet-hint">{policy?.version === 2 ? `Connect the maintainer wallet ${commitment.maintainer} to sign this evaluation.` : "Connect the maintainer or sponsor wallet to submit an evaluation request."}</p>}
+      {policy?.version === 2 && accountId && accountId !== commitment.maintainer && <p className="form-wallet-hint">NEP-413 evidence must be signed by the maintainer account {commitment.maintainer}.</p>}
       <div className="form-grid evidence-form-grid">
         <FormField label="Evidence artifact SHA-256 · 64 lowercase hex" wide>
           <input className="mono-input" value={artifactHash} onChange={(event) => { setArtifactHash(event.target.value); setPayload(""); setObservedAt(""); setSignature(""); }} placeholder="Digest of the artifact or maintenance evidence" />
@@ -1441,19 +1552,27 @@ function EvidenceSubmissionCard({
       {payload && policy && (
         <form className="evidence-signing-form" onSubmit={(event) => void handleSubmit(event)}>
           <div className="digest-row"><span>OBSERVED AT · FINAL NEAR BLOCK</span><code>{observedAt}</code></div>
-          <FormField label="Exact UTF-8 payload to sign" wide><textarea className="mono-input signing-payload" value={payload} readOnly rows={6} /></FormField>
-          <button className="copy-payload-button" type="button" onClick={() => void copyPayload()}>Copy signing payload</button>
-          <div className="signer-helper" role="note">
-            <strong>Sign locally without putting a key in this page</strong>
-            <span>Copy the payload, then on macOS run this from the repository root. It checks that your local key matches the pinned public key and prints only the signature.</span>
-            <code>pbpaste | node scripts/sign-heartbeat.mjs {policy.evidence.maintainer_public_key_hex}</code>
-          </div>
+          <FormField label="Commitment-bound message" wide><textarea className="mono-input signing-payload" value={payload} readOnly rows={6} /></FormField>
+          {policy.version === 2 ? (
+            <div className="wallet-signing-panel">
+              <button className="copy-payload-button" type="button" onClick={() => void copyPayload()}>Copy message</button>
+              <button className="prepare-payload-button" type="button" onClick={() => void signWithWallet()} disabled={signing || busy || !canRequest || blocked}>
+                {signing ? "Waiting for wallet…" : walletEvidence ? "Signed by maintainer wallet ✓" : "Sign with maintainer wallet ↗"}
+              </button>
+              <small>NEP-413 binds this signature to {CONTRACT_ID}, a random nonce, and this page’s callback URL.</small>
+            </div>
+          ) : (
+            <>
+              <button className="copy-payload-button" type="button" onClick={() => void copyPayload()}>Copy legacy signing payload</button>
+              <div className="form-wallet-hint" role="note">This commitment predates wallet-signature policies. Preserve its raw Ed25519 signature format; new commitments use wallet signing.</div>
+            </>
+          )}
           <div className="form-grid evidence-form-grid">
-            <FormField label="Ed25519 signature · 128 lowercase hex" wide><input className="mono-input" value={signature} onChange={(event) => setSignature(event.target.value)} maxLength={128} placeholder="Paste the offline signature" /></FormField>
+            {policy.version === 1 && <FormField label="Legacy Ed25519 signature · 128 lowercase hex" wide><input className="mono-input" value={signature} onChange={(event) => setSignature(event.target.value)} maxLength={128} placeholder="Paste legacy signature" /></FormField>}
             <FormField label="Request storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /></FormField>
           </div>
           {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
-          <div className="creation-submit-row"><p>Requesting evaluation spends the evaluator execution budget and reserves callback storage. The contract validates the signature and request binding.</p><button className="lookup-button" type="submit" disabled={busy || !canRequest || blocked || !signature}>{busy ? <><span className="spinner" />Requesting evaluation</> : <>Request evaluation <span aria-hidden="true">↗</span></>}</button></div>
+          <div className="creation-submit-row"><p>Requesting evaluation spends the evaluator execution budget and reserves callback storage. The contract validates the signature scheme, key pin, and request binding.</p><button className="lookup-button" type="submit" disabled={busy || signing || !canRequest || blocked || (policy.version === 1 ? !signature : !walletEvidence)}>{busy ? <><span className="spinner" />Requesting evaluation</> : <>Request evaluation <span aria-hidden="true">↗</span></>}</button></div>
         </form>
       )}
       {!payload && formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
@@ -1677,11 +1796,13 @@ function CreateCommitmentForm({
   contractConfigured,
   busy,
   onCreate,
+  onPinMaintainerKey,
 }: {
   connectedAccountId: string | null;
   contractConfigured: boolean;
   busy: boolean;
   onCreate: (args: CreateCommitmentArgs, storageDeposit: string) => Promise<void>;
+  onPinMaintainerKey: (accountId: string) => Promise<{ accountId: string; publicKey: NearEd25519PublicKey; fingerprint: string }>;
 }) {
   const [hydrated, setHydrated] = useState(false);
   const [fields, setFields] = useState<CreationFields>({
@@ -1711,15 +1832,49 @@ function CreateCommitmentForm({
     storageDepositNear: DEFAULT_STORAGE_DEPOSIT,
   });
   const [formError, setFormError] = useState<string | null>(null);
+  const [pinnedKeyAccountId, setPinnedKeyAccountId] = useState<string | null>(null);
+  const [keyFingerprint, setKeyFingerprint] = useState<string | null>(null);
+  const [pinningKey, setPinningKey] = useState(false);
 
   function update<K extends keyof CreationFields>(key: K, value: CreationFields[K]) {
+    if (key === "maintainer") {
+      setFields((current) => current.maintainer === value
+        ? current
+        : { ...current, maintainer: value as string, maintainerPublicKey: "" });
+      if (fields.maintainer !== value) {
+        setPinnedKeyAccountId(null);
+        setKeyFingerprint(null);
+      }
+      return;
+    }
     setFields((current) => ({ ...current, [key]: value }));
+  }
+
+  async function pinConnectedMaintainerKey() {
+    setPinningKey(true);
+    setFormError(null);
+    try {
+      const intendedAccountId = fields.maintainer.trim() || connectedAccountId || "";
+      if (!intendedAccountId) throw new Error("Enter the maintainer account or connect its wallet.");
+      const pinned = await onPinMaintainerKey(intendedAccountId);
+      setFields((current) => ({ ...current, maintainer: pinned.accountId, maintainerPublicKey: pinned.publicKey }));
+      setPinnedKeyAccountId(pinned.accountId);
+      setKeyFingerprint(pinned.fingerprint);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "The maintainer wallet key could not be pinned.");
+    } finally {
+      setPinningKey(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
     try {
+      const intendedAccountId = fields.maintainer.trim() || connectedAccountId || "";
+      if (!pinnedKeyAccountId || pinnedKeyAccountId !== intendedAccountId) {
+        throw new Error("Pin the connected maintainer wallet key before creating this v2 commitment.");
+      }
       const args = buildCreateCommitmentArgs(fields, connectedAccountId);
       const storageDeposit = parseNearToYocto(fields.storageDepositNear);
       if (BigInt(storageDeposit) === 0n) throw new Error("Storage deposit must be greater than zero.");
@@ -1750,7 +1905,16 @@ function CreateCommitmentForm({
 
       <div className="creation-section-heading"><span>02</span><div><strong>Evidence &amp; evaluator</strong><small>Pin the maintainer’s public key and the exact evaluator artifact.</small></div></div>
       <div className="form-grid">
-        <FormField label="Maintainer Ed25519 public key · 64 lowercase hex" wide><input className="mono-input" value={fields.maintainerPublicKey} onChange={(event) => update("maintainerPublicKey", event.target.value)} placeholder="Public key only — never enter a private key" required /></FormField>
+        <FormField label="Maintainer NEAR wallet key" wide>
+          <div className="maintainer-key-input">
+            <input className="mono-input" value={fields.maintainerPublicKey} readOnly placeholder="Connect the maintainer wallet and pin its public key" required />
+            <button className="copy-payload-button" type="button" onClick={() => void pinConnectedMaintainerKey()} disabled={!connectedAccountId || pinningKey || busy}>
+              {pinningKey ? "Confirm in wallet…" : fields.maintainerPublicKey ? "Repin wallet key" : "Pin connected wallet key"}
+            </button>
+          </div>
+          {keyFingerprint && <small className="form-wallet-hint">Pinned key fingerprint · <code>{keyFingerprint}</code> · signed by {pinnedKeyAccountId}</small>}
+          {!connectedAccountId && <small className="form-wallet-hint">Connect the maintainer’s NEAR wallet first. The key is read from a NEP-413 wallet signature.</small>}
+        </FormField>
         <FormField label="Evaluator WASM HTTPS URL" wide><input value={fields.wasmUrl} onChange={(event) => update("wasmUrl", event.target.value)} placeholder="https://…/maintenance-heartbeat.wasm" required /></FormField>
         <FormField label="Evaluator WASM SHA-256 · 64 lowercase hex" wide><input className="mono-input" value={fields.wasmSha256} onChange={(event) => update("wasmSha256", event.target.value)} placeholder="Digest of the exact uploaded WASM file" required /></FormField>
       </div>
@@ -1799,8 +1963,8 @@ function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: s
   if (!subject || subject.length > 128 || !/^[\x20-\x7e]+$/.test(subject)) {
     throw new Error("Subject must be non-empty printable ASCII and no longer than 128 characters.");
   }
-  if (!/^[0-9a-f]{64}$/.test(fields.maintainerPublicKey)) {
-    throw new Error("Enter the maintainer's 32-byte Ed25519 public key as 64 lowercase hexadecimal characters.");
+  if (!/^ed25519:[1-9A-HJ-NP-Za-km-z]+$/.test(fields.maintainerPublicKey)) {
+    throw new Error("Pin a valid Ed25519 public key from the connected NEAR maintainer wallet.");
   }
   if (!/^[0-9a-f]{64}$/.test(fields.wasmSha256)) {
     throw new Error("Enter the evaluator WASM SHA-256 digest as 64 lowercase hexadecimal characters.");
@@ -1872,7 +2036,10 @@ function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: s
         resolution_timeout_ns: resolutionTimeout,
         recovery_allowed: fields.recoveryAllowed,
       },
-      evidence: { maintainer_public_key_hex: fields.maintainerPublicKey },
+      evidence: {
+        signature_scheme: "near_nep413",
+        maintainer_public_key: fields.maintainerPublicKey as NearEd25519PublicKey,
+      },
       evaluator: {
         outlayer_account: "outlayer.testnet",
         wasm_url: fields.wasmUrl,

@@ -1,6 +1,6 @@
 # Testnet Demo Walkthrough
 
-This guide follows a commitment from its policy and evidence through time-based health and budget eligibility. Use NEAR testnet only. The demo never needs a maintainer private key; sign the exact payload offline and paste only the resulting signature.
+This guide follows a commitment from its policy and evidence through time-based health and budget eligibility. Use NEAR testnet only. The demo never asks for a private key; new commitments use the connected NEAR wallet's NEP-413 message-signing capability.
 
 ## Start the Demo
 
@@ -12,7 +12,7 @@ NEXT_PUBLIC_NEAR_NETWORK_ID=testnet
 NEXT_PUBLIC_NEAR_RPC_URL=https://test.rpc.fastnear.com
 ```
 
-Run `npm run dev --workspace=@lcp/demo` and open `http://localhost:3000`. The demo follows the system color preference and lets you switch between dark and light mode from the top bar. Connect a testnet wallet only when a transaction is needed. Browse recent commitments to inspect existing records; the user has confirmed the recent list, older-page control, wallet connection, and disconnection.
+Run `npm run dev --workspace=@lcp/demo` and open `http://localhost:3000`. The demo follows the system color preference and lets you switch between dark and light mode from the top bar. Connect a testnet wallet when signing or submitting an action. Browse recent commitments to inspect existing records; the user has confirmed the recent list, older-page control, wallet connection, and disconnection.
 
 ## Follow Existing Testnet Examples
 
@@ -27,12 +27,12 @@ The dashboard's health is contract-derived. The timeline distinguishes recorded 
 
 Use a test commitment and the appropriate role wallet for each action:
 
-1. Connect the intended creator testnet wallet and create a draft; that wallet becomes the recorded creator. Set the sponsor, maintainer, arbiter, beneficiary, evaluator HTTPS URL and matching WASM digest, temporal policy, tranche amount, and maximum epochs. The form shows the total escrow target.
+1. Connect the intended creator testnet wallet and create a draft; that wallet becomes the recorded creator. Connect the maintainer wallet, click **Pin connected wallet key**, and approve the NEP-413 request. Set the sponsor, maintainer, arbiter, beneficiary, evaluator HTTPS URL and matching WASM digest, temporal policy, tranche amount, and maximum epochs. The form shows the total escrow target.
 2. Fund escrow to the displayed target and fund evaluator operations with at least one execution deposit. These are separate transactions. Activate after both are funded.
-3. In the evidence card, enter the artifact SHA-256 and prepare the canonical payload. Click **Copy signing payload**, then from the repository root run `pbpaste | node scripts/sign-heartbeat.mjs <maintainer-public-key-hex>`, replacing the placeholder with the pinned key shown in the commitment. The local helper reads `LCP_MAINTAINER_PRIVATE_KEY` or `NEAR_PRIVATE_KEY` from the ignored `.env.testnet` file or shell environment, verifies it matches the pinned public key, and prints only the 128-character lowercase hex signature. Paste that output into the form and request evaluation. The private key stays local and never enters the app. Refresh after the OutLayer callback to read the accepted result and updated health.
+3. In the evidence card, enter the artifact SHA-256 and prepare the canonical payload. Connect the maintainer wallet, click **Sign with maintainer wallet**, approve the NEP-413 request, then request evaluation. The app checks the returned account and public-key fingerprint against the commitment policy. Refresh after the OutLayer callback to read the accepted result and updated health.
 4. Connect the beneficiary wallet and claim only when the contract reports an eligible tranche. If a transfer fails and eligibility returns, retry from the same action card.
 5. Resolve pending evaluations, challenges, and transfers before closing. Then connect the sponsor wallet to request any residual escrow refund.
 
 ## Remaining Manual Check
 
-The user has confirmed wallet connect/disconnect, older-page browsing, commitment `21`'s health clock, and commitment `22`'s historical timeline and attestation hash-binding status. The remaining browser journey is to exercise draft creation, separate funding, activation, signed evidence submission, beneficiary claim or retry, closure, and sponsor refund. Do not use a real wallet key or mainnet funds for this walkthrough.
+The user has confirmed wallet connect/disconnect, older-page browsing, commitment `21`'s health clock, and commitment `22`'s historical timeline and attestation hash-binding status. The remaining browser journey is to exercise draft creation, separate funding, activation, NEP-413 wallet signing, beneficiary claim or retry, closure, and sponsor refund. Do not use mainnet funds for this walkthrough.

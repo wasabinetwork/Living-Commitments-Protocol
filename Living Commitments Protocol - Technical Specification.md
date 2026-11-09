@@ -313,6 +313,7 @@ pub struct TemporalPolicy {
 #[derive(BorshDeserialize, BorshSerialize, Clone)]
 #[borsh(crate = "near_sdk::borsh")]
 pub struct EvidencePolicy {
+    /// Raw Ed25519 public key for v1; typed-key SHA-256 fingerprint for v2.
     pub maintainer_public_key: [u8; 32],
 }
 
@@ -702,6 +703,16 @@ The v1 signed heartbeat payload is compact canonical JSON with this field order:
 ```
 
 The maintainer signs the exact UTF-8 bytes of this JSON with Ed25519. `evidence_hash` is SHA-256 of those bytes. The outer evidence object contains `type`, `artifact_hash`, `maintainer_public_key`, `signature`, and the payload string, in that order. Hash strings use lowercase hexadecimal; timestamps and IDs use canonical decimal strings. Commitment subjects are limited to printable ASCII so Rust and TypeScript produce the same canonical payload bytes.
+
+### 6.2.1 Version 2 NEP-413 wallet evidence
+
+New commitments use policy version `2` and the `near_nep413` signature scheme. The persisted Borsh policy layout does not change: the existing 32-byte evidence key slot stores `SHA-256(UTF-8("ed25519:<base58 public key>"))`. Policy views expose this fingerprint, not a different key encoding. Version 1 policies and evidence keep their original raw Ed25519 meaning and serialized shape.
+
+The maintainer key is obtained from a NEP-413 wallet `signMessage` response. New evidence keeps the same canonical `lcp.heartbeat.v1` message fields, with `policy_version: 2`, and adds `signature_scheme: "near_nep413"`, `nonce_hex` (32 random bytes as 64 lowercase hex characters), `recipient` (the current LCP contract account ID), and `callback_url` (the app page URL passed to the wallet). The typed `maintainer_public_key` is `ed25519:<base58>`, and `signature` is the wallet's canonical base64 encoding of the 64-byte Ed25519 signature. These optional envelope fields follow `payload` in the canonical evaluator JSON; v1 omits them.
+
+For verification, Borsh-serialize the NEP-413 payload in this order: `message: String`, `nonce: [u8; 32]`, `recipient: String`, `callbackUrl: Some(callback_url)`. Prefix the serialization with the little-endian `u32` tag `2^31 + 413` (`2147484061`), compute SHA-256 over the resulting bytes, then verify the Ed25519 signature over that 32-byte digest. The contract checks the policy fingerprint, typed key, scheme, nonce, and contract recipient; the evaluator performs the cryptographic signature check. The v2 evaluator request also includes `contract_id` after the evidence object so it can confirm the signed recipient. Version 1 evaluator input omits this optional field, preserving its existing canonical bytes.
+
+Wallet integrations use the NEAR connector capability interface rather than wallet-vendor branches. A wallet that does not return a NEP-413 `SignedMessage` cannot complete the v2 evidence flow; existing v1 commitments remain readable and retain their legacy signature rules.
 
 ## 6.3 Evaluator output schema
 
