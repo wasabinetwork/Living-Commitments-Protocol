@@ -12,7 +12,7 @@ NEXT_PUBLIC_NEAR_NETWORK_ID=testnet
 NEXT_PUBLIC_NEAR_RPC_URL=https://test.rpc.fastnear.com
 ```
 
-Run `npm run dev --workspace=@lcp/demo` and open `http://localhost:3000`. Connect a testnet wallet only when a transaction is needed. Browse recent commitments to inspect existing records; the user has confirmed the recent list, older-page control, wallet connection, and disconnection.
+Run `npm run dev --workspace=@lcp/demo` and open `http://localhost:3000`. The demo follows the system color preference and lets you switch between dark and light mode from the top bar. Connect a testnet wallet only when a transaction is needed. Browse recent commitments to inspect existing records; the user has confirmed the recent list, older-page control, wallet connection, and disconnection.
 
 ## Follow Existing Testnet Examples
 

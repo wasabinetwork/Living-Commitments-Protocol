@@ -54,6 +54,9 @@ a { color: inherit; text-decoration: none; }
 .network-dot, .live-pulse, .integrity-dot { width: 7px; height: 7px; border-radius: 50%; background: #719d71; box-shadow: 0 0 0 3px rgba(113,157,113,.14); }
 .wallet-button { gap: 9px; border: 0; border-radius: 99px; padding: 11px 17px; background: var(--green); color: white; font-size: 12px; font-weight: 600; transition: background .18s, transform .18s; }
 .wallet-button:hover:not(:disabled) { background: var(--green-dark); transform: translateY(-1px); }
+.theme-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 37px; border: 1px solid var(--line); border-radius: 99px; padding: 0 11px; background: var(--white); color: var(--ink-soft); font-size: 10px; font-weight: 600; transition: background .18s, border-color .18s; }
+.theme-toggle:hover { border-color: var(--green); background: var(--green-soft); }
+.theme-toggle-icon { font-size: 15px; line-height: 1; }
 .wallet-account { max-width: 160px; overflow: hidden; padding: 10px 13px; border: 1px solid #b8c9b8; border-radius: 99px; background: var(--white); color: var(--green); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .wallet-disconnect-button { padding-right: 13px; padding-left: 13px; border: 1px solid #b8c9b8; background: var(--white); color: var(--green); }
 .wallet-disconnect-button:hover:not(:disabled) { background: #f0f5ef; }
@@ -360,6 +363,136 @@ a { color: inherit; text-decoration: none; }
 .brand-mark-small { width: 20px; height: 20px; transform: scale(.65); margin-right: -4px; }
 .footer p { margin: 0; font-size: 10px; }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #111713;
+  --paper-deep: #1a241d;
+  --white: #1b251f;
+  --ink: #edf3ee;
+  --ink-soft: #c2cec4;
+  --muted: #9aa99d;
+  --line: #35443a;
+  --green: #86b991;
+  --green-dark: #6fa17a;
+  --green-soft: #263a2d;
+  --lime: #b5d1a9;
+  --amber: #e0b46f;
+  --amber-soft: #3a311f;
+  --red: #e1988a;
+  --red-soft: #3c2926;
+}
+
+:root[data-theme="dark"] .app-shell :where(p, span, small, time, code, label, .card-index) { color: var(--ink-soft); }
+:root[data-theme="dark"] .app-shell :where(h1, h2, h3, strong, .brand-name) { color: var(--ink); }
+:root[data-theme="dark"] .app-shell :where(.lookup-bar, .browser-panel, .create-commitment, .draft-setup, .evidence-submission, .challenge-controls, .closure-controls, .content-card, .metric-card) {
+  border-color: var(--line);
+  background: var(--white);
+}
+:root[data-theme="dark"] .app-shell :where(.wallet-account, .wallet-disconnect-button, .theme-toggle) {
+  border-color: var(--line);
+  background: var(--white);
+  color: var(--ink);
+}
+:root[data-theme="dark"] .wallet-disconnect-button:hover:not(:disabled),
+:root[data-theme="dark"] .theme-toggle:hover { background: var(--green-soft); }
+:root[data-theme="dark"] .network-chip { border-color: var(--line); color: var(--ink-soft); }
+:root[data-theme="dark"] .art-label { border-color: rgba(172,199,177,.24); background: rgba(27,37,31,.88); color: var(--ink-soft); }
+:root[data-theme="dark"] .browser-button,
+:root[data-theme="dark"] .browser-text-button,
+:root[data-theme="dark"] .browser-more-button,
+:root[data-theme="dark"] .prepare-payload-button,
+:root[data-theme="dark"] .copy-payload-button,
+:root[data-theme="dark"] .challenge-actions button,
+:root[data-theme="dark"] .closure-refund-row button {
+  border-color: #465d4b;
+  background: #26382b;
+  color: #c2e0c5;
+}
+:root[data-theme="dark"] .close-commitment-button,
+:root[data-theme="dark"] .challenge-actions .challenge-expire,
+:root[data-theme="dark"] .challenge-expire-button {
+  border-color: #665339;
+  background: #39301f;
+  color: #e4c185;
+}
+:root[data-theme="dark"] .wallet-button,
+:root[data-theme="dark"] .lookup-button,
+:root[data-theme="dark"] .claim-button,
+:root[data-theme="dark"] .setup-input-row button { color: #f5fff6; }
+:root[data-theme="dark"] .browser-panel-heading,
+:root[data-theme="dark"] .create-commitment[open] > summary,
+:root[data-theme="dark"] .evidence-signing-form,
+:root[data-theme="dark"] .evaluation-history,
+:root[data-theme="dark"] .digest-row,
+:root[data-theme="dark"] .tranche-line { border-color: var(--line); }
+:root[data-theme="dark"] .commitment-list-item { border-color: var(--line); }
+:root[data-theme="dark"] .commitment-list-item:hover:not(:disabled) { background: #222e26; }
+:root[data-theme="dark"] .creation-intro,
+:root[data-theme="dark"] .setup-step,
+:root[data-theme="dark"] .claim-box,
+:root[data-theme="dark"] .closure-balance { border-color: var(--line); background: #202b24; }
+:root[data-theme="dark"] .creation-summary,
+:root[data-theme="dark"] .recovery-toggle,
+:root[data-theme="dark"] .signing-payload { border-color: #3d5643; background: #202f24; }
+:root[data-theme="dark"] .form-field input,
+:root[data-theme="dark"] .form-field select,
+:root[data-theme="dark"] .form-field textarea,
+:root[data-theme="dark"] .setup-input-row input,
+:root[data-theme="dark"] .claim-form-row input {
+  border-color: #46564b;
+  background: #141c17;
+  color: var(--ink);
+}
+:root[data-theme="dark"] .pending-evaluation,
+:root[data-theme="dark"] .notice-warning { border-color: #665339; background: #30291d; color: #e4c185; }
+:root[data-theme="dark"] .notice-error { border-color: #69423b; background: #352421; color: #e5a095; }
+:root[data-theme="dark"] .notice-success { border-color: #3f6047; background: #203126; color: #a9d6ad; }
+:root[data-theme="dark"] .health-panel { border-color: #3d6047; background: #203126; }
+:root[data-theme="dark"] .health-panel.health-atrisk,
+:root[data-theme="dark"] .health-panel.health-awaitingevidence { border-color: #665339; background: #30291d; }
+:root[data-theme="dark"] .health-panel.health-breached { border-color: #69423b; background: #352421; }
+:root[data-theme="dark"] .health-panel.health-closed { border-color: var(--line); background: #252b27; }
+:root[data-theme="dark"] .health-panel .eyebrow { color: #b5c9b8; }
+:root[data-theme="dark"] .commitment-number { color: rgba(134,185,145,.46); }
+:root[data-theme="dark"] .health-divider { background: rgba(172,199,177,.22); }
+:root[data-theme="dark"] .health-copy,
+:root[data-theme="dark"] .timeline-explainer,
+:root[data-theme="dark"] .timeline-content p,
+:root[data-theme="dark"] .metric-detail,
+:root[data-theme="dark"] .integrity-copy,
+:root[data-theme="dark"] .challenge-history,
+:root[data-theme="dark"] .integrity-footer,
+:root[data-theme="dark"] .empty-state-foot { color: var(--ink-soft); }
+:root[data-theme="dark"] .setup-check { color: var(--ink-soft); }
+:root[data-theme="dark"] .timeline-item:not(:last-child)::before { background: #3b4a40; }
+:root[data-theme="dark"] .timeline-marker { border-color: #607b67; background: #26372b; }
+:root[data-theme="dark"] .timeline-marker-recorded { border-color: #83b28b; background: #83b28b; }
+:root[data-theme="dark"] .timeline-marker-derived { border-color: #c6a264; background: #3a311f; }
+:root[data-theme="dark"] .timeline-source-recorded,
+:root[data-theme="dark"] .status-accepted { border-color: #3f6047; background: #203126; color: #a9d6ad; }
+:root[data-theme="dark"] .timeline-source-derived,
+:root[data-theme="dark"] .status-pending { border-color: #665339; background: #30291d; color: #e4c185; }
+:root[data-theme="dark"] .status-rejected,
+:root[data-theme="dark"] .status-failed,
+:root[data-theme="dark"] .status-timedout { border-color: #69423b; background: #352421; color: #e5a095; }
+:root[data-theme="dark"] .evaluation-proof { background: #202923; }
+:root[data-theme="dark"] .attestation-found,
+:root[data-theme="dark"] .is-eligible { color: #a9d6ad; }
+:root[data-theme="dark"] .attestation-missing,
+:root[data-theme="dark"] .attestation-unavailable { color: #e4c185; }
+:root[data-theme="dark"] .evaluation-proof a,
+:root[data-theme="dark"] .read-source,
+:root[data-theme="dark"] .integrity-symbol { color: #a9d6ad; }
+:root[data-theme="dark"] .setup-check.ready,
+:root[data-theme="dark"] .tiny-check { border-color: #3f6047; background: #203126; color: #a9d6ad; }
+:root[data-theme="dark"] .is-eligible { background: #203126; }
+:root[data-theme="dark"] .is-blocked { background: #352421; color: #e5a095; }
+:root[data-theme="dark"] .eligibility-reason { color: #e5a095; }
+:root[data-theme="dark"] .notice :where(span, p),
+:root[data-theme="dark"] .form-wallet-hint { color: inherit; }
+:root[data-theme="dark"] .empty-state { border-color: var(--line); }
+:root[data-theme="dark"] .footer { color: var(--muted); }
+
 @media (max-width: 900px) {
   .app-shell { padding: 0 4%; }
   .intro { min-height: 365px; grid-template-columns: 1.15fr .85fr; }
@@ -377,6 +510,8 @@ a { color: inherit; text-decoration: none; }
   .brand-name { font-size: 11px; }
   .brand-name span { font-size: 8px; }
   .topbar-right { gap: 8px; }
+  .theme-toggle { min-width: 36px; justify-content: center; padding: 0 9px; }
+  .theme-toggle-label { display: none; }
   .network-chip { padding: 8px; font-size: 8px; }
   .wallet-button { gap: 6px; padding: 9px 11px; font-size: 10px; }
   .wallet-account { max-width: 82px; padding: 8px 9px; font-size: 10px; }

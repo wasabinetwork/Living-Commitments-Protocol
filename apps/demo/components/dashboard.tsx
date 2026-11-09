@@ -77,9 +77,13 @@ const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rp
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
 const EVALUATION_HISTORY_LIMIT = 10;
 const COMMITMENT_PAGE_SIZE = 10;
+const THEME_STORAGE_KEY = "lcp-color-theme";
+
+type ColorTheme = "light" | "dark";
 
 export function Dashboard() {
   const connectorRef = useRef<NearConnectorPort | null>(null);
+  const [theme, setTheme] = useState<ColorTheme | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
   const [commitments, setCommitments] = useState<CommitmentSummaryView[]>([]);
   const [commitmentsVisible, setCommitmentsVisible] = useState(false);
@@ -104,6 +108,22 @@ export function Dashboard() {
   const [activationStorageNear, setActivationStorageNear] = useState(DEFAULT_STORAGE_DEPOSIT);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  }, []);
+
+  function toggleTheme() {
+    const currentTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    const nextTheme: ColorTheme = currentTheme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = nextTheme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // The selected theme still applies for this session if storage is unavailable.
+    }
+    setTheme(nextTheme);
+  }
 
   async function loadCommitmentPage(beforeId: string | null, append: boolean) {
     if (!CONTRACT_ID) {
@@ -204,7 +224,10 @@ export function Dashboard() {
       let connector = connectorRef.current;
       if (!connector) {
         const { NearConnector } = await import("@hot-labs/near-connect");
-        connector = new NearConnector({ features: { testnet: true } }) as unknown as NearConnectorPort;
+        connector = new NearConnector({
+          network: NEAR_NETWORK_ID,
+          features: { testnet: NEAR_NETWORK_ID === "testnet" },
+        }) as unknown as NearConnectorPort;
         connector.on("wallet:signIn", (event) => setAccountId(event.accounts[0]?.accountId ?? null));
         connector.on("wallet:signOut", () => setAccountId(null));
         connectorRef.current = connector;
@@ -627,7 +650,17 @@ export function Dashboard() {
           <span className="brand-name">living commitments<span>protocol</span></span>
         </a>
         <div className="topbar-right">
-          <span className="network-chip"><span className="network-dot" />NEAR TESTNET</span>
+          <button
+            className="theme-toggle"
+            type="button"
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            aria-pressed={theme === "dark"}
+            onClick={toggleTheme}
+          >
+            <span className="theme-toggle-icon" aria-hidden="true">{theme === "dark" ? "☀" : "☾"}</span>
+            <span className="theme-toggle-label">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+          </button>
+          <span className="network-chip"><span className="network-dot" />NEAR {NEAR_NETWORK_ID.toUpperCase()}</span>
           {accountId ? (
             <>
               <span className="wallet-account" title={accountId} aria-label={`Connected wallet ${accountId}`}>
@@ -1645,6 +1678,7 @@ function CreateCommitmentForm({
   busy: boolean;
   onCreate: (args: CreateCommitmentArgs, storageDeposit: string) => Promise<void>;
 }) {
+  const [hydrated, setHydrated] = useState(false);
   const [fields, setFields] = useState<CreationFields>({
     subject: "Open source service maintenance",
     maintainer: "",
@@ -1692,6 +1726,10 @@ function CreateCommitmentForm({
 
   const escrowPreview = previewEscrow(fields.maxEpochs, fields.trancheNear);
   const account = (value: string) => value || connectedAccountId || "";
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   return (
     <form className="creation-form" onSubmit={(event) => void handleSubmit(event)}>
@@ -1742,7 +1780,7 @@ function CreateCommitmentForm({
       {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
       {!connectedAccountId && <p className="form-wallet-hint">Connect a testnet wallet to create the draft. Your wallet account becomes the on-chain creator.</p>}
       {!contractConfigured && <p className="form-wallet-hint">Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local before creating.</p>}
-      <div className="creation-submit-row"><p>Storage bond excess is refunded. The evaluator URL and digest should refer to the same uploaded WASM artifact.</p><button className="lookup-button" type="submit" disabled={busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Create draft <span aria-hidden="true">↗</span></>}</button></div>
+      <div className="creation-submit-row"><p>Storage bond excess is refunded. The evaluator URL and digest should refer to the same uploaded WASM artifact.</p><button className="lookup-button" type="submit" disabled={!hydrated || busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Create draft <span aria-hidden="true">↗</span></>}</button></div>
     </form>
   );
 }
