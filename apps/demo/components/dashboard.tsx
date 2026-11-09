@@ -1831,11 +1831,13 @@ function ClosureControlsCard({
   onAction: (action: ClosureAction, storageDeposit?: string) => Promise<void>;
 }) {
   const { commitment, policy, escrow } = data;
-  const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
   const canClose = Boolean(accountId && [commitment.creator, commitment.maintainer, commitment.arbiter, policy?.budget.sponsor].includes(accountId));
   const canRefund = accountId === policy?.budget.sponsor;
   const residualYocto = escrow?.free_yocto ?? "0";
   const hasResidual = BigInt(residualYocto) > 0n;
+  const pendingYocto = escrow?.pending_yocto ?? "0";
+  const hasRefundPending = BigInt(pendingYocto) > 0n;
+  const refundedYocto = escrow?.refunded_yocto ?? "0";
   const hasPending = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(commitment.escrow_pending_yocto) > 0n);
 
   return (
@@ -1851,11 +1853,15 @@ function ClosureControlsCard({
             <>
               {!canRefund && <p className="form-wallet-hint">Connect the sponsor wallet ({policy?.budget.sponsor}) to request the remaining refund.</p>}
               <div className="closure-refund-row">
-                <FormField label="Temporary refund storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /></FormField>
-                <button type="button" onClick={() => void onAction("refund", storageDepositNear)} disabled={!canRefund || busyAction !== null}>{busyAction === "refund" ? "Requesting refund…" : "Refund residual escrow"}</button>
+                <div className="closure-refund-deposit"><span>REFUND REQUEST STORAGE BOND</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
+                <button type="button" onClick={() => void onAction("refund", DEFAULT_STORAGE_DEPOSIT)} disabled={!canRefund || busyAction !== null}>{busyAction === "refund" ? "Requesting refund…" : "Refund residual escrow"}</button>
               </div>
-              <small className="closure-help">The refund is asynchronous. The contract updates the balance after transfer reconciliation; excess storage deposit is refunded.</small>
+              <small className="closure-help">The refund sends {formatNear(residualYocto)} NEAR to {policy?.budget.sponsor}. The app attaches {DEFAULT_STORAGE_DEPOSIT} NEAR for storage; the contract calculates the required bond and returns any excess. The transfer settles asynchronously.</small>
             </>
+          ) : hasRefundPending ? (
+            <div className="closure-refund-pending"><strong>Refund transfer in progress</strong><span>{formatNear(pendingYocto)} NEAR is awaiting transfer reconciliation. Refresh after it settles.</span></div>
+          ) : BigInt(refundedYocto) > 0n ? (
+            <div className="closure-refund-pending"><strong>Refund complete</strong><span>{formatNear(refundedYocto)} NEAR has been returned to the sponsor.</span></div>
           ) : <p className="closure-help">No residual escrow is available to refund.</p>}
         </>
       ) : (

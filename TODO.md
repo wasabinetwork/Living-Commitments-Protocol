@@ -2,7 +2,7 @@
 
 ## In progress
 
-- [ ] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, evaluation, and artifact hashing in Firefox. Its 3-epoch × 5-minute budget ended at epoch 25, so no tranche could be claimed. The user closed it; finalized read at block `276955164` confirms `Closed` with 0.03 NEAR still free, 0 paid, and 0 refunded. Next, request the asynchronous residual refund using sponsor `wasabinetwork.testnet`, then refresh after transfer reconciliation. Retry UI remains a separate fixture check.
+- [ ] **P0 Firefox wallet journey UI check:** commitment `24` completed create, fund, activate, evaluation, close, and refund in Firefox. Its 3-epoch × 5-minute budget ended at epoch 25, so no tranche could be claimed. Finalized read at block `276955602` confirms `Closed`, transfer `#9` settled, and all 0.03 NEAR refunded with 0 pending. Verify the ended-program timer and the simplified refund-complete UI in Firefox. Retry UI remains a separate fixture check.
 - [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
 
 ## Complete
