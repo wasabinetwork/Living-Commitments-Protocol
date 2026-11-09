@@ -32,6 +32,10 @@ Commitment `1` was created, funded, and activated. Evaluation `1` returned **Acc
 
 ## Additional Lifecycle Validation
 
+### Live temporal boundaries (commitment 21)
+
+The monitor sampled finalized NEAR time once per minute. The initial-evidence deadline was 00:21:40.528 AST; the first finalized block after it, at 00:21:58.485 AST, reported `AtRisk`. Grace ended at 01:21:40.528 AST; the first finalized block after it, at 01:21:59.057 AST, reported `Breached`. The monitor recorded completion at 05:22:02 UTC and removed only its own cron entry. Raw samples remain at `/private/tmp/lcp-temporal-monitor-21.jsonl`.
+
 ### Breach, claim rejection, and recovery
 
 - Commitment `1` became `Breached` after the test policy's 30-minute evidence TTL and 5-minute grace period.
