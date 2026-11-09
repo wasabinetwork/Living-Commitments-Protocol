@@ -603,6 +603,19 @@ export function Dashboard() {
   const retryingFailedPayout = failedTranche && claimAllowed;
   const correctBeneficiary = Boolean(accountId && data?.policy && accountId === data.policy.budget.beneficiary);
   const canSubmitClaim = Boolean(data && claimAllowed && correctBeneficiary && !claiming);
+  const lastGoodObservationNs = data?.commitment.last_good_observed_at_ns ?? null;
+  const evidenceAgeNs = data?.chainTimeNs && lastGoodObservationNs
+    ? BigInt(data.chainTimeNs) - BigInt(lastGoodObservationNs)
+    : null;
+  const evidenceExpiresAtNs = lastGoodObservationNs && data?.policy
+    ? (BigInt(lastGoodObservationNs) + BigInt(data.policy.temporal.evidence_ttl_ns)).toString()
+    : null;
+  const lastGoodEvidenceDetail = lastGoodObservationNs
+    ? [
+      evidenceAgeNs !== null && evidenceAgeNs >= 0n ? `Age ${formatDuration(evidenceAgeNs.toString())}` : "Age unavailable",
+      evidenceExpiresAtNs ? `expires ${formatDate(evidenceExpiresAtNs)}` : "expiration unavailable",
+    ].join(" · ")
+    : "No accepted compliant evidence";
 
   return (
     <main className="app-shell">
@@ -818,7 +831,7 @@ export function Dashboard() {
               <MetricCard
                 eyebrow="LAST COMPLIANT EVIDENCE"
                 title={data.commitment.last_good_observed_at_ns ? formatDate(data.commitment.last_good_observed_at_ns) : "No accepted evidence"}
-                detail={data.evaluation ? `Evaluation #${data.evaluation.evaluation_id} · ${data.evaluation.status}` : "Awaiting a completed evaluation"}
+                detail={lastGoodEvidenceDetail}
                 icon="◷"
               />
               <MetricCard
@@ -1069,6 +1082,9 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
   const nextPointIndex = chainTimeNs && canHaveNextDeadline
     ? points.findIndex((point) => BigInt(point.atNs) > BigInt(chainTimeNs))
     : -1;
+  const timeUntilNextPoint = chainTimeNs && nextPointIndex >= 0
+    ? (BigInt(points[nextPointIndex].atNs) - BigInt(chainTimeNs)).toString()
+    : null;
 
   return (
     <section className="content-card health-timeline" aria-labelledby="health-timeline-title">
@@ -1100,7 +1116,7 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
                     <span className={`timeline-source timeline-source-${point.source}`}>{point.source === "recorded" ? "RECORDED" : "DERIVED"}</span>
                   </div>
                   <p>{point.detail}</p>
-                  <time>{formatDate(point.atNs)}{index === nextPointIndex ? " · UP NEXT" : ""}</time>
+                  <time>{formatDate(point.atNs)}{index === nextPointIndex && timeUntilNextPoint ? ` · UP NEXT IN ${formatCountdown(timeUntilNextPoint)}` : ""}</time>
                 </div>
               </li>
             ))}
@@ -1119,7 +1135,7 @@ function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: 
     <section className="metric-card">
       <div className="metric-top"><p className="eyebrow">{eyebrow}</p><span>{icon}</span></div>
       <strong className="metric-title">{title}</strong>
-      <p className="metric-detail">{detail}</p>
+      <p className="metric-detail" title={detail}>{detail}</p>
     </section>
   );
 }
@@ -1789,6 +1805,17 @@ function formatDuration(nanoseconds: string): string {
   if (hours < 48n) return `${hours} hr`;
   const days = hours / 24n;
   return `${days} days`;
+}
+
+function formatCountdown(nanoseconds: string): string {
+  const totalSeconds = (BigInt(nanoseconds) + 999_999_999n) / 1_000_000_000n;
+  if (totalSeconds < 60n) return `${totalSeconds} sec`;
+  const totalMinutes = (totalSeconds + 59n) / 60n;
+  if (totalMinutes < 60n) return `${totalMinutes} min`;
+  const totalHours = (totalMinutes + 59n) / 60n;
+  if (totalHours < 48n) return `${totalHours} hr`;
+  const totalDays = (totalHours + 23n) / 24n;
+  return `${totalDays} days`;
 }
 
 function formatDate(nanoseconds: string): string {

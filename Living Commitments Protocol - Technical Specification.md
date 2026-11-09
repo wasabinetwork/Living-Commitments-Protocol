@@ -1481,9 +1481,9 @@ An intentionally mismatched evaluator digest produced JSON `null` under the init
 
 Initial deployment, commitment, and evaluation storage were measured on testnet; the refund request's storage bond and excess-deposit refund also completed. Reconcile storage bonds across history growth and additional callbacks.
 
-**NEAR-002 — Transfer accounting**
+**NEAR-002 — Transfer accounting — FAILED-TRANSFER RECOVERY VERIFIED (2026-11-08)**
 
-Successful beneficiary payment and sponsor refund both reconciled through asynchronous callbacks on testnet. Validate failed-transfer recovery and balance/accounting invariants under retries.
+Successful beneficiary payment and sponsor refund reconciled through asynchronous callbacks on testnet. A feature-gated isolated fixture also verified failed-transfer recovery, restored claim eligibility, successful retry, and duplicate-callback idempotency. Receipts are in `TESTNET-E2E-STATUS.md`; broader stress testing across repeated retries remains outside the completed path.
 
 **NEAR-003 — Final SDK compatibility — RESOLVED (2026-11-08)**
 
@@ -1497,19 +1497,19 @@ No production-readiness claim may be made until these checks pass.
 
 **Task 009 — Validate the financial consequence on testnet — CORE PATH VERIFIED**
 
-The breached-claim rejection and healthy distinct-beneficiary payout/callback both succeeded. Closure and sponsor refund of unused escrow also reconciled; failed-transfer recovery remains under NEAR-002. Receipts are in `TESTNET-E2E-STATUS.md`.
+The breached-claim rejection, healthy distinct-beneficiary payout/callback, closure, sponsor refund, and isolated failed-transfer recovery/retry all succeeded. Receipts are in `TESTNET-E2E-STATUS.md`.
 
-**Task 010 — Complete breach and recovery validation — CORE PATH VERIFIED**
+**Task 010 — Complete breach and recovery validation — LIVE CORE PATH VERIFIED; NATURAL COHORT BOUNDARIES OPEN**
 
-Evidence expiry, breached-claim rejection, fresh-evidence recovery, and challenge timeout/invalidation were exercised. Validate remaining health boundaries and arbiter resolution; note that challenge timeout invalidated the latest evidence and left commitment 1 `AtRisk` before closure/refund.
+Evidence expiry, breached-claim rejection, fresh-evidence recovery, challenge timeout, and upheld/invalidated arbiter outcomes were exercised. Exact local temporal boundaries have deterministic tests. The short-horizon playground cohort is still being observed for natural expiry and grace transitions.
 
-**Task 011 — Improve commitment discovery — CONTRACT DEPLOYED; RPC PAGINATION VERIFIED**
+**Task 011 — Improve commitment discovery — CONTRACT DEPLOYED; RPC AND BROWSER PAGINATION VERIFIED**
 
-The contract exposes a capped newest-first listing by sequential commitment ID; the SDK wraps it and the demo provides ten-record pages with an exclusive cursor. The view is deployed and descending/exclusive pagination is confirmed by testnet RPC. Manually validate the browser UI against the deployed contract.
+The contract exposes a capped newest-first listing by sequential commitment ID; the SDK wraps it and the demo provides ten-record pages with an exclusive cursor. Testnet RPC confirmed descending/exclusive pagination, and the user confirmed the browser older-page control across all 21 records.
 
-**Task 012 — Finish the public demo journey**
+**Task 012 — Finish the public demo journey — IN PROGRESS**
 
-Validate wallet-driven creation, signing, evidence submission, health history, claim/refund flows, and submission materials without CLI-only steps.
+The app supports the wallet transaction path and the testnet walkthrough is documented. The browser health clock now shows evidence age, expiration, and time to the next deadline. Remaining development gaps are a historical Healthy/AtRisk/Breached/Recovered timeline and an in-app attestation verification result; the full create/fund/activate/evidence/claim/close/refund journey still needs user-driven browser validation.
 
 ---
 

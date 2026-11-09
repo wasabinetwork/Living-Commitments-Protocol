@@ -21,7 +21,7 @@ Run `npm run dev --workspace=@lcp/demo` and open `http://localhost:3000`. Connec
 3. Inspect commitment `9` for its later compliant recovery evaluation. The earlier invalidation and recovery receipts are linked in `TESTNET-E2E-STATUS.md`.
 4. Inspect commitment `19` for the completed payout, closure, and residual escrow refund.
 
-The dashboard's health is contract-derived. The timeline distinguishes recorded commitment timestamps from deadlines derived using the immutable policy and finalized NEAR block time.
+The dashboard's health is contract-derived. The timeline distinguishes recorded commitment timestamps from deadlines derived using the immutable policy and finalized NEAR block time. It also shows accepted-evidence age, expiration, and time remaining to the next deadline; refresh it to update that snapshot. A historical transition view and an in-app attestation verification result are still under development.
 
 ## Walk Through Wallet Transactions
 
