@@ -2,14 +2,25 @@
 
 ## In progress
 
-- [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
+- [x] **Cloudflare Pages preview:** deployed the static demo to https://preview.lcp-preview.pages.dev; Firefox checks confirmed wallet connection, NEAR reads, and OutLayer report lookup work.
+- [ ] **Production demo domain:** attach `lcp.gama.works` when the demo is finalized. The `lcp-preview` Direct Upload project is intentionally separate from any future Git-integrated production project.
+
+## P0 public-readiness checklist
+
+- [x] Add contract callback, refund, claim-gating, timestamp, recovery-policy, temporal, and evaluator CLI regression coverage; `cargo test --workspace` currently runs 37 tests.
+- [x] Add reproducible Rust/WASM build instructions, test coverage map, and manual testnet/browser steps in `TESTING.md` and `DEMO-WALKTHROUGH.md`.
+- [x] Reconcile testnet lifecycle and Firefox results in `TESTNET-E2E-STATUS.md` and the technical specification.
+- [x] Apply Apache-2.0 to project-authored material and explicitly exclude the upstream `NEAR-HACKATHON-SKILL.md` snapshot.
+- [ ] Publish the repository. This makes PRD requirement LCP-017's tests and reproduction instructions publicly accessible; until then it is prepared but not formally closed.
+
+The production Git-integrated Pages project and `lcp.gama.works` domain are separate deployment tasks, not P0 protocol acceptance criteria.
 
 ## Complete
 
-- [x] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, evaluation, close, and refund in Firefox. Its 3-epoch × 5-minute budget ended at epoch 25, so no tranche could be claimed. Finalized read at block `276955602` confirms `Closed`, transfer `#9` settled, and all 0.03 NEAR refunded with 0 pending. The user confirmed the ended-program timer and simplified refund-complete UI in Firefox.
-- [x] **P0 retry-transfer UI:** isolated feature-testnet commitment `2` displayed the failed-transfer retry state in Firefox. Initial claim transaction `9KpNC7viTLimjLJcpctisJMLih2Cdoky5ASEEnLkEN9i` succeeded while payout transfer `#3` failed for the one-time nonexistent recipient; the user retried in the UI. Finalized read at block `276961592` confirms tranche `Paid`, 0.001 NEAR paid, and no pending or free escrow.
-- [x] **NEP-413 testnet fixture:** commitment `24` is active and evaluation `1` was accepted/compliant in [7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc](https://testnet.nearblocks.io/txns/7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc). OutLayer executed the R2-mirrored evaluator; it verified the wallet signature and artifact-digest format. FastFS remains unavailable, but the R2 fallback completed the test.
-- [x] Add browser-side SHA-256 calculation for selected evidence files (maximum 25 MiB); the file stays local, and changing/removing it invalidates the prepared payload and signature. The user confirmed the Firefox flow.
+- [x] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, evaluation, close, and refund in Firefox. Its 3-epoch × 5-minute budget ended at epoch 25, so no tranche could be claimed. Finalized read at block `276955602` confirms `Closed`, transfer `#9` settled, and all 0.03 NEAR refunded with 0 pending. Firefox checks confirmed the ended-program timer and simplified refund-complete UI.
+- [x] **P0 retry-transfer UI:** isolated feature-testnet commitment `2` displayed the failed-transfer retry state in Firefox. Initial claim transaction `9KpNC7viTLimjLJcpctisJMLih2Cdoky5ASEEnLkEN9i` succeeded while payout transfer `#3` failed for the one-time nonexistent recipient; retry completed in the UI. Finalized read at block `276961592` confirms tranche `Paid`, 0.001 NEAR paid, and no pending or free escrow.
+- [x] **NEP-413 testnet fixture:** commitment `24`'s evaluation `1` was accepted/compliant in [7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc](https://testnet.nearblocks.io/txns/7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc); fresh evidence later recovered it, and it is now closed with the residual refund settled. OutLayer executed the R2-mirrored evaluator and verified the wallet signature and artifact-digest format. The FastFS URL returned HTTP 404 at last check, so the R2 fallback completed the test.
+- [x] Add browser-side SHA-256 calculation for selected evidence files (maximum 25 MiB); the file stays local, and changing/removing it invalidates the prepared payload and signature. Firefox checks confirmed the flow.
 - [x] Raise the evaluation storage-deposit default to `0.05 NEAR` after the first `0.01 NEAR` request trapped on storage underpayment; the retry succeeded, and contract excess is refunded.
 - [x] Add an active-commitment operations funding control for the configured sponsor; the contract already permits operations top-ups before closure, and fresh evaluations can be necessary for recovery.
 - [x] **Live temporal boundaries:** commitment `21` transitioned from `AwaitingEvidence` to `AtRisk` at 00:21:58 AST and from `AtRisk` to `Breached` at 01:21:59 AST in finalized samples. The monitor removed its own cron entry after breach; exact timestamp boundaries are also covered by deterministic tests.
@@ -31,15 +42,15 @@
 - [x] Reconcile sampled testnet OutLayer charges/refunds and callback gas for accepted, JSON-null, promise-failure, and timeout outcomes; retain remaining-operation accounting as a documented prototype limitation.
 - [x] Deploy the historical challenge completion timestamp view without changing persisted contract state layout; verify prior state and a new invalidation/recovery timeline on testnet commitment `22`.
 - [x] Confirm the refreshed `22` dashboard shows recorded recovery events and derived freshness/grace deadlines, and that evaluation `2` matches its public OutLayer transaction/input/output/WASM hashes.
-- [x] Confirm the historical timeline and OutLayer hash-binding status render correctly in the user's browser.
+- [x] Confirm the historical timeline and OutLayer hash-binding status render correctly in Firefox.
 - [x] Keep in-app attestation status scoped to public-record and hash-binding checks; use OutLayer's report **Verify** action or standalone verifier for TEE quote verification unless an embeddable verifier interface is documented.
-- [x] Inspect commitment `21`'s health clock in the browser; the user confirmed its `AwaitingEvidence` state and displayed initial/grace deadlines match the pre-deadline monitor state.
-- [x] Prepare a browser walkthrough for verified testnet fixtures and the remaining wallet-driven journey.
+- [x] Inspect commitment `21`'s health clock in the browser; its `AwaitingEvidence` state and displayed initial/grace deadlines matched the pre-deadline monitor state.
+- [x] Prepare a browser walkthrough for verified testnet fixtures and wallet-driven journeys.
 - [x] Install a bounded, once-per-minute cron monitor for commitment `21`; record finalized health samples in `/private/tmp/lcp-temporal-monitor-21.jsonl` and remove only its own entries after breach/closure or the 03:00 AST cutoff.
 - [x] Add a visible wallet disconnect action to the demo header.
-- [x] Confirm wallet disconnect succeeds in the browser (user confirmed).
-- [x] Verify the older-page control with 21 records in the browser (user confirmed).
-- [x] Confirm Meteor connects the demo to NEAR testnet after explicitly configuring the connector network (user verified).
+- [x] Confirm wallet disconnect succeeds in Firefox.
+- [x] Verify the older-page control with 21 records in Firefox.
+- [x] Confirm Meteor connects the demo to NEAR testnet after explicitly configuring the connector network.
 - [x] Confirm testnet pagination pages as IDs `21–12`, `11–2`, and `1`.
 - [x] Deploy bounded newest-first commitment discovery; confirm exclusive cursor pagination through testnet RPC.
 - [x] Verify the recent-commitment list renders in Brave against the deployed testnet contract.

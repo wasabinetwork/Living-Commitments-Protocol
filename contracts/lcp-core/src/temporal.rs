@@ -323,4 +323,77 @@ mod tests {
             Health::Healthy
         );
     }
+
+    #[test]
+    fn draft_and_closed_lifecycles_override_evidence_state() {
+        let mut state = snapshot(None, Some(200), Some(400));
+        state.lifecycle = Lifecycle::Draft;
+        state.breach_latched = true;
+        assert_eq!(
+            effective_health(&state, &POLICY, 1_000).unwrap(),
+            Health::AwaitingEvidence
+        );
+
+        state.lifecycle = Lifecycle::Closed;
+        assert_eq!(
+            effective_health(&state, &POLICY, 1_000).unwrap(),
+            Health::Closed
+        );
+    }
+
+    #[test]
+    fn active_commitment_without_activation_time_is_rejected() {
+        let state = snapshot(None, None, None);
+        assert_eq!(
+            effective_health(&state, &POLICY, 100),
+            Err(TemporalError::MissingActivationTime)
+        );
+    }
+
+    #[test]
+    fn latched_breach_cannot_recover_from_new_observation() {
+        let mut state = snapshot(Some(100), Some(1_000), None);
+        state.breach_latched = true;
+        assert_eq!(
+            effective_health(&state, &POLICY, 1_000).unwrap(),
+            Health::Breached
+        );
+    }
+
+    #[test]
+    fn unresolved_negative_period_overrides_a_compliant_observation() {
+        let state = snapshot(Some(100), Some(415), Some(400));
+        assert_eq!(
+            effective_health(&state, &POLICY, 419).unwrap(),
+            Health::AtRisk
+        );
+        assert_eq!(
+            effective_health(&state, &POLICY, 420).unwrap(),
+            Health::Breached
+        );
+    }
+
+    #[test]
+    fn active_timestamp_arithmetic_overflow_is_rejected() {
+        let state = snapshot(Some(u64::MAX - 5), None, None);
+        assert_eq!(
+            effective_health(&state, &POLICY, u64::MAX),
+            Err(TemporalError::TimestampOverflow)
+        );
+    }
+
+    #[test]
+    fn invalid_temporal_policy_is_rejected_before_health_is_derived() {
+        let state = snapshot(Some(100), None, None);
+        let invalid = TemporalPolicy {
+            initial_window_ns: 0,
+            ..POLICY
+        };
+        assert_eq!(
+            effective_health(&state, &invalid, 100),
+            Err(TemporalError::InvalidPolicy(
+                TemporalPolicyError::InitialWindowMustBePositive
+            ))
+        );
+    }
 }

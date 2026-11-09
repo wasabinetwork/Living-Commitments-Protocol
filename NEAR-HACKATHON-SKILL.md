@@ -1,6 +1,8 @@
 <!-- NEAR HACKATHON HACKATHON.md -->
 # NEAR HACKATHON - HACKATHON.md
 
+> Licensing note: this upstream snapshot is excluded from this repository's Apache-2.0 license. It remains subject to applicable rights and terms from <https://nearhackathon.com/HACKATHON.md>.
+
 Instructions for the AI coding agent helping a team take part in NEAR HACKATHON. The live version is https://nearhackathon.com/HACKATHON.md; read it again before submitting, because dates and rules may change.
 
 ## Start here

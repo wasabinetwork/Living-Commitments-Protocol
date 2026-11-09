@@ -45,6 +45,14 @@ npm run dev --workspace=@lcp/demo
 
 The demo can inspect a commitment by ID or browse recent records in bounded pages of up to ten. Contract health and claim eligibility come from NEAR views. Configure `NEXT_PUBLIC_LCP_CONTRACT_ID` with an upgraded testnet contract before using v2 wallet-signing actions. New commitments pin the connected maintainer's typed key through NEP-413 and request heartbeat signatures from the wallet; users choose a compatible wallet, and the app passes the configured network explicitly. Existing v1 commitments retain their original raw Ed25519 evidence format.
 
+### Cloudflare Pages
+
+The demo builds as a static Next.js export; no Next.js server or VPS is required. From the repository root, configure the Pages build command as `npm run build --workspace=@lcp/demo` and the output directory as `apps/demo/out`. The root `.nvmrc` selects Node.js 22. For a direct-upload preview, deploy the built files with `npx wrangler pages deploy apps/demo/out --project-name=lcp-preview --branch=preview`. Set `NEXT_PUBLIC_LCP_CONTRACT_ID`, `NEXT_PUBLIC_NEAR_NETWORK_ID`, and `NEXT_PUBLIC_NEAR_RPC_URL` as build variables; these are public browser configuration, not secrets. Never add maintainer private keys or `.env.testnet` to a Pages build.
+
 The evaluator accepts its request on standard input and prints the verdict on standard output. Use only test keys and testnet funding while validating the full callback path.
 
-The engineering baseline and product requirements are in the two specification documents at the repository root. See `NEAR-HACKATHON-SKILL.md` for the supplied hackathon workflow snapshot; recheck the official live instructions before submission.
+The engineering baseline and product requirements are in the two specification documents at the repository root. See [TESTING.md](TESTING.md) for automated checks and reproducible builds, [DEMO-WALKTHROUGH.md](DEMO-WALKTHROUGH.md) for the browser journey, and [TESTNET-E2E-STATUS.md](TESTNET-E2E-STATUS.md) for live testnet receipts. `NEAR-HACKATHON-SKILL.md` is a snapshot of the supplied workflow; recheck the official live instructions before submission.
+
+## License
+
+Project-authored software and documentation are licensed under Apache-2.0; see [LICENSE](LICENSE). `NEAR-HACKATHON-SKILL.md` is an upstream snapshot and is excluded from this license. It remains subject to applicable rights and terms from [the source](https://nearhackathon.com/HACKATHON.md).

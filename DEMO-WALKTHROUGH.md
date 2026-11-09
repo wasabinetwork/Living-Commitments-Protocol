@@ -12,13 +12,13 @@ NEXT_PUBLIC_NEAR_NETWORK_ID=testnet
 NEXT_PUBLIC_NEAR_RPC_URL=https://test.rpc.fastnear.com
 ```
 
-Run `npm run dev --workspace=@lcp/demo` and open `http://localhost:3000`. The demo follows the system color preference and lets you switch between dark and light mode from the top bar. Connect a testnet wallet when signing or submitting an action. Browse recent commitments to inspect existing records; the user has confirmed the recent list, older-page control, wallet connection, and disconnection.
+Run `npm run dev --workspace=@lcp/demo` and open `http://localhost:3000`. The demo follows the system color preference and lets you switch between dark and light mode from the top bar. Connect a testnet wallet when signing or submitting an action. The recent list, older-page control, wallet connection, and disconnection have been manually checked in Firefox.
 
 ## Follow Existing Testnet Examples
 
 1. Inspect commitment `22` and refresh **Health clock**. It shows evaluation `1`, challenge `4` invalidation, and evaluation `2` recovery, followed by policy-derived evidence expiry and grace deadlines. Its latest snapshot showed the next claim blocked during the challenge window.
 2. Open evaluation `2` and confirm the OutLayer public record's transaction, input, output, and WASM hashes match the contract record. This panel checks hash bindings; use the linked OutLayer report's **Verify** action or standalone verifier for the TEE quote.
-3. Inspect commitment `21` and refresh **Health clock** for the short initial evidence window. Its initial deadline was Nov 9, 2026 at 00:21:40 AST, and grace ended at 01:21:40 AST. The cron monitor records finalized health once a minute in `/private/tmp/lcp-temporal-monitor-21.jsonl`; check the current state because the deadline may have passed.
+3. Inspect commitment `21` and refresh **Health clock** for the short initial evidence window. Finalized samples first reported `AtRisk` at 00:21:58 AST and `Breached` at 01:21:59 AST on Nov 9. This is now a historical boundary example; see the recorded samples noted in the testnet status document.
 4. Inspect commitment `8` for an upheld challenge and `9` for an invalidation followed by recovery. Inspect `19` for the completed payout, closure, and residual escrow refund.
 
 The dashboard's health is contract-derived. The timeline distinguishes recorded commitment timestamps from deadlines derived using the immutable policy and finalized NEAR block time. It also shows accepted-evidence age, expiration, and time remaining to the next deadline; refresh it to update that snapshot. Outcomes from challenges created before completion timestamps were stored cannot be placed at an exact time and are labeled accordingly.
@@ -33,6 +33,14 @@ Use a test commitment and the appropriate role wallet for each action:
 4. Connect the configured beneficiary wallet and claim only when the contract reports an eligible tranche. If a transfer fails and the callback restores eligibility, retry from the same action card.
 5. Resolve pending evaluations, challenges, and transfers before closing. Connect an authorized party to close, then connect the sponsor wallet to request any residual escrow refund.
 
-## Remaining Manual Check
+## Verified Browser Journeys
 
-The user has confirmed wallet connect/disconnect, older-page browsing, commitment `21`'s health clock, commitment `22`'s historical timeline and attestation hash-binding status, and commitment `24` creation/funding/activation/evaluation plus local artifact hashing in Firefox. Commitment `24` later became `Breached`; the user now reports that fresh compliant evidence restored `Healthy`. The challenge window is open. Remaining manual steps are beneficiary claim, closure, and sponsor refund after that window ends. Transfer failure/retry is already validated in contract tests and on a separate testnet fixture; its wallet UI path remains unverified. Do not use mainnet funds for this walkthrough.
+These flows were manually verified in Firefox on NEAR testnet:
+
+- Commitment `24`: create, fund, activate, pin the maintainer key with NEP-413, hash a local evidence file, request evaluation, recover with fresh evidence, close, and refund residual escrow. The three funded epochs ended before a tranche became claimable, so this fixture verifies refund rather than payout.
+- Isolated failed-transfer fixture commitment `2`: the first payout transfer failed, the UI showed retry eligibility, and retry completed the payment.
+- Commitment `19`: a tranche was paid, then the commitment was closed and remaining escrow refunded.
+- Commitments `21` and `22`: the health countdown and historical invalidation/recovery timeline were checked. Commitment `21` naturally reached `AtRisk` and `Breached` on finalized testnet time.
+- The Cloudflare Pages preview: wallet connect/disconnect, NEAR reads, and OutLayer report lookup worked from Firefox.
+
+See [TESTNET-E2E-STATUS.md](TESTNET-E2E-STATUS.md) for receipts and [TESTING.md](TESTING.md) for automated checks and build reproduction. Fixture health is time-dependent; refresh snapshots before using an existing commitment. Keep all manual transactions on testnet.

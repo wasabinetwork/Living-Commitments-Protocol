@@ -2179,6 +2179,10 @@ mod tests {
     const EPOCH: u32 = 0;
     const TRANCHE_AMOUNT: u128 = 10_u128.pow(22);
     const NOW_NS: u64 = 1_000_000_200;
+    const PENDING_EVALUATION_ID: u64 = EVALUATION_ID + 1;
+    const PENDING_EVALUATION_OBSERVED_AT_NS: u64 = 1_000_000_100;
+    const PENDING_EVALUATION_INPUT_HASH: [u8; 32] = [12; 32];
+    const PENDING_EVALUATION_EVIDENCE_HASH: [u8; 32] = [13; 32];
 
     fn context(predecessor: AccountId, attached_deposit: u128) -> near_sdk::VMContext {
         context_at(predecessor, attached_deposit, NOW_NS)
@@ -2321,6 +2325,67 @@ mod tests {
         (contract, beneficiary)
     }
 
+    fn contract_with_pending_evaluation() -> Contract {
+        let (mut contract, _) = contract_with_pending_tranche();
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.pending_evaluation_id = Some(PENDING_EVALUATION_ID);
+        commitment.next_evaluation_id = PENDING_EVALUATION_ID + 1;
+        contract.commitments.insert(CONTRACT_ID, commitment.clone());
+
+        let request = EvaluationRequest {
+            id: PENDING_EVALUATION_ID,
+            commitment_id: CONTRACT_ID,
+            policy_version: commitment.policy.version,
+            policy_hash: commitment.policy_hash,
+            input_hash: PENDING_EVALUATION_INPUT_HASH,
+            evidence_hash: PENDING_EVALUATION_EVIDENCE_HASH,
+            observed_at_ns: PENDING_EVALUATION_OBSERVED_AT_NS,
+            requested_at_ns: NOW_NS,
+            timeout_at_ns: NOW_NS + 1_000,
+            request_transaction_hash: Some([0; 32]),
+            status: EvaluationStatus::Pending,
+        };
+        let record = EvaluationRecord {
+            request_id: PENDING_EVALUATION_ID,
+            commitment_id: CONTRACT_ID,
+            request_transaction_hash: Some([0; 32]),
+            status: EvaluationStatus::Pending,
+            verdict: Some(Verdict::NonCompliant),
+            reason_codes: vec!["X".repeat(MAX_REASON_CODE_BYTES); MAX_REASON_CODES],
+            input_hash: PENDING_EVALUATION_INPUT_HASH,
+            evidence_hash: PENDING_EVALUATION_EVIDENCE_HASH,
+            observed_at_ns: PENDING_EVALUATION_OBSERVED_AT_NS,
+            accepted_at_ns: Some(0),
+            policy_hash: commitment.policy_hash,
+            output_hash: Some([0; 32]),
+        };
+
+        let key = (CONTRACT_ID, PENDING_EVALUATION_ID);
+        contract.evaluation_requests.insert(key, request);
+        contract.evaluation_records.insert(key, record);
+        contract.commitments.flush();
+        contract.evaluation_requests.flush();
+        contract.evaluation_records.flush();
+        contract
+    }
+
+    fn callback_verdict(evaluation_id: &str) -> Vec<u8> {
+        near_sdk::serde_json::to_vec(&json!({
+            "schema": EVALUATION_VERDICT_SCHEMA,
+            "request_transaction_hash": bs58::encode([14; 32]).into_string(),
+            "commitment_id": CONTRACT_ID.to_string(),
+            "evaluation_id": evaluation_id,
+            "policy_version": 1,
+            "policy_hash": encode_hex(&[9; 32]),
+            "input_hash": encode_hex(&PENDING_EVALUATION_INPUT_HASH),
+            "evidence_hash": encode_hex(&PENDING_EVALUATION_EVIDENCE_HASH),
+            "observed_at_ns": PENDING_EVALUATION_OBSERVED_AT_NS.to_string(),
+            "verdict": "Compliant",
+            "reason_codes": ["SIGNATURE_VALID", "ARTIFACT_HASH_FORMAT_VALID"],
+        }))
+        .unwrap()
+    }
+
     fn add_open_challenge(contract: &mut Contract) {
         let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
         commitment.active_challenge_id = Some(TRANSFER_ID);
@@ -2356,6 +2421,41 @@ mod tests {
         contract.pending_transfers.flush();
     }
 
+    fn contract_with_pending_refund() -> Contract {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Closed;
+        commitment.escrow_funded_yocto = TRANCHE_AMOUNT * 2;
+        commitment.escrow_pending_yocto = TRANCHE_AMOUNT;
+        commitment.pending_transfer_count = 1;
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        let refund_id = TRANSFER_ID + 1;
+        contract.pending_transfers.insert(
+            refund_id,
+            PendingTransfer {
+                id: refund_id,
+                commitment_id: CONTRACT_ID,
+                kind: TransferKind::Refund,
+                epoch: None,
+                recipient: accounts(1),
+                amount_yocto: TRANCHE_AMOUNT,
+            },
+        );
+        contract.next_transfer_id = refund_id;
+        contract.commitments.flush();
+        contract.pending_transfers.flush();
+        contract
+    }
+
+    fn set_breached_recovery_policy(contract: &mut Contract, recovery_allowed: bool) {
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.policy.temporal.recovery_allowed = recovery_allowed;
+        commitment.negative_since_ns = Some(NOW_NS - commitment.policy.temporal.grace_ns - 1);
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.commitments.flush();
+    }
+
     #[test]
     fn challenge_completion_timestamp_slot_is_reserved_and_reused() {
         testing_env!(context(accounts(0), 0));
@@ -2376,6 +2476,108 @@ mod tests {
         assert_eq!(
             read_challenge_completion_timestamp(challenge_id),
             Some(NOW_NS)
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn valid_outlayer_callback_accepts_pending_evaluation_and_ignores_replay() {
+        let mut contract = contract_with_pending_evaluation();
+        let output = callback_verdict(&PENDING_EVALUATION_ID.to_string());
+
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(output.clone()),
+        );
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let accepted = contract
+            .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+            .unwrap();
+        assert_eq!(accepted.status, EvaluationStatus::Accepted);
+        assert_eq!(accepted.verdict, Some(Verdict::Compliant));
+        assert_eq!(
+            accepted.reason_codes,
+            vec!["SIGNATURE_VALID", "ARTIFACT_HASH_FORMAT_VALID"]
+        );
+        assert_eq!(
+            contract
+                .commitments
+                .get(&CONTRACT_ID)
+                .unwrap()
+                .pending_evaluation_id,
+            None
+        );
+
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(output),
+        );
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let after_replay = contract
+            .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+            .unwrap();
+        assert_eq!(after_replay.status, EvaluationStatus::Accepted);
+        assert_eq!(after_replay.verdict, Some(Verdict::Compliant));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn mismatched_outlayer_callback_is_rejected_and_releases_pending_lock() {
+        let mut contract = contract_with_pending_evaluation();
+        let output = callback_verdict("999");
+
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(output),
+        );
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let rejected = contract
+            .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+            .unwrap();
+        assert_eq!(rejected.status, EvaluationStatus::Rejected);
+        assert_eq!(rejected.reason_codes, vec!["VERDICT_BINDING_MISMATCH"]);
+        assert_eq!(
+            contract
+                .commitments
+                .get(&CONTRACT_ID)
+                .unwrap()
+                .pending_evaluation_id,
+            None
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn stale_outlayer_callback_does_not_clear_a_newer_pending_request() {
+        let mut contract = contract_with_pending_evaluation();
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.pending_evaluation_id = Some(PENDING_EVALUATION_ID + 1);
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.commitments.flush();
+
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(callback_verdict(&PENDING_EVALUATION_ID.to_string())),
+        );
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        assert_eq!(
+            contract
+                .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+                .unwrap()
+                .status,
+            EvaluationStatus::Pending
+        );
+        assert_eq!(
+            contract
+                .commitments
+                .get(&CONTRACT_ID)
+                .unwrap()
+                .pending_evaluation_id,
+            Some(PENDING_EVALUATION_ID + 1)
         );
     }
 
@@ -2549,6 +2751,303 @@ mod tests {
                 .pending_transfer_count,
             0
         );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn callback_rejects_each_changed_request_binding() {
+        let cases = [
+            ("commitment_id", json!("999")),
+            ("policy_version", json!(2)),
+            ("policy_hash", json!("00".repeat(32))),
+            ("input_hash", json!("00".repeat(32))),
+            ("evidence_hash", json!("00".repeat(32))),
+            ("observed_at_ns", json!("999")),
+        ];
+
+        for (field, value) in cases {
+            let mut contract = contract_with_pending_evaluation();
+            let mut output: near_sdk::serde_json::Value = near_sdk::serde_json::from_slice(
+                &callback_verdict(&PENDING_EVALUATION_ID.to_string()),
+            )
+            .unwrap();
+            output[field] = value;
+            testing_env_with_promise_results(
+                context(accounts(0), 0),
+                PromiseResult::Successful(near_sdk::serde_json::to_vec(&output).unwrap()),
+            );
+
+            contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+            let rejected = contract
+                .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+                .unwrap();
+            assert_eq!(
+                rejected.status,
+                EvaluationStatus::Rejected,
+                "field: {field}"
+            );
+            assert_eq!(
+                rejected.reason_codes,
+                vec!["VERDICT_BINDING_MISMATCH"],
+                "field: {field}"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn failed_outlayer_promise_does_not_extend_compliant_evidence() {
+        let mut contract = contract_with_pending_evaluation();
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let record = contract
+            .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+            .unwrap();
+        assert_eq!(record.status, EvaluationStatus::Failed);
+        assert_eq!(record.reason_codes, vec!["OUTLAYER_EXECUTION_FAILED"]);
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(
+            commitment.last_good.as_ref().unwrap().evaluation_id,
+            EVALUATION_ID
+        );
+        assert_eq!(
+            commitment.last_good.as_ref().unwrap().observed_at_ns,
+            1_000_000_000
+        );
+        assert_eq!(commitment.negative_since_ns, None);
+        assert_eq!(commitment.pending_evaluation_id, None);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn malformed_outlayer_output_is_rejected_without_extending_evidence() {
+        let mut contract = contract_with_pending_evaluation();
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"{malformed".to_vec()),
+        );
+
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let rejected = contract
+            .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+            .unwrap();
+        assert_eq!(rejected.status, EvaluationStatus::Rejected);
+        assert_eq!(rejected.reason_codes, vec!["MALFORMED_VERDICT"]);
+        assert!(rejected.output_hash.is_some());
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(
+            commitment.last_good.as_ref().unwrap().evaluation_id,
+            EVALUATION_ID
+        );
+        assert_eq!(commitment.negative_since_ns, None);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn callback_at_timeout_boundary_does_not_accept_a_verdict() {
+        let mut contract = contract_with_pending_evaluation();
+        let timeout_at_ns = NOW_NS + 1_000;
+        testing_env_with_promise_results(
+            context_at(accounts(0), 0, timeout_at_ns),
+            PromiseResult::Successful(callback_verdict(&PENDING_EVALUATION_ID.to_string())),
+        );
+
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let timed_out = contract
+            .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+            .unwrap();
+        assert_eq!(timed_out.status, EvaluationStatus::TimedOut);
+        assert_eq!(timed_out.reason_codes, vec!["OUTLAYER_TIMEOUT"]);
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(
+            commitment.last_good.as_ref().unwrap().evaluation_id,
+            EVALUATION_ID
+        );
+        assert_eq!(commitment.pending_evaluation_id, None);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn repeated_noncompliant_result_does_not_extend_the_original_grace_period() {
+        let mut contract = contract_with_pending_evaluation();
+        let negative_since_ns = NOW_NS - 500;
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.negative_since_ns = Some(negative_since_ns);
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.commitments.flush();
+
+        let mut output: near_sdk::serde_json::Value =
+            near_sdk::serde_json::from_slice(&callback_verdict(&PENDING_EVALUATION_ID.to_string()))
+                .unwrap();
+        output["verdict"] = json!("NonCompliant");
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(near_sdk::serde_json::to_vec(&output).unwrap()),
+        );
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let updated = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(updated.negative_since_ns, Some(negative_since_ns));
+        assert_eq!(health_of(&updated, NOW_NS), Health::AtRisk);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn compliant_evaluation_recovers_breach_only_when_policy_allows_it() {
+        let mut recoverable = contract_with_pending_evaluation();
+        set_breached_recovery_policy(&mut recoverable, true);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(callback_verdict(&PENDING_EVALUATION_ID.to_string())),
+        );
+        recoverable.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+        let recovered = recoverable.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(health_of(&recovered, NOW_NS), Health::Healthy);
+        assert_eq!(recovered.negative_since_ns, None);
+        assert!(!recovered.breach_latched);
+
+        let mut permanent = contract_with_pending_evaluation();
+        set_breached_recovery_policy(&mut permanent, false);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(callback_verdict(&PENDING_EVALUATION_ID.to_string())),
+        );
+        permanent.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+        let latched = permanent.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(health_of(&latched, NOW_NS), Health::Breached);
+        assert!(latched.breach_latched);
+        assert!(latched.negative_since_ns.is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "heartbeat timestamp cannot be in the future")]
+    fn future_evidence_timestamp_is_rejected() {
+        let (contract, _) = contract_with_pending_tranche();
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        let now_ns = 1_000_000_200;
+        testing_env!(context_at(accounts(2), 0, now_ns));
+        validate_observation_time(&commitment, now_ns + 1, now_ns);
+    }
+
+    #[test]
+    #[should_panic(expected = "heartbeat exceeds the maximum source lag")]
+    fn evidence_older_than_source_lag_is_rejected() {
+        let (contract, _) = contract_with_pending_tranche();
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        let now_ns = 1_000_000_200;
+        testing_env!(context_at(accounts(2), 0, now_ns));
+        validate_observation_time(&commitment, 1_000_000_099, now_ns);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "heartbeat timestamp must be newer than the last accepted observation"
+    )]
+    fn repeated_evidence_timestamp_is_rejected_even_within_source_lag() {
+        let (contract, _) = contract_with_pending_tranche();
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        let now_ns = 1_000_000_050;
+        testing_env!(context_at(accounts(2), 0, now_ns));
+        validate_observation_time(&commitment, 1_000_000_000, now_ns);
+    }
+
+    #[test]
+    fn claims_reject_stale_health_and_active_challenges() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        let evidence_expires_at_ns = 1_000_000_000 + commitment.policy.temporal.evidence_ttl_ns;
+
+        testing_env!(context_at(accounts(3), 0, evidence_expires_at_ns));
+        assert_eq!(
+            contract.claim_eligibility(&commitment, evidence_expires_at_ns),
+            Err("commitment health must be Healthy to claim")
+        );
+
+        let breach_at_ns = evidence_expires_at_ns + commitment.policy.temporal.grace_ns;
+        testing_env!(context_at(accounts(3), 0, breach_at_ns));
+        assert_eq!(
+            contract.claim_eligibility(&commitment, breach_at_ns),
+            Err("commitment health must be Healthy to claim")
+        );
+
+        commitment.active_challenge_id = Some(TRANSFER_ID);
+        let healthy_time_ns = 1_000_000_200;
+        testing_env!(context_at(accounts(3), 0, healthy_time_ns));
+        assert_eq!(
+            contract.claim_eligibility(&commitment, healthy_time_ns),
+            Err("a blocking challenge prevents claims")
+        );
+    }
+
+    #[test]
+    fn claims_reject_a_settled_epoch_and_insufficient_free_escrow() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        let paid = Tranche {
+            commitment_id: CONTRACT_ID,
+            epoch: EPOCH,
+            amount_yocto: TRANCHE_AMOUNT,
+            status: TrancheStatus::Paid,
+            transfer_id: None,
+        };
+        contract.tranches.insert((CONTRACT_ID, EPOCH), paid);
+        contract.tranches.flush();
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        assert_eq!(
+            contract.claim_eligibility(&commitment, NOW_NS),
+            Err("this epoch is already paid or pending")
+        );
+
+        contract.tranches.remove(&(CONTRACT_ID, EPOCH));
+        let mut underfunded = commitment;
+        underfunded.escrow_funded_yocto = 0;
+        assert_eq!(
+            contract.claim_eligibility(&underfunded, NOW_NS),
+            Err("insufficient unallocated commitment escrow")
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "only the designated arbiter may resolve a challenge")]
+    fn non_arbiter_cannot_resolve_a_challenge() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        add_open_challenge(&mut contract);
+        testing_env!(context(accounts(2), 0));
+
+        contract.resolve_challenge(U64(TRANSFER_ID), true);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn refund_callback_reconciles_success_and_failure_without_double_refund() {
+        let refund_id = U64(TRANSFER_ID + 1);
+
+        let mut failed = contract_with_pending_refund();
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        failed.on_refund_transfer(refund_id);
+        let failed_state = failed.get_escrow_status(U64(CONTRACT_ID)).unwrap();
+        assert_eq!(failed_state.pending_yocto.0, 0);
+        assert_eq!(failed_state.refunded_yocto.0, 0);
+        assert_eq!(failed_state.free_yocto.0, TRANCHE_AMOUNT * 2);
+
+        let mut succeeded = contract_with_pending_refund();
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        succeeded.on_refund_transfer(refund_id);
+        succeeded.on_refund_transfer(refund_id);
+        let settled = succeeded.get_escrow_status(U64(CONTRACT_ID)).unwrap();
+        assert_eq!(settled.pending_yocto.0, 0);
+        assert_eq!(settled.refunded_yocto.0, TRANCHE_AMOUNT);
+        assert_eq!(settled.free_yocto.0, TRANCHE_AMOUNT);
     }
 }
 

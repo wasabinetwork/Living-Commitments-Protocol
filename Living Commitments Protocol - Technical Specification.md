@@ -1361,7 +1361,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (2026-11-09):** Milestones A through E have initial implementations for OutLayer request/callback/timeout, bounded evaluation history, challenge resolution, health-gated tranche claims, transfer reconciliation, and closure/refunds. The SDK provides typed contract calls and finalized NEAR JSON-RPC reads with an injected wallet sender. The demo supports testnet commitment creation/funding/activation, externally signed evaluations, challenge actions, up to ten recent evaluations, eligible claims and retries, closure, and escrow refunds. The health timeline reconstructs recent transitions and separates recorded events from policy-derived deadlines. The OutLayer panel reports public-record availability and hash bindings while leaving quote verification to OutLayer's Verify report or standalone tool. The optional challenge completion timestamp uses a reserved raw-storage slot and does not alter persisted contract state layout. The updated contract is deployed as `4ycAFEtJryaNGUSMd76rWWxSoEAqqRHPrYtkdWZVHMk3`; state was preserved, and commitment `22` demonstrates a timestamped invalidation/recovery timeline that the user confirmed in the browser. Testnet evidence covers a PROVEN OutLayer evaluation, evaluator failure modes, breach/recovery, failed-transfer retry, arbiter outcomes, payout/refund, and pagination. The full wallet transaction journey and natural temporal cohort boundaries remain open.
+**Repository status (2026-11-09):** Milestones A through F have working implementations for temporal state, OutLayer request/callback/timeout, bounded evaluation history, challenge resolution, health-gated claims, transfer reconciliation, closure/refunds, wallet journeys, and the demo. The SDK provides typed contract calls and finalized NEAR JSON-RPC reads with an injected wallet sender. The dashboard shows recent health transitions and policy-derived deadlines; its OutLayer panel reports public-record availability and hash bindings while leaving quote verification to OutLayer's Verify report or standalone tool. The optional challenge completion timestamp uses a reserved raw-storage slot and does not change persisted contract state layout. The NEP-413-capable contract is deployed as `bK4nSCpE52DF4b2AbNunaEMy2FCfRDbsgwjZAVaWfDR`; prior commitment state was preserved. Testnet evidence covers a PROVEN OutLayer evaluation, evaluator failure modes, breach/recovery, failed-transfer retry, arbiter outcomes, payout/refund, and pagination. Deterministic tests and reproduction instructions are documented in `TESTING.md`; key browser journeys were manually verified in Firefox. Repository publication remains required for PRD requirement LCP-017; live status and receipts are in `TESTNET-E2E-STATUS.md`.
 
 ## Milestone A — Pure engine
 
@@ -1401,7 +1401,7 @@ Implement:
 
 ## Milestone D — Consequences
 
-Initial source implementation covers epoch calculation, health-gated claims, escrow accounting, transfer callbacks, and residual escrow refunds after closure. Testnet confirms a breached claim is rejected, a healthy tranche pays a distinct beneficiary and reconciles, and an unused escrow refund reconciles after closure. Failed-transfer recovery and broader accounting cases remain open.
+The source implements epoch calculation, health-gated claims, escrow accounting, transfer callbacks, and residual escrow refunds after closure. Testnet confirms breached claims are rejected, a healthy tranche pays a distinct beneficiary, a failed transfer restores eligibility and can be retried, and unused escrow refunds reconcile after closure. Broader stress testing across repeated retries remains outside the completed path.
 
 Implement:
 
@@ -1415,7 +1415,7 @@ Implement:
 
 ## Milestone E — Recovery and challenge
 
-Initial source implementation covers positive-evidence recovery, challenge opening/resolution, arbiter timeout, and invalidation of challenged evidence. Testnet confirms recovery from `Breached` to `Healthy` and timeout of an open challenge invalidating its evidence. Arbiter uphold/invalidate outcomes and additional health boundaries remain unverified.
+The source covers positive-evidence recovery, challenge opening/resolution, arbiter timeout, and invalidation of challenged evidence. Testnet confirms recovery from `Breached` to `Healthy`, challenge timeout, and live upheld and invalidated arbiter outcomes. Deterministic tests cover exact initial-evidence, freshness, grace, challenge-window, and timeout boundaries; commitment `21` also crossed its initial-evidence and grace boundaries at finalized NEAR times.
 
 Implement:
 
@@ -1439,6 +1439,8 @@ Implement:
 - OutLayer attestation link.
 
 **Definition of done:** The complete lifecycle is reproducible without CLI intervention.
+
+The user's Firefox validation covered the lifecycle across multiple fixtures: commitment `24` for NEP-413 creation/evaluation/recovery/closure/refund, an isolated fixture for failed-transfer retry, and commitment `19` for successful payout plus closure/refund. The demo preview's wallet connection, NEAR reads, and OutLayer report lookup also passed. Commitment `24` had no claimable tranche because its funded epochs ended; commitment `19` demonstrates payout.
 
 ---
 
@@ -1512,17 +1514,17 @@ No production-readiness claim may be made until these checks pass.
 
 The breached-claim rejection, healthy distinct-beneficiary payout/callback, closure, sponsor refund, and isolated failed-transfer recovery/retry all succeeded. Receipts are in `TESTNET-E2E-STATUS.md`.
 
-**Task 010 — Complete breach and recovery validation — LIVE CORE PATH VERIFIED; NATURAL COHORT BOUNDARIES OPEN**
+**Task 010 — Complete breach and recovery validation — P0 ACCEPTANCE VERIFIED**
 
-Evidence expiry, breached-claim rejection, fresh-evidence recovery, challenge timeout, and upheld/invalidated arbiter outcomes were exercised. Exact local temporal boundaries have deterministic tests. The short-horizon playground cohort is still being observed for natural expiry and grace transitions.
+Evidence expiry, breached-claim rejection, fresh-evidence recovery, challenge timeout, and upheld/invalidated arbiter outcomes were exercised on testnet. Exact local temporal boundaries have deterministic tests, and commitment `21` naturally transitioned to `AtRisk` and `Breached` at finalized timestamps. Additional playground observations are exploratory.
 
 **Task 011 — Improve commitment discovery — CONTRACT DEPLOYED; RPC AND BROWSER PAGINATION VERIFIED**
 
-The contract exposes a capped newest-first listing by sequential commitment ID; the SDK wraps it and the demo provides ten-record pages with an exclusive cursor. Testnet RPC confirmed descending/exclusive pagination, and the user confirmed the browser older-page control across all 21 records.
+The contract exposes a capped newest-first listing by sequential commitment ID; the SDK wraps it and the demo provides ten-record pages with an exclusive cursor. Testnet RPC confirmed descending/exclusive pagination, and Firefox checks confirmed the older-page control across all 21 records.
 
-**Task 012 — Finish the public demo journey — IN PROGRESS**
+**Task 012 — Finish the public demo journey — COMPLETE; REPOSITORY PUBLICATION PENDING**
 
-The app now reconstructs recent historical health transitions, shows policy-derived current deadlines, and reports OutLayer public-record availability and digest bindings. The user confirmed that commitment `22` displays the invalidation/recovery sequence, upcoming freshness/grace boundaries, and matching public-record hashes. The app does not claim to verify the TEE quote; OutLayer's report and standalone verifier remain the cryptographic verification path. The testnet update and dedicated fixture are complete. The full create/fund/activate/evidence/claim/retry/close/refund journey still needs user-driven browser validation.
+The app reconstructs recent historical health transitions, shows policy-derived deadlines and countdowns, and reports OutLayer public-record availability and digest bindings. Firefox checks verified the historical timeline, wallet connect/disconnect, older-page control, create/fund/activate/evaluate/recover/close/refund flow, payout, and failed-transfer retry across the documented fixtures. The app does not claim to verify the TEE quote; OutLayer's report and standalone verifier remain the verification path. `DEMO-WALKTHROUGH.md` and `TESTING.md` document reproduction. Repository publication remains required before the PRD's public-documentation gate is formally satisfied.
 
 ---
 
