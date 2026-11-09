@@ -3,7 +3,7 @@
 ## In progress
 
 - [x] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, evaluation, close, and refund in Firefox. Its 3-epoch × 5-minute budget ended at epoch 25, so no tranche could be claimed. Finalized read at block `276955602` confirms `Closed`, transfer `#9` settled, and all 0.03 NEAR refunded with 0 pending. The user confirmed the ended-program timer and simplified refund-complete UI in Firefox.
-- [ ] **Retry-transfer UI fixture:** verify the UI recovers after a failed escrow transfer and allows the authorized retry.
+- [ ] **Retry-transfer UI fixture:** isolated feature-testnet contract `failed-transfer-fixture.livingcommitmentsprotocol.testnet`, commitment `2`, is active with compliant evaluation and an eligible 0.001 NEAR tranche. Its one-shot test hook is armed to route the first claim to a nonexistent account; beneficiary is `wasabinetwork.testnet` for Firefox retry. Demo is available at `http://127.0.0.1:3001`; trigger the first claim, refresh after failure reconciliation, retry, and verify one successful payment.
 - [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
 
 ## Complete
