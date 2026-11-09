@@ -1438,11 +1438,16 @@ function EvidenceSubmissionCard({
       <button className="prepare-payload-button" type="button" onClick={() => void preparePayload()} disabled={!canRequest || blocked || busy}>
         Prepare canonical signing payload <span aria-hidden="true">↗</span>
       </button>
-      {payload && (
+      {payload && policy && (
         <form className="evidence-signing-form" onSubmit={(event) => void handleSubmit(event)}>
           <div className="digest-row"><span>OBSERVED AT · FINAL NEAR BLOCK</span><code>{observedAt}</code></div>
           <FormField label="Exact UTF-8 payload to sign" wide><textarea className="mono-input signing-payload" value={payload} readOnly rows={6} /></FormField>
           <button className="copy-payload-button" type="button" onClick={() => void copyPayload()}>Copy signing payload</button>
+          <div className="signer-helper" role="note">
+            <strong>Sign locally without putting a key in this page</strong>
+            <span>Copy the payload, then on macOS run this from the repository root. It checks that your local key matches the pinned public key and prints only the signature.</span>
+            <code>pbpaste | node scripts/sign-heartbeat.mjs {policy.evidence.maintainer_public_key_hex}</code>
+          </div>
           <div className="form-grid evidence-form-grid">
             <FormField label="Ed25519 signature · 128 lowercase hex" wide><input className="mono-input" value={signature} onChange={(event) => setSignature(event.target.value)} maxLength={128} placeholder="Paste the offline signature" /></FormField>
             <FormField label="Request storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /></FormField>

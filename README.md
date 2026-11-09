@@ -20,6 +20,8 @@ The `evaluators/maintenance-heartbeat` crate reads one canonical JSON request, v
 
 The contract currently pins `near-sdk` 5.29.1 and declares Rust 1.94. The policy digest is SHA-256 over the Borsh serialization of the v1 policy struct; evaluator input JSON has its own canonical byte digest. Follow [DEMO-WALKTHROUGH.md](DEMO-WALKTHROUGH.md) to tour the testnet fixtures and wallet flow. Testnet receipts, the live temporal monitor, and remaining browser checks are tracked in [TODO.md](TODO.md) and [TESTNET-E2E-STATUS.md](TESTNET-E2E-STATUS.md).
 
+After preparing a heartbeat payload in the demo, copy it and run `pbpaste | node scripts/sign-heartbeat.mjs <maintainer-public-key-hex>` from the repository root on macOS, replacing the placeholder with the policy-pinned public key. The local helper reads `LCP_MAINTAINER_PRIVATE_KEY` or `NEAR_PRIVATE_KEY` from the ignored `.env.testnet` file or shell environment, verifies the derived public key against the policy pin, and writes only the signature to stdout. The private key never enters the browser or repository history.
+
 ## Development
 
 Build the contract and evaluator with:
