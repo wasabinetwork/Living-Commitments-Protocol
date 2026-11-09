@@ -61,6 +61,7 @@ interface CommitmentData {
   commitment: CommitmentView;
   policy: CommitmentPolicyView | null;
   chainTimeNs: string | null;
+  chainTimeCapturedAtMs: number;
   evaluation: EvaluationRecordView | null;
   evaluationHistory: EvaluationRecordView[];
   evaluationTimeoutNs: string | null;
@@ -171,14 +172,17 @@ export function Dashboard() {
     setActionMessage(null);
     try {
       const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
-      const [commitment, policy, evaluation, eligibility, escrow, epoch, chainTimeNs] = await Promise.all([
+      const chainTimeSnapshotPromise = getFinalBlockTimestampNs(RPC_URL)
+        .then((chainTimeNs) => ({ chainTimeNs, capturedAtMs: Date.now() }))
+        .catch(() => ({ chainTimeNs: null, capturedAtMs: Date.now() }));
+      const [commitment, policy, evaluation, eligibility, escrow, epoch, chainTimeSnapshot] = await Promise.all([
         client.getCommitment(normalizedId),
         client.getPolicy(normalizedId),
         client.getLatestEvaluation(normalizedId),
         client.canClaimTranche(normalizedId),
         client.getEscrowStatus(normalizedId),
         client.getCurrentEpoch(normalizedId),
-        getFinalBlockTimestampNs(RPC_URL).catch(() => null),
+        chainTimeSnapshotPromise,
       ]);
 
       if (!commitment) {
@@ -213,7 +217,7 @@ export function Dashboard() {
         allChallengeHistory.push(activeChallenge);
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
-      setData({ commitment, policy, chainTimeNs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      setData({ commitment, policy, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
       setData(null);
@@ -929,12 +933,7 @@ export function Dashboard() {
                 detail={lastGoodEvidenceDetail}
                 icon="◷"
               />
-              <MetricCard
-                eyebrow="NEXT TRANCHE"
-                title={data.eligibility?.eligible ? `${formatNear(data.eligibility.amount_yocto)} NEAR` : "Not eligible"}
-                detail={data.eligibility?.reason ?? (data.epoch ? `Current epoch ${data.epoch}` : "No active budget epoch")}
-                icon="↗"
-              />
+              <NextTrancheMetric data={data} />
               <MetricCard
                 eyebrow="AVAILABLE ESCROW"
                 title={`${formatNear(data.escrow?.free_yocto ?? "0")} NEAR`}
@@ -1045,7 +1044,6 @@ export function Dashboard() {
                       <p className="claim-disclaimer">The contract calculates its required storage bond and refunds any excess attached deposit.</p>
                     </div>
                   )}
-                  {!data.eligibility?.eligible && <p className="eligibility-reason">{data.eligibility?.reason ?? "Claim eligibility is not available."}</p>}
                 </div>
                 {data.tranche && <div className="tranche-line"><span>CURRENT EPOCH · {data.tranche.epoch}</span><strong>{data.tranche.status}</strong></div>}
               </section>
@@ -1385,13 +1383,100 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
   );
 }
 
-function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: string; detail: string; icon: string }) {
+function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: string; detail: ReactNode; icon: string }) {
   return (
     <section className="metric-card">
       <div className="metric-top"><p className="eyebrow">{eyebrow}</p><span>{icon}</span></div>
       <strong className="metric-title">{title}</strong>
-      <p className="metric-detail" title={detail}>{detail}</p>
+      <p className="metric-detail" title={typeof detail === "string" ? detail : undefined}>{detail}</p>
     </section>
+  );
+}
+
+function NextTrancheMetric({ data }: { data: CommitmentData }) {
+  const [clientNowMs, setClientNowMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    setClientNowMs(Date.now());
+    const interval = window.setInterval(() => setClientNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const eligibility = data.eligibility;
+  const reason = eligibility?.reason ?? (data.epoch ? `Current epoch ${data.epoch}` : "No active budget epoch");
+  const activatedAtNs = data.commitment.activated_at_ns;
+  const budget = data.policy?.budget;
+  if (!activatedAtNs || !budget || BigInt(budget.epoch_ns) <= 0n || budget.max_epochs <= 0) {
+    return (
+      <MetricCard
+        eyebrow="NEXT TRANCHE"
+        title={eligibility?.eligible ? `${formatNear(eligibility.amount_yocto)} NEAR` : "Not eligible"}
+        detail={reason}
+        icon="↗"
+      />
+    );
+  }
+
+  const activatedNs = BigInt(activatedAtNs);
+  const epochNs = BigInt(budget.epoch_ns);
+  const programEndsAtNs = activatedNs + epochNs * BigInt(budget.max_epochs);
+  const chainNowNs = data.chainTimeNs
+    ? BigInt(data.chainTimeNs) + BigInt(Math.max(0, clientNowMs === null ? 0 : clientNowMs - data.chainTimeCapturedAtMs)) * 1_000_000n
+    : null;
+  const programEnded = eligibility?.reason === "the funded budget program has ended" || (chainNowNs !== null && chainNowNs >= programEndsAtNs);
+  let milestone: string | null = null;
+
+  if (programEnded) {
+    milestone = chainNowNs !== null && chainNowNs >= programEndsAtNs
+      ? `Ended ${formatDate(programEndsAtNs.toString())} · ${formatCountdown((chainNowNs - programEndsAtNs).toString())} ago`
+      : `Ended ${formatDate(programEndsAtNs.toString())} · refresh for elapsed time`;
+  } else if (chainNowNs !== null) {
+    if (eligibility?.reason === "evaluation challenge window is still open") {
+      const goodEvaluation = data.evaluationHistory.find((record) =>
+        record.accepted_at_ns !== null &&
+        record.verdict === "Compliant" &&
+        record.observed_at_ns === data.commitment.last_good_observed_at_ns,
+      );
+      if (goodEvaluation?.accepted_at_ns && data.policy) {
+        const claimOpensAtNs = BigInt(goodEvaluation.accepted_at_ns) + BigInt(data.policy.temporal.challenge_window_ns);
+        if (claimOpensAtNs <= programEndsAtNs) {
+          milestone = chainNowNs < claimOpensAtNs
+            ? `Claim window opens in ${formatCountdown((claimOpensAtNs - chainNowNs).toString())} · ${formatDate(claimOpensAtNs.toString())}`
+            : `Challenge window closed ${formatDate(claimOpensAtNs.toString())}`;
+        }
+      }
+    } else if (eligibility?.reason === "this epoch is already paid or pending" && data.epoch) {
+      const nextEpochStartsAtNs = activatedNs + (BigInt(data.epoch) + 1n) * epochNs;
+      if (nextEpochStartsAtNs < programEndsAtNs) {
+        milestone = nextEpochStartsAtNs > chainNowNs
+          ? `Next epoch starts in ${formatCountdown((nextEpochStartsAtNs - chainNowNs).toString())} · ${formatDate(nextEpochStartsAtNs.toString())}`
+          : `Next epoch has started · refresh claim eligibility`;
+      } else {
+        milestone = `No later tranche · program ends in ${formatCountdown((programEndsAtNs - chainNowNs).toString())}`;
+      }
+    }
+
+    if (!milestone) {
+      milestone = `Program ends in ${formatCountdown((programEndsAtNs - chainNowNs).toString())} · ${formatDate(programEndsAtNs.toString())}`;
+    }
+  } else {
+    milestone = `Program ends ${formatDate(programEndsAtNs.toString())} · refresh for a live countdown`;
+  }
+
+  const detail = (
+    <>
+      <span>{programEnded ? "No future tranches can be claimed under this policy." : reason}</span>
+      {milestone && <span className="metric-detail-secondary">{milestone}</span>}
+    </>
+  );
+
+  return (
+    <MetricCard
+      eyebrow="NEXT TRANCHE"
+      title={eligibility?.eligible ? `${formatNear(eligibility.amount_yocto)} NEAR` : programEnded ? "Program ended" : "Not eligible"}
+      detail={detail}
+      icon="↗"
+    />
   );
 }
 
@@ -2316,13 +2401,16 @@ function formatDuration(nanoseconds: string): string {
 
 function formatCountdown(nanoseconds: string): string {
   const totalSeconds = (BigInt(nanoseconds) + 999_999_999n) / 1_000_000_000n;
-  if (totalSeconds < 60n) return `${totalSeconds} sec`;
-  const totalMinutes = (totalSeconds + 59n) / 60n;
-  if (totalMinutes < 60n) return `${totalMinutes} min`;
-  const totalHours = (totalMinutes + 59n) / 60n;
-  if (totalHours < 48n) return `${totalHours} hr`;
-  const totalDays = (totalHours + 23n) / 24n;
-  return `${totalDays} days`;
+  const seconds = totalSeconds % 60n;
+  const totalMinutes = totalSeconds / 60n;
+  const minutes = totalMinutes % 60n;
+  const totalHours = totalMinutes / 60n;
+  const hours = totalHours % 24n;
+  const days = totalHours / 24n;
+  if (days > 0n) return `${days} ${days === 1n ? "day" : "days"}${hours > 0n ? ` ${hours} hr` : ""}`;
+  if (totalHours > 0n) return `${totalHours} hr${minutes > 0n ? ` ${minutes} min` : ""}`;
+  if (totalMinutes > 0n) return `${totalMinutes} min${seconds > 0n ? ` ${seconds} sec` : ""}`;
+  return `${totalSeconds} sec`;
 }
 
 function formatDate(nanoseconds: string): string {
