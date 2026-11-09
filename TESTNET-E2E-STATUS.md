@@ -1,7 +1,7 @@
 # NEAR Testnet E2E Status
 
 **Last verified:** 2026-11-09
-**Source revision:** `b8e493d`
+**Source revision:** `e8b8f4d`
 **Network:** NEAR testnet
 
 ## Deployment
