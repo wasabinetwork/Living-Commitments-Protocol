@@ -16,12 +16,12 @@ Run `npm run dev --workspace=@lcp/demo` and open `http://localhost:3000`. Connec
 
 ## Follow Existing Testnet Examples
 
-1. Inspect commitment `21` and refresh **Health clock**. It began as `AwaitingEvidence`; its initial deadline is Nov 9, 2026 at 00:21:40 AST, and grace ends at 01:21:40 AST. The cron monitor records finalized health once a minute in `/private/tmp/lcp-temporal-monitor-21.jsonl`. State may have advanced since those initial observations, so use the current on-chain view.
-2. Inspect commitment `8` for an upheld challenge; the compliant evaluation remains valid.
-3. Inspect commitment `9` for its later compliant recovery evaluation. The earlier invalidation and recovery receipts are linked in `TESTNET-E2E-STATUS.md`.
-4. Inspect commitment `19` for the completed payout, closure, and residual escrow refund.
+1. Inspect commitment `22` and refresh **Health clock**. It shows evaluation `1`, challenge `4` invalidation, and evaluation `2` recovery, followed by policy-derived evidence expiry and grace deadlines. Its latest snapshot showed the next claim blocked during the challenge window.
+2. Open evaluation `2` and confirm the OutLayer public record's transaction, input, output, and WASM hashes match the contract record. This panel checks hash bindings; use the linked OutLayer report's **Verify** action or standalone verifier for the TEE quote.
+3. Inspect commitment `21` and refresh **Health clock** for the short initial evidence window. Its initial deadline was Nov 9, 2026 at 00:21:40 AST, and grace ended at 01:21:40 AST. The cron monitor records finalized health once a minute in `/private/tmp/lcp-temporal-monitor-21.jsonl`; check the current state because the deadline may have passed.
+4. Inspect commitment `8` for an upheld challenge and `9` for an invalidation followed by recovery. Inspect `19` for the completed payout, closure, and residual escrow refund.
 
-The dashboard's health is contract-derived. The timeline distinguishes recorded commitment timestamps from deadlines derived using the immutable policy and finalized NEAR block time. It also shows accepted-evidence age, expiration, and time remaining to the next deadline; refresh it to update that snapshot. A historical transition view and an in-app attestation verification result are still under development.
+The dashboard's health is contract-derived. The timeline distinguishes recorded commitment timestamps from deadlines derived using the immutable policy and finalized NEAR block time. It also shows accepted-evidence age, expiration, and time remaining to the next deadline; refresh it to update that snapshot. Outcomes from challenges created before completion timestamps were stored cannot be placed at an exact time and are labeled accordingly.
 
 ## Walk Through Wallet Transactions
 
@@ -35,4 +35,4 @@ Use a test commitment and the appropriate role wallet for each action:
 
 ## Remaining Manual Check
 
-The user has confirmed wallet connect/disconnect and the health clock display. The remaining browser journey is to exercise draft creation, separate funding, activation, signed evidence submission, beneficiary claim or retry, closure, and sponsor refund. Do not use a real wallet key or mainnet funds for this walkthrough.
+The user has confirmed wallet connect/disconnect, older-page browsing, commitment `21`'s health clock, and commitment `22`'s historical timeline and attestation hash-binding status. The remaining browser journey is to exercise draft creation, separate funding, activation, signed evidence submission, beneficiary claim or retry, closure, and sponsor refund. Do not use a real wallet key or mainnet funds for this walkthrough.

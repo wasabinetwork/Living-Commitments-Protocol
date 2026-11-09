@@ -44,6 +44,7 @@ const MAX_REASON_CODES: usize = 16;
 const MAX_REASON_CODE_BYTES: usize = 64;
 const OUTLAYER_REQUEST_GAS_TGAS: u64 = 100;
 const CALLBACK_GAS_TGAS: u64 = 20;
+const CHALLENGE_COMPLETION_STORAGE_PREFIX: &[u8] = b"lcp:challenge-completion:v1:";
 
 #[derive(BorshSerialize, BorshStorageKey)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -845,6 +846,7 @@ impl Contract {
         self.challenge_by_evaluation
             .insert((commitment_id.0, evaluation_id.0), challenge_id);
         self.commitments.insert(commitment_id.0, commitment.clone());
+        reserve_challenge_completion_timestamp(challenge_id);
         self.challenges.flush();
         self.challenge_by_evaluation.flush();
         self.commitments.flush();
@@ -947,7 +949,7 @@ impl Contract {
     pub fn get_challenge(&self, challenge_id: U64) -> Option<ChallengeView> {
         self.challenges
             .get(&challenge_id.0)
-            .map(ChallengeView::from)
+            .map(|challenge| self.challenge_view(challenge))
     }
 
     pub fn get_challenge_for_evaluation(
@@ -958,7 +960,9 @@ impl Contract {
         let challenge_id = self
             .challenge_by_evaluation
             .get(&(commitment_id.0, evaluation_id.0))?;
-        self.challenges.get(&challenge_id).map(ChallengeView::from)
+        self.challenges
+            .get(&challenge_id)
+            .map(|challenge| self.challenge_view(challenge))
     }
 
     #[payable]
@@ -1647,6 +1651,9 @@ impl Contract {
             status != ChallengeStatus::Open,
             "challenge completion status cannot remain open"
         );
+        // New challenges reserve this fixed-size slot when opened. Older open challenges from
+        // before this field existed have no slot, so leave those outcomes without an exact time.
+        record_challenge_completion_timestamp(challenge.id, now_ns);
         let invalidates_evidence =
             status == ChallengeStatus::Invalidated || status == ChallengeStatus::TimedOut;
         if invalidates_evidence {
@@ -1692,6 +1699,41 @@ impl Contract {
             }),
         );
     }
+
+    fn challenge_view(&self, challenge: &Challenge) -> ChallengeView {
+        let mut view = ChallengeView::from(challenge);
+        view.completed_at_ns = read_challenge_completion_timestamp(challenge.id).map(U64);
+        view
+    }
+}
+
+fn challenge_completion_storage_key(challenge_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(CHALLENGE_COMPLETION_STORAGE_PREFIX.len() + 8);
+    key.extend_from_slice(CHALLENGE_COMPLETION_STORAGE_PREFIX);
+    key.extend_from_slice(&challenge_id.to_le_bytes());
+    key
+}
+
+fn reserve_challenge_completion_timestamp(challenge_id: u64) {
+    let key = challenge_completion_storage_key(challenge_id);
+    if !env::storage_has_key(&key) {
+        env::storage_write(&key, &0u64.to_le_bytes());
+    }
+}
+
+fn record_challenge_completion_timestamp(challenge_id: u64, completed_at_ns: u64) {
+    let key = challenge_completion_storage_key(challenge_id);
+    if env::storage_has_key(&key) {
+        env::storage_write(&key, &completed_at_ns.to_le_bytes());
+    }
+}
+
+fn read_challenge_completion_timestamp(challenge_id: u64) -> Option<u64> {
+    let key = challenge_completion_storage_key(challenge_id);
+    let value = env::storage_read(&key)?;
+    let bytes: [u8; 8] = value.as_slice().try_into().ok()?;
+    let timestamp = u64::from_le_bytes(bytes);
+    (timestamp > 0).then_some(timestamp)
 }
 
 fn parse_canonical_heartbeat(evidence: &SignedHeartbeatEvidence) -> HeartbeatPayload {
@@ -2199,6 +2241,7 @@ mod tests {
                 status: ChallengeStatus::Open,
             },
         );
+        reserve_challenge_completion_timestamp(TRANSFER_ID);
         contract.commitments.flush();
         contract.challenges.flush();
     }
@@ -2216,16 +2259,47 @@ mod tests {
     }
 
     #[test]
+    fn challenge_completion_timestamp_slot_is_reserved_and_reused() {
+        testing_env!(context(accounts(0), 0));
+        let challenge_id = TRANSFER_ID + 10;
+        let key = challenge_completion_storage_key(challenge_id);
+        assert!(!env::storage_has_key(&key));
+        let storage_before_reservation = env::storage_usage();
+
+        reserve_challenge_completion_timestamp(challenge_id);
+
+        assert!(env::storage_usage() > storage_before_reservation);
+        assert_eq!(read_challenge_completion_timestamp(challenge_id), None);
+        let storage_before_completion = env::storage_usage();
+
+        record_challenge_completion_timestamp(challenge_id, NOW_NS);
+
+        assert_eq!(env::storage_usage(), storage_before_completion);
+        assert_eq!(
+            read_challenge_completion_timestamp(challenge_id),
+            Some(NOW_NS)
+        );
+    }
+
+    #[test]
     fn upheld_challenge_preserves_evidence_and_releases_claim_block() {
         let (mut contract, _) = contract_with_pending_tranche();
         clear_pending_tranche(&mut contract);
         add_open_challenge(&mut contract);
+        assert_eq!(
+            contract
+                .get_challenge(U64(TRANSFER_ID))
+                .unwrap()
+                .completed_at_ns,
+            None
+        );
 
         testing_env!(context(accounts(4), 0));
         contract.resolve_challenge(U64(TRANSFER_ID), true);
 
         let challenge = contract.get_challenge(U64(TRANSFER_ID)).unwrap();
         assert_eq!(challenge.status, ChallengeStatus::Upheld);
+        assert_eq!(challenge.completed_at_ns, Some(U64(NOW_NS)));
         let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
         assert_eq!(commitment.active_challenge_id, None);
         assert!(commitment.last_good.is_some());
@@ -2249,6 +2323,7 @@ mod tests {
 
         let challenge = contract.get_challenge(U64(TRANSFER_ID)).unwrap();
         assert_eq!(challenge.status, ChallengeStatus::Invalidated);
+        assert_eq!(challenge.completed_at_ns, Some(U64(NOW_NS)));
         let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
         assert_eq!(commitment.active_challenge_id, None);
         assert!(commitment.last_good.is_none());
@@ -2291,6 +2366,7 @@ mod tests {
 
         let challenge = contract.get_challenge(U64(TRANSFER_ID)).unwrap();
         assert_eq!(challenge.status, ChallengeStatus::TimedOut);
+        assert_eq!(challenge.completed_at_ns, Some(U64(resolution_deadline_ns)));
         let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
         assert_eq!(commitment.active_challenge_id, None);
         assert!(commitment.last_good.is_none());

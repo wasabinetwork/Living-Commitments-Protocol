@@ -20,7 +20,7 @@ import type {
   SignedHeartbeatEvidence,
   TrancheView,
 } from "@lcp/sdk";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 
 interface WalletAction {
@@ -60,6 +60,7 @@ interface CommitmentData {
   evaluationHistory: EvaluationRecordView[];
   evaluationTimeoutNs: string | null;
   challenge: ChallengeView | null;
+  challengeHistory: ChallengeView[];
   eligibility: ClaimEligibilityView | null;
   escrow: EscrowStatusView | null;
   epoch: string | null;
@@ -167,24 +168,25 @@ export function Dashboard() {
       for (let id = latestEvaluationId; id >= firstEvaluationId && id > 0n; id -= 1n) {
         evaluationIds.push(id.toString());
       }
-      const [evaluationHistory, evaluationTimeoutNs] = await Promise.all([
+      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche] = await Promise.all([
         Promise.all(evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)))
           .then((records) => records.filter((record): record is EvaluationRecordView => record !== null)),
+        Promise.all(evaluationIds.map((evaluationId) => client.getChallengeForEvaluation(normalizedId, evaluationId)))
+          .then((challenges) => challenges.filter((challenge): challenge is ChallengeView => challenge !== null)),
         commitment.pending_evaluation_id
           ? client.getEvaluationTimeout(normalizedId, commitment.pending_evaluation_id)
           : Promise.resolve(null),
-      ]);
-
-      const [activeChallenge, tranche] = await Promise.all([
         commitment.active_challenge_id
           ? client.getChallenge(commitment.active_challenge_id)
           : Promise.resolve(null),
         epoch ? client.getTranche(normalizedId, epoch) : Promise.resolve(null),
       ]);
-      const challenge = activeChallenge ?? (evaluation
-        ? await client.getChallengeForEvaluation(normalizedId, evaluation.evaluation_id)
-        : null);
-      setData({ commitment, policy, chainTimeNs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, eligibility, escrow, epoch, tranche });
+      const allChallengeHistory = [...challengeHistory];
+      if (activeChallenge && !allChallengeHistory.some((challenge) => challenge.id === activeChallenge.id)) {
+        allChallengeHistory.push(activeChallenge);
+      }
+      const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
+      setData({ commitment, policy, chainTimeNs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
       setData(null);
@@ -888,7 +890,7 @@ export function Dashboard() {
                     <div className="digest-row"><span>EVIDENCE HASH</span><code>{data.evaluation.evidence_hash}</code></div>
                     <div className="digest-row"><span>INPUT HASH</span><code>{data.evaluation.input_hash}</code></div>
                     {data.evaluation.output_hash && <div className="digest-row"><span>OUTPUT HASH</span><code>{data.evaluation.output_hash}</code></div>}
-                    <EvaluationProofReference transactionHashHex={data.evaluation.request_transaction_hash} />
+                    <EvaluationProofReference record={data.evaluation} wasmHash={data.policy?.evaluator.wasm_sha256_hex ?? null} />
                     {data.evaluationHistory.filter((record) => record.evaluation_id !== data.evaluation?.evaluation_id).length > 0 && (
                       <div className="evaluation-history">
                         <p className="eyebrow">PREVIOUS EVALUATIONS · RECENT 9</p>
@@ -900,7 +902,7 @@ export function Dashboard() {
                                 <span className={`status-pill status-${record.status.toLowerCase()}`}>{record.status}</span>
                                 <strong>#{record.evaluation_id} · {record.verdict ?? "Pending"}</strong>
                                 <time>{formatDate(record.accepted_at_ns ?? record.observed_at_ns)}</time>
-                                <EvaluationProofReference transactionHashHex={record.request_transaction_hash} />
+                                <EvaluationProofReference record={record} wasmHash={data.policy?.evaluator.wasm_sha256_hex ?? null} />
                               </li>
                             ))}
                         </ol>
@@ -990,8 +992,10 @@ interface HealthTimelinePoint {
 }
 
 function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
-  const { commitment, policy } = data;
-  if (!commitment.activated_at_ns || !policy) return [];
+  const { commitment } = data;
+  const temporalPolicy = data.policy?.temporal;
+  if (!commitment.activated_at_ns || !temporalPolicy) return [];
+  const temporal = temporalPolicy as NonNullable<typeof temporalPolicy>;
 
   const points: HealthTimelinePoint[] = [{
     label: "Commitment activated",
@@ -999,75 +1003,221 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
     atNs: commitment.activated_at_ns,
     source: "recorded",
   }];
-  if (commitment.last_good_observed_at_ns) {
-    points.push({
-      label: "Compliant evidence observed",
-      detail: "Timestamp from the most recent accepted compliant heartbeat.",
-      atNs: commitment.last_good_observed_at_ns,
-      source: "recorded",
+  const sortedEvaluations = [...data.evaluationHistory].sort((left, right) => {
+    const leftId = BigInt(left.evaluation_id);
+    const rightId = BigInt(right.evaluation_id);
+    return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+  });
+  const earliestEvaluationId = sortedEvaluations[0] ? BigInt(sortedEvaluations[0].evaluation_id) : 1n;
+  const historyIsComplete = earliestEvaluationId === 1n;
+  const actions: Array<{
+    atNs: string;
+    order: number;
+    kind: "evaluation" | "challenge-open" | "challenge-upheld" | "challenge-invalidated";
+    record?: EvaluationRecordView;
+    challenge?: ChallengeView;
+  }> = [];
+
+  for (const record of sortedEvaluations) {
+    if (record.status === "Accepted" && record.verdict && record.accepted_at_ns) {
+      actions.push({ atNs: record.accepted_at_ns, order: 0, kind: "evaluation", record });
+    }
+  }
+  for (const challenge of data.challengeHistory) {
+    actions.push({ atNs: challenge.opened_at_ns, order: 1, kind: "challenge-open", challenge });
+    if (challenge.status === "Open") continue;
+    if (!challenge.completed_at_ns) {
+      continue;
+    }
+    actions.push({
+      atNs: challenge.completed_at_ns,
+      order: 2,
+      kind: challenge.status === "Upheld" ? "challenge-upheld" : "challenge-invalidated",
+      challenge,
     });
   }
-  if (commitment.negative_since_ns) {
-    points.push({
-      label: "Negative health period began",
-      detail: "The contract recorded a negative evaluation or invalidated evidence.",
-      atNs: commitment.negative_since_ns,
-      source: "recorded",
-    });
-    if (commitment.lifecycle === "Active") {
-      points.push({
-        label: "Grace period ends",
-        detail: policy.temporal.recovery_allowed
-          ? "Breached begins here unless qualifying evidence is accepted first."
-          : "Breach latches here because recovery is disabled by policy.",
-        atNs: (BigInt(commitment.negative_since_ns) + BigInt(policy.temporal.grace_ns)).toString(),
-        source: "derived",
-      });
+  actions.sort((left, right) => {
+    const leftNs = BigInt(left.atNs);
+    const rightNs = BigInt(right.atNs);
+    return leftNs < rightNs ? -1 : leftNs > rightNs ? 1 : left.order - right.order;
+  });
+
+  let lastGoodObservedNs: bigint | null = null;
+  let lastGoodEvaluationId: string | null = null;
+  let negativeSinceNs: bigint | null = null;
+  let breachLatched = false;
+  let stateIsKnown = historyIsComplete || sortedEvaluations.length === 0;
+  let cursorNs = BigInt(commitment.activated_at_ns);
+  const cursorActivationNs = BigInt(commitment.activated_at_ns);
+
+  function healthAt(atNs: bigint): "AwaitingEvidence" | "Healthy" | "AtRisk" | "Breached" {
+    if (breachLatched) return "Breached";
+    if (negativeSinceNs !== null) {
+      return atNs < negativeSinceNs + BigInt(temporal.grace_ns) ? "AtRisk" : "Breached";
     }
-  } else if (commitment.last_good_observed_at_ns) {
-    const evidenceExpiryNs = BigInt(commitment.last_good_observed_at_ns)
-      + BigInt(policy.temporal.evidence_ttl_ns);
-    points.push({
-      label: "Evidence freshness ends",
-      detail: "AtRisk begins if no newer compliant evidence has been accepted.",
-      atNs: evidenceExpiryNs.toString(),
-      source: "derived",
-    });
-    if (commitment.lifecycle === "Active") {
-      points.push({
-        label: "Grace period ends",
-        detail: policy.temporal.recovery_allowed
-          ? "Breached begins here unless qualifying evidence is accepted first."
-          : "Breach latches here because recovery is disabled by policy.",
-        atNs: (evidenceExpiryNs + BigInt(policy.temporal.grace_ns)).toString(),
-        source: "derived",
-      });
+    if (lastGoodObservedNs !== null) {
+      const expiryNs = lastGoodObservedNs + BigInt(temporal.evidence_ttl_ns);
+      if (atNs < expiryNs) return "Healthy";
+      return atNs < expiryNs + BigInt(temporal.grace_ns) ? "AtRisk" : "Breached";
     }
-  } else if (commitment.lifecycle === "Active") {
-    const initialDeadlineNs = BigInt(commitment.activated_at_ns)
-      + BigInt(policy.temporal.initial_window_ns);
-    points.push({
-      label: "Initial evidence deadline",
-      detail: "AtRisk begins if compliant evidence has not been accepted by this time.",
-      atNs: initialDeadlineNs.toString(),
-      source: "derived",
-    });
-    points.push({
-      label: "Grace period ends",
-      detail: policy.temporal.recovery_allowed
-        ? "Breached begins here unless qualifying evidence is accepted first."
-        : "Breach latches here because recovery is disabled by policy.",
-      atNs: (initialDeadlineNs + BigInt(policy.temporal.grace_ns)).toString(),
-      source: "derived",
-    });
+    const initialDeadlineNs = cursorActivationNs + BigInt(temporal.initial_window_ns);
+    if (atNs < initialDeadlineNs) return "AwaitingEvidence";
+    return atNs < initialDeadlineNs + BigInt(temporal.grace_ns) ? "AtRisk" : "Breached";
+  }
+
+  function addDerivedTransitions(untilNs: bigint) {
+    if (!stateIsKnown || untilNs <= cursorNs) return;
+    const makePoint = (atNs: bigint, label: string, detail: string) => {
+      if (atNs > cursorNs && atNs <= untilNs) {
+        points.push({ label, detail, atNs: atNs.toString(), source: "derived" });
+      }
+    };
+    if (negativeSinceNs !== null) {
+      makePoint(
+        negativeSinceNs + BigInt(temporal.grace_ns),
+        "Breached · grace period elapsed",
+        "The contract derives Breached once the grace period reaches its exact boundary.",
+      );
+    } else if (lastGoodObservedNs !== null) {
+      const expiryNs = lastGoodObservedNs + BigInt(temporal.evidence_ttl_ns);
+      makePoint(expiryNs, "AtRisk · evidence freshness ended", "The latest compliant observation reached its policy TTL.");
+      makePoint(expiryNs + BigInt(temporal.grace_ns), "Breached · grace period elapsed", "No qualifying recovery was accepted before the grace boundary.");
+    } else {
+      const initialDeadlineNs = cursorActivationNs + BigInt(temporal.initial_window_ns);
+      makePoint(initialDeadlineNs, "AtRisk · initial evidence window ended", "No compliant evidence had been accepted by the policy deadline.");
+      makePoint(initialDeadlineNs + BigInt(temporal.grace_ns), "Breached · grace period elapsed", "No qualifying evidence was accepted before the grace boundary.");
+    }
+  }
+
+  for (const action of actions) {
+    const atNs = BigInt(action.atNs);
+    addDerivedTransitions(atNs);
+    if (action.kind === "challenge-open" && action.challenge) {
+      points.push({
+        label: "Challenge opened · claim paused",
+        detail: `Challenge #${action.challenge.id} is recorded against evaluation #${action.challenge.evaluation_id}.`,
+        atNs: action.atNs,
+        source: "recorded",
+      });
+    } else if (action.kind === "challenge-upheld" && action.challenge) {
+      points.push({
+        label: "Challenge upheld · evidence retained",
+        detail: `The arbiter upheld evaluation #${action.challenge.evaluation_id}; its compliant evidence remains valid.`,
+        atNs: action.atNs,
+        source: "recorded",
+      });
+    } else if (action.kind === "challenge-invalidated" && action.challenge) {
+      const before = stateIsKnown ? healthAt(atNs) : null;
+      if (before === "Breached" && !temporal.recovery_allowed) breachLatched = true;
+      if (lastGoodEvaluationId === action.challenge.evaluation_id) {
+        lastGoodObservedNs = null;
+        lastGoodEvaluationId = null;
+      }
+      if (negativeSinceNs === null) negativeSinceNs = atNs;
+      stateIsKnown = true;
+      const after = healthAt(atNs);
+      points.push({
+        label: `${after} · challenge ${action.challenge.status === "TimedOut" ? "timed out" : "invalidated"}`,
+        detail: `The challenge outcome invalidated evaluation #${action.challenge.evaluation_id} as qualifying evidence.`,
+        atNs: action.atNs,
+        source: "recorded",
+      });
+    } else if (action.kind === "evaluation" && action.record) {
+      const record = action.record;
+      const before = stateIsKnown ? healthAt(atNs) : null;
+      if (record.verdict === "Compliant") {
+        if (before === "Breached" && !temporal.recovery_allowed) breachLatched = true;
+        if (temporal.recovery_allowed) negativeSinceNs = null;
+        lastGoodObservedNs = BigInt(record.observed_at_ns);
+        lastGoodEvaluationId = record.evaluation_id;
+        stateIsKnown = true;
+        const after = healthAt(atNs);
+        const recovered = (before === "AtRisk" || before === "Breached") && after === "Healthy";
+        points.push({
+          label: recovered
+            ? "Recovered · compliant evidence accepted"
+            : `${after} · compliant evidence accepted`,
+          detail: recovered
+            ? `Evaluation #${record.evaluation_id} restored Healthy status under the recovery policy.`
+            : `Evaluation #${record.evaluation_id} was accepted as compliant by the contract.`,
+          atNs: action.atNs,
+          source: "recorded",
+        });
+      } else {
+        if (negativeSinceNs === null) negativeSinceNs = atNs;
+        stateIsKnown = true;
+        const after = healthAt(atNs);
+        points.push({
+          label: `${after} · noncompliant evaluation accepted`,
+          detail: `Evaluation #${record.evaluation_id} started or continued a negative health period.`,
+          atNs: action.atNs,
+          source: "recorded",
+        });
+      }
+    }
+    cursorNs = atNs;
   }
 
   const nowNs = data.chainTimeNs ? BigInt(data.chainTimeNs) : null;
-  const hideFutureDeadlines = commitment.lifecycle === "Closed" || commitment.effective_health === "Breached";
-  const visiblePoints = hideFutureDeadlines
-    ? points.filter((point) => point.source === "recorded" || (nowNs !== null && BigInt(point.atNs) <= nowNs))
-    : points;
-  return visiblePoints.sort((left, right) => {
+  if (nowNs !== null) addDerivedTransitions(nowNs);
+  const futureDeadlines: HealthTimelinePoint[] = [];
+  const canShowFuture = commitment.lifecycle === "Active" && commitment.effective_health !== "Breached";
+  if (canShowFuture) {
+    if (commitment.negative_since_ns) {
+      futureDeadlines.push({
+        label: "Breached · grace period elapsed",
+        detail: temporal.recovery_allowed
+          ? "Breached begins here unless qualifying evidence is accepted first."
+          : "Breach becomes permanent here because policy recovery is disabled.",
+        atNs: (BigInt(commitment.negative_since_ns) + BigInt(temporal.grace_ns)).toString(),
+        source: "derived",
+      });
+    } else if (commitment.last_good_observed_at_ns) {
+      const expiryNs = BigInt(commitment.last_good_observed_at_ns) + BigInt(temporal.evidence_ttl_ns);
+      futureDeadlines.push({
+        label: "AtRisk · evidence freshness ends",
+        detail: "AtRisk begins if no newer compliant evidence has been accepted by this time.",
+        atNs: expiryNs.toString(),
+        source: "derived",
+      });
+      futureDeadlines.push({
+        label: "Breached · grace period elapsed",
+        detail: temporal.recovery_allowed
+          ? "Breached begins here unless qualifying evidence is accepted first."
+          : "Breach becomes permanent here because policy recovery is disabled.",
+        atNs: (expiryNs + BigInt(temporal.grace_ns)).toString(),
+        source: "derived",
+      });
+    } else {
+      const initialDeadlineNs = cursorActivationNs + BigInt(temporal.initial_window_ns);
+      futureDeadlines.push({
+        label: "AtRisk · initial evidence window ends",
+        detail: "AtRisk begins if compliant evidence has not been accepted by this time.",
+        atNs: initialDeadlineNs.toString(),
+        source: "derived",
+      });
+      futureDeadlines.push({
+        label: "Breached · grace period elapsed",
+        detail: temporal.recovery_allowed
+          ? "Breached begins here unless qualifying evidence is accepted first."
+          : "Breach becomes permanent here because policy recovery is disabled.",
+        atNs: (initialDeadlineNs + BigInt(temporal.grace_ns)).toString(),
+        source: "derived",
+      });
+    }
+  }
+  for (const point of futureDeadlines) {
+    if (nowNs === null || BigInt(point.atNs) > nowNs) points.push(point);
+  }
+
+  const seenPoints = new Set<string>();
+  const deduplicatedPoints = points.filter((point) => {
+    const key = `${point.label}:${point.atNs}`;
+    if (seenPoints.has(key)) return false;
+    seenPoints.add(key);
+    return true;
+  });
+  return deduplicatedPoints.sort((left, right) => {
     const leftNs = BigInt(left.atNs);
     const rightNs = BigInt(right.atNs);
     return leftNs < rightNs ? -1 : leftNs > rightNs ? 1 : 0;
@@ -1080,7 +1230,7 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
   const canHaveNextDeadline = data.commitment.lifecycle === "Active"
     && data.commitment.effective_health !== "Breached";
   const nextPointIndex = chainTimeNs && canHaveNextDeadline
-    ? points.findIndex((point) => BigInt(point.atNs) > BigInt(chainTimeNs))
+    ? points.findIndex((point) => point.source === "derived" && BigInt(point.atNs) > BigInt(chainTimeNs))
     : -1;
   const timeUntilNextPoint = chainTimeNs && nextPointIndex >= 0
     ? (BigInt(points[nextPointIndex].atNs) - BigInt(chainTimeNs)).toString()
@@ -1105,7 +1255,7 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
         <p className="empty-copy">Activation time is not available for this commitment.</p>
       ) : (
         <>
-          <p className="timeline-explainer">Recorded entries come from commitment state. Deadlines are derived from recorded timestamps and the immutable policy; finalized NEAR time shows which one is next.</p>
+          <p className="timeline-explainer">Recent health transitions come from accepted evaluations and challenge outcomes. Deadlines are derived from recorded timestamps and the immutable policy; finalized NEAR time shows the next active deadline.</p>
           <ol className="timeline-list">
             {points.map((point, index) => (
               <li className={`timeline-item ${index === nextPointIndex ? "timeline-item-next" : ""}`} key={`${point.label}-${point.atNs}`}>
@@ -1121,6 +1271,12 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
               </li>
             ))}
           </ol>
+          {data.evaluationHistory.length > 0 && BigInt(data.evaluationHistory[data.evaluationHistory.length - 1].evaluation_id) > 1n && (
+            <p className="timeline-closed-note">History is limited to the most recent {EVALUATION_HISTORY_LIMIT} evaluations, so earlier transitions may be omitted.</p>
+          )}
+          {data.challengeHistory.some((challenge) => challenge.status !== "Open" && !challenge.completed_at_ns) && (
+            <p className="timeline-closed-note">Some older challenge outcomes have no stored completion timestamp and cannot be placed precisely in the timeline.</p>
+          )}
           {data.commitment.lifecycle === "Closed" && <p className="timeline-closed-note">The commitment is closed; no future health deadlines are active.</p>}
           {data.commitment.effective_health === "Breached" && <p className="timeline-closed-note">The commitment is currently Breached; the timeline shows no future automatic health changes.</p>}
           {!data.chainTimeNs && <p className="timeline-closed-note">Refresh the commitment to compare these milestones with a finalized block time.</p>}
@@ -1830,9 +1986,89 @@ function formatDate(nanoseconds: string): string {
   });
 }
 
-function EvaluationProofReference({ transactionHashHex }: { transactionHashHex: string | null }) {
-  if (!transactionHashHex) return null;
-  const transactionHash = transactionHashToBase58(transactionHashHex);
+type AttestationLookupState =
+  | { kind: "idle" | "loading" | "missing" | "unavailable"; message: string }
+  | { kind: "found"; message: string; reportUrl: string | null };
+
+function EvaluationProofReference({
+  record,
+  wasmHash,
+}: {
+  record: EvaluationRecordView;
+  wasmHash: string | null;
+}) {
+  const transactionHash = record.request_transaction_hash
+    ? transactionHashToBase58(record.request_transaction_hash)
+    : null;
+  const [attestation, setAttestation] = useState<AttestationLookupState>({ kind: "idle", message: "" });
+
+  useEffect(() => {
+    if (!transactionHash) {
+      setAttestation({ kind: "idle", message: "" });
+      return;
+    }
+
+    const controller = new AbortController();
+    setAttestation({ kind: "loading", message: "Checking OutLayer's public attestation record…" });
+    const apiUrl = NEAR_NETWORK_ID === "testnet"
+      ? "https://testnet-api.outlayer.ai"
+      : "https://api.outlayer.ai";
+
+    fetch(`${apiUrl}/attestations/by-tx/${encodeURIComponent(transactionHash)}`, {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { accept: "application/json" },
+    }).then(async (response) => {
+      if (response.status === 404) {
+        setAttestation({ kind: "missing", message: "No public OutLayer attestation record was found for this transaction." });
+        return;
+      }
+      if (!response.ok) throw new Error(`OutLayer returned HTTP ${response.status}`);
+
+      const payload: unknown = await response.json();
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new Error("OutLayer returned an unexpected attestation response");
+      }
+      const attestationRecord = payload as Record<string, unknown>;
+      const checks = [
+        ["transaction", attestationRecord.transaction_hash, transactionHash, false],
+        ["input", attestationRecord.input_hash, record.input_hash, true],
+        ["output", attestationRecord.output_hash, record.output_hash, true],
+        ["WASM", attestationRecord.wasm_hash, wasmHash, true],
+      ] as const;
+      const mismatches: string[] = [];
+      const unavailableChecks: string[] = [];
+      for (const [name, actual, expected, isDigest] of checks) {
+        if (typeof expected !== "string" || typeof actual !== "string") {
+          unavailableChecks.push(name);
+        } else {
+          const normalize = (value: string) => isDigest
+            ? value.replace(/^0x/i, "").toLowerCase()
+            : value;
+          if (normalize(actual) !== normalize(expected)) mismatches.push(name);
+        }
+      }
+      const reportId = attestationRecord.task_id;
+      const reportUrl = (typeof reportId === "string" || typeof reportId === "number")
+        ? `https://app.outlayer.ai/attestation/${encodeURIComponent(String(reportId))}`
+        : null;
+      const message = mismatches.length > 0
+        ? `Record found, but ${mismatches.join(", ")} binding${mismatches.length === 1 ? " differs" : "s differ"}.`
+        : unavailableChecks.length > 0
+          ? `Record found; ${unavailableChecks.join(", ")} binding${unavailableChecks.length === 1 ? " could" : "s could"} not be compared.`
+          : "Record found; transaction, input, output, and WASM hashes match. The TEE quote still needs OutLayer verification.";
+      setAttestation({ kind: "found", message, reportUrl });
+    }).catch((cause: unknown) => {
+      if (controller.signal.aborted) return;
+      setAttestation({
+        kind: "unavailable",
+        message: cause instanceof Error ? "OutLayer's attestation lookup is unavailable." : "OutLayer's attestation lookup failed.",
+      });
+    });
+
+    return () => controller.abort();
+  }, [record.input_hash, record.output_hash, transactionHash, wasmHash]);
+
   if (!transactionHash) return null;
 
   return (
@@ -1841,10 +2077,15 @@ function EvaluationProofReference({ transactionHashHex }: { transactionHashHex: 
         <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${transactionHash}`} target="_blank" rel="noreferrer">
           NEAR transaction ↗
         </a>
-        <a href="https://app.outlayer.ai/docs/trust-verification" target="_blank" rel="noreferrer">
-          OutLayer verification guide ↗
-        </a>
+        {attestation.kind === "found" && attestation.reportUrl ? (
+          <a href={attestation.reportUrl} target="_blank" rel="noreferrer">Open OutLayer report ↗</a>
+        ) : (
+          <a href="https://app.outlayer.ai/docs/trust-verification" target="_blank" rel="noreferrer">OutLayer verification guide ↗</a>
+        )}
       </div>
+      <p className={`attestation-status attestation-${attestation.kind}`} role="status">
+        {attestation.kind === "idle" ? "" : attestation.message}
+      </p>
       <code>outlayer-verify tx {transactionHash} --network {NEAR_NETWORK_ID}</code>
     </div>
   );

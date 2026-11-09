@@ -499,6 +499,8 @@ pub struct Contract {
 }
 ```
 
+`ChallengeView` additionally exposes optional `completed_at_ns`. New challenges reserve a fixed-width timestamp slot in raw contract storage when opened and fill it when the arbiter resolves or timeout is applied. This keeps the persisted `Challenge` and top-level contract state layout unchanged. Views of challenges created before this timestamp was introduced return `null` rather than inventing an outcome time.
+
 ## 4.1 Storage requirements
 
 - IDs must be unique within their defined scope.
@@ -1169,7 +1171,7 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | `get_effective_health` | Current time-derived health |
 | `get_latest_evaluation` | Most recent accepted evaluation |
 | `get_evaluation` | Specific evaluation |
-| `get_challenge` | Challenge status |
+| `get_challenge` | Challenge status and optional exact completion timestamp |
 | `get_current_epoch` | Current budget epoch |
 | `can_claim_tranche` | Eligibility and blocking reason |
 | `get_escrow_status` | Funding and settlement accounting |
@@ -1348,7 +1350,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (2026-11-08):** Milestones A through E have initial source implementations: OutLayer request/callback/timeout, bounded evaluation history, challenge resolution/timeout, health-gated tranche claims, transfer reconciliation, and closure/refunds. `maintenance-heartbeat` implements canonical input parsing and Ed25519 verification. `packages/sdk` provides typed calls and views, canonical heartbeat payload construction, challenge lookup, event parsing, and NEAR JSON-RPC reads with an injected transaction sender. `apps/demo` provides testnet commitment creation, draft escrow and operations funding, activation, commitment inspection and bounded recent-commitment browsing, externally signed evaluation requests, permissionless expiry of timed-out requests, challenge opening and arbiter resolution, up to ten recent on-chain evaluation records with NEAR transaction links and OutLayer verifier commands, eligible beneficiary tranche claims, commitment closure, and sponsor refunds of residual escrow. Testnet evidence now confirms an OutLayer verdict independently verified as `PROVEN`, malformed-output rejection under the initial callback, updated JSON `null` classification, promise failure, request timeout, rejection of a breached claim, healthy recovery, payout to a distinct beneficiary with successful callback accounting, challenge timeout with evidence invalidation, closure with sponsor refund reconciliation, and bounded list pagination. See `TESTNET-E2E-STATUS.md` for transaction evidence. The browser UI, failed transfer recovery, arbiter resolution, and complete wallet-driven demo still need validation.
+**Repository status (2026-11-09):** Milestones A through E have initial implementations for OutLayer request/callback/timeout, bounded evaluation history, challenge resolution, health-gated tranche claims, transfer reconciliation, and closure/refunds. The SDK provides typed contract calls and finalized NEAR JSON-RPC reads with an injected wallet sender. The demo supports testnet commitment creation/funding/activation, externally signed evaluations, challenge actions, up to ten recent evaluations, eligible claims and retries, closure, and escrow refunds. The health timeline reconstructs recent transitions and separates recorded events from policy-derived deadlines. The OutLayer panel reports public-record availability and hash bindings while leaving quote verification to OutLayer's Verify report or standalone tool. The optional challenge completion timestamp uses a reserved raw-storage slot and does not alter persisted contract state layout. The updated contract is deployed as `4ycAFEtJryaNGUSMd76rWWxSoEAqqRHPrYtkdWZVHMk3`; state was preserved, and commitment `22` demonstrates a timestamped invalidation/recovery timeline that the user confirmed in the browser. Testnet evidence covers a PROVEN OutLayer evaluation, evaluator failure modes, breach/recovery, failed-transfer retry, arbiter outcomes, payout/refund, and pagination. The full wallet transaction journey and natural temporal cohort boundaries remain open.
 
 ## Milestone A — Pure engine
 
@@ -1465,21 +1467,21 @@ The live testnet callback decoded and accepted the `response_format: Json` verdi
 
 The callback stored the originating request transaction hash. `outlayer-verify tx` recovered that transaction's request and response and reported `PROVEN`; see `TESTNET-E2E-STATUS.md`.
 
-**OUT-003 — Execution fee behavior**
+**OUT-003 — Execution fee behavior — TESTNET CHARGES MEASURED; RESIDUAL ACCOUNTING LIMITATION REMAINS**
 
-One configured request completed. Reconcile evaluator spend, request-time storage bonds, refunds, and failure behavior across a full lifecycle.
+Finalized receipts show the configured `0.01 NEAR` OutLayer deposit on commitment `19` was charged `0.0010706002 NEAR` and refunded `0.0089293998 NEAR` to the contract. A JSON `null` result on commitment `5` charged `0.001 NEAR` and refunded `0.009 NEAR`; a one-yocto promise failure produced no OutLayer refund. LCP conservatively records each full configured deposit as authorized spend, so returned funds are not recredited to that commitment or refunded to its sponsor on close. This matches the documented v0.1 limitation, but production accounting needs a correlated refund/reconciliation path.
 
-**OUT-004 — Promise gas**
+**OUT-004 — Promise gas — TESTNET SAMPLE HEADROOM MEASURED**
 
-The configured request and callback gas completed one request. Measure headroom and minimum safe gas under varied evaluator results.
+Across accepted, JSON-null, promise-failure, and timeout receipts, the 20 Tgas LCP callback used at most `2.889554002453 Tgas` (85.55% unused in the sampled maximum). The configured 100 Tgas OutLayer request used at most `4.340434640545 Tgas` in these samples. Maximum-size output and stress-load measurements remain open; these samples do not establish production gas limits.
 
 **OUT-005 — Timeout behavior**
 
 An intentionally mismatched evaluator digest produced JSON `null` under the initial callback and was recorded as `Rejected / MALFORMED_VERDICT`. The updated callback was then verified live: JSON `null` was recorded as `Failed / MISSING_OUTLAYER_RESULT`, retaining its output hash. A second request remained pending past its deadline and later finalized as `TimedOut / OUTLAYER_TIMEOUT`. An underfunded OutLayer execution produced a genuine promise failure and was recorded as `Failed / OUTLAYER_EXECUTION_FAILED`.
 
-**NEAR-001 — Storage reserve**
+**NEAR-001 — Storage reserve — TESTNET HISTORY AND CHALLENGE TIMESTAMP SLOT MEASURED**
 
-Initial deployment, commitment, and evaluation storage were measured on testnet; the refund request's storage bond and excess-deposit refund also completed. Reconcile storage bonds across history growth and additional callbacks.
+Finalized views at block `276853449` reported storage bonds of `0.02738 NEAR` for commitment `8` (one evaluation and challenge), `0.04377 NEAR` for commitment `9` (two evaluations and challenge), `0.0286 NEAR` for closed commitment `19` (one evaluation and payout/refund), and `0.00869 NEAR` for commitment `21` (no evaluation). The updated contract is deployed in [transaction `6md8rayhN3WmiMEP8dGgUyVYUowkBciovGr2Kppdx9cF`](https://testnet.nearblocks.io/txns/6md8rayhN3WmiMEP8dGgUyVYUowkBciovGr2Kppdx9cF), and the two-evaluation/one-challenge recovery fixture `22` reports a total storage deposit of `0.04432 NEAR`. That total covers all retained commitment data, not only the timestamp slot. The contract measures storage growth when each challenge opens, and local tests confirm the reserved completion slot is overwritten without further storage growth. Pre-upgrade challenges return `completed_at_ns: null` because their completion time was not stored.
 
 **NEAR-002 — Transfer accounting — FAILED-TRANSFER RECOVERY VERIFIED (2026-11-08)**
 
@@ -1509,7 +1511,7 @@ The contract exposes a capped newest-first listing by sequential commitment ID; 
 
 **Task 012 — Finish the public demo journey — IN PROGRESS**
 
-The app supports the wallet transaction path and the testnet walkthrough is documented. The browser health clock now shows evidence age, expiration, and time to the next deadline. Remaining development gaps are a historical Healthy/AtRisk/Breached/Recovered timeline and an in-app attestation verification result; the full create/fund/activate/evidence/claim/close/refund journey still needs user-driven browser validation.
+The app now reconstructs recent historical health transitions, shows policy-derived current deadlines, and reports OutLayer public-record availability and digest bindings. The user confirmed that commitment `22` displays the invalidation/recovery sequence, upcoming freshness/grace boundaries, and matching public-record hashes. The app does not claim to verify the TEE quote; OutLayer's report and standalone verifier remain the cryptographic verification path. The testnet update and dedicated fixture are complete. The full create/fund/activate/evidence/claim/retry/close/refund journey still needs user-driven browser validation.
 
 ---
 

@@ -164,6 +164,7 @@ pub struct ChallengeView {
     pub reason_hash: String,
     pub opened_at_ns: U64,
     pub resolution_deadline_ns: U64,
+    pub completed_at_ns: Option<U64>,
     pub status: ChallengeStatus,
 }
 
@@ -177,6 +178,7 @@ impl From<&Challenge> for ChallengeView {
             reason_hash: encode_hex(&challenge.reason_hash),
             opened_at_ns: U64(challenge.opened_at_ns),
             resolution_deadline_ns: U64(challenge.resolution_deadline_ns),
+            completed_at_ns: None,
             status: challenge.status,
         }
     }

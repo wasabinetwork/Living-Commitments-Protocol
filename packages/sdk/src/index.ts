@@ -157,6 +157,7 @@ export interface ChallengeView {
   reason_hash: Sha256Hex;
   opened_at_ns: Nanoseconds;
   resolution_deadline_ns: Nanoseconds;
+  completed_at_ns: Nanoseconds | null;
   status: ChallengeStatus;
 }
 
