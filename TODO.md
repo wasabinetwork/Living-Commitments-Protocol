@@ -29,7 +29,7 @@
 - [x] Add a visible wallet disconnect action to the demo header.
 - [x] Confirm wallet disconnect succeeds in the browser (user confirmed).
 - [x] Verify the older-page control with 21 records in the browser (user confirmed).
-- [x] Confirm the browser wallet connector opens and connects successfully (user confirmed).
+- [x] Confirm Meteor connects the demo to NEAR testnet after explicitly configuring the connector network (user verified).
 - [x] Confirm testnet pagination pages as IDs `21–12`, `11–2`, and `1`.
 - [x] Deploy bounded newest-first commitment discovery; confirm exclusive cursor pagination through testnet RPC.
 - [x] Verify the recent-commitment list renders in Brave against the deployed testnet contract.
