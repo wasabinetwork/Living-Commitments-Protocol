@@ -178,6 +178,15 @@ a { color: inherit; text-decoration: none; }
 
 .record-view { padding-top: 27px; }
 .draft-setup { margin-bottom: 13px; border-color: #d8d9ce; background: #fffefa; }
+.active-operations-funding { margin-bottom: 13px; border-color: #d8d9ce; background: #fffefa; }
+.operations-funding-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 13px; }
+.operations-funding-summary > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border: 1px solid #e2e3db; background: #f8f8f3; }
+.operations-funding-summary span { color: #858a80; font: 8px var(--mono); letter-spacing: .08em; }
+.operations-funding-summary strong { color: #344b39; font: 500 15px var(--serif); }
+.operations-funding-copy { margin: 12px 0 0; color: #737c71; font-size: 10px; line-height: 1.55; }
+.operations-funding-row { display: flex; align-items: end; gap: 12px; margin-top: 13px; }
+.operations-funding-row .form-field { flex: 0 0 220px; }
+.operations-funding-row .lookup-button { min-width: 155px; }
 .draft-intro { margin: -9px 0 17px; color: #737c71; font-size: 10px; line-height: 1.55; }
 .setup-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .setup-step { min-width: 0; padding: 13px; border: 1px solid #e4e4dc; background: #fbfaf6; }
@@ -449,7 +458,9 @@ a { color: inherit; text-decoration: none; }
 :root[data-theme="dark"] .closure-balance { border-color: var(--line); background: #202b24; }
 :root[data-theme="dark"] .creation-summary,
 :root[data-theme="dark"] .recovery-toggle,
-:root[data-theme="dark"] .signing-payload { border-color: #3d5643; background: #202f24; }
+:root[data-theme="dark"] .signing-payload,
+:root[data-theme="dark"] .operations-funding-summary > div { border-color: #3d5643; background: #202f24; }
+:root[data-theme="dark"] .operations-funding-summary strong { color: var(--ink); }
 :root[data-theme="dark"] .wallet-signing-panel small { color: var(--ink-soft); }
 :root[data-theme="dark"] .form-field input,
 :root[data-theme="dark"] .form-field select,
@@ -522,6 +533,9 @@ a { color: inherit; text-decoration: none; }
   .details-grid, .bottom-grid { grid-template-columns: 1fr; }
   .setup-grid { grid-template-columns: 1fr; }
   .setup-help { min-height: 0; }
+  .operations-funding-row { align-items: stretch; flex-direction: column; }
+  .operations-funding-row .form-field { flex-basis: auto; }
+  .operations-funding-row .lookup-button { width: 100%; }
 }
 
 @media (max-width: 620px) {
@@ -562,6 +576,7 @@ a { color: inherit; text-decoration: none; }
   .creation-form { padding: 16px 13px 18px; }
   .creation-intro { align-items: flex-start; flex-direction: column; gap: 7px; }
   .form-grid, .form-grid-3 { grid-template-columns: 1fr; }
+  .operations-funding-summary { grid-template-columns: 1fr; }
   .recovery-toggle { grid-column: auto; }
   .creation-summary { align-items: flex-start; flex-direction: column; gap: 6px; }
   .creation-summary > small { margin-left: 0; }

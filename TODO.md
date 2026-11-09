@@ -2,7 +2,7 @@
 
 ## In progress
 
-- [ ] **P0 Firefox wallet journey:** commitment `24` has completed create, fund, activate, and wallet-signed evaluation in Firefox. Continue manual checks through an eligible claim, retry after a failed transfer, close, and refund. Choose a suitable live fixture for those remaining actions.
+- [ ] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, and evaluation in Firefox, then became `Breached` after evidence freshness and grace elapsed. The active sponsor operations top-up UI is in place. Check that recovery is allowed, add `0.01 NEAR` operations, submit compliant evaluation `2`, then continue through eligible claim, close, and sponsor refund. Retry UI remains a separate fixture check.
 - [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
 
 ## Complete
@@ -10,6 +10,7 @@
 - [x] **NEP-413 testnet fixture:** commitment `24` is active and evaluation `1` was accepted/compliant in [7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc](https://testnet.nearblocks.io/txns/7WDJecZtyZx9rJvPUraDTvcAznRDAof4UjYEkT3y1Lnc). OutLayer executed the R2-mirrored evaluator; it verified the wallet signature and artifact-digest format. FastFS remains unavailable, but the R2 fallback completed the test.
 - [x] Add browser-side SHA-256 calculation for selected evidence files (maximum 25 MiB); the file stays local, and changing/removing it invalidates the prepared payload and signature. The user confirmed the Firefox flow.
 - [x] Raise the evaluation storage-deposit default to `0.05 NEAR` after the first `0.01 NEAR` request trapped on storage underpayment; the retry succeeded, and contract excess is refunded.
+- [x] Add an active-commitment operations funding control for the configured sponsor; the contract already permits operations top-ups before closure, and fresh evaluations can be necessary for recovery.
 - [x] **Live temporal boundaries:** commitment `21` transitioned from `AwaitingEvidence` to `AtRisk` at 00:21:58 AST and from `AtRisk` to `Breached` at 01:21:59 AST in finalized samples. The monitor removed its own cron entry after breach; exact timestamp boundaries are also covered by deterministic tests.
 - [x] Implement NEP-413 wallet evidence across the contract, evaluator, SDK, and demo while preserving v1 evidence behavior; build checks passed.
 - [x] Deploy the v2-capable contract to testnet and verify the new code hash plus existing commitment state. [Deployment transaction](https://testnet.nearblocks.io/txns/HPhtBQgHYgCzJBobDxx3MiGkCzP9WnW6v6MGpKWzeTjc)

@@ -72,7 +72,7 @@ interface CommitmentData {
   tranche: TrancheView | null;
 }
 
-type DraftAction = "escrow" | "operations" | "activate";
+type SetupAction = "escrow" | "operations" | "activate";
 type ChallengeAction = "open" | "uphold" | "invalidate" | "expire";
 type ClosureAction = "close" | "refund";
 
@@ -109,7 +109,7 @@ export function Dashboard() {
   const [expiringEvaluation, setExpiringEvaluation] = useState(false);
   const [challengeAction, setChallengeAction] = useState<ChallengeAction | null>(null);
   const [closureAction, setClosureAction] = useState<ClosureAction | null>(null);
-  const [draftAction, setDraftAction] = useState<DraftAction | null>(null);
+  const [setupAction, setSetupAction] = useState<SetupAction | null>(null);
   const [escrowFundingNear, setEscrowFundingNear] = useState("0.03");
   const [operationsFundingNear, setOperationsFundingNear] = useState("0.01");
   const [activationStorageNear, setActivationStorageNear] = useState(DEFAULT_STORAGE_DEPOSIT);
@@ -342,11 +342,11 @@ export function Dashboard() {
     }
   }
 
-  async function submitDraftAction(action: DraftAction) {
+  async function submitSetupAction(action: SetupAction) {
     if (!data) return;
     const connector = connectorRef.current;
     if (!connector || !accountId) {
-      setError("Connect a testnet wallet before changing this draft.");
+      setError("Connect a testnet wallet before funding or activating this commitment.");
       return;
     }
     const { commitment, policy } = data;
@@ -363,7 +363,7 @@ export function Dashboard() {
       return;
     }
 
-    setDraftAction(action);
+    setSetupAction(action);
     setError(null);
     setActionMessage(null);
     try {
@@ -394,9 +394,9 @@ export function Dashboard() {
           : `${action === "escrow" ? "Escrow" : "Evaluator operations"} funding transaction submitted.`
         : `The ${action === "activate" ? "activation" : "funding"} transaction returned successfully. Reload commitment #${commitment.id} to verify its current state.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The draft action could not be completed.");
+      setError(cause instanceof Error ? cause.message : "The commitment funding or activation action could not be completed.");
     } finally {
-      setDraftAction(null);
+      setSetupAction(null);
     }
   }
 
@@ -857,11 +857,21 @@ export function Dashboard() {
                 escrowFundingNear={escrowFundingNear}
                 operationsFundingNear={operationsFundingNear}
                 activationStorageNear={activationStorageNear}
-                busyAction={draftAction}
+                busyAction={setupAction}
                 onEscrowFundingChange={setEscrowFundingNear}
                 onOperationsFundingChange={setOperationsFundingNear}
                 onActivationStorageChange={setActivationStorageNear}
-                onAction={submitDraftAction}
+                onAction={submitSetupAction}
+              />
+            )}
+            {data.commitment.lifecycle === "Active" && data.policy && (
+              <ActiveOperationsFundingCard
+                data={data}
+                accountId={accountId}
+                operationsFundingNear={operationsFundingNear}
+                busyAction={setupAction}
+                onOperationsFundingChange={setOperationsFundingNear}
+                onFund={submitSetupAction}
               />
             )}
             {data.commitment.lifecycle === "Active" && data.policy && (
@@ -1775,6 +1785,60 @@ function ClosureControlsCard({
   );
 }
 
+function ActiveOperationsFundingCard({
+  data,
+  accountId,
+  operationsFundingNear,
+  busyAction,
+  onOperationsFundingChange,
+  onFund,
+}: {
+  data: CommitmentData;
+  accountId: string | null;
+  operationsFundingNear: string;
+  busyAction: SetupAction | null;
+  onOperationsFundingChange: (value: string) => void;
+  onFund: (action: SetupAction) => Promise<void>;
+}) {
+  const { commitment, policy } = data;
+  if (!policy) return null;
+
+  const operationsFunded = BigInt(commitment.operations_funded_yocto);
+  const operationsSpent = BigInt(commitment.operations_authorized_spend_yocto);
+  const operationsAvailable = operationsFunded - operationsSpent;
+  const executionDeposit = BigInt(policy.evaluator.execution_deposit_yocto);
+  const sponsorCanFund = accountId === policy.budget.sponsor;
+  const busy = busyAction !== null;
+
+  return (
+    <section className="content-card active-operations-funding">
+      <div className="card-heading">
+        <div><p className="eyebrow">ACTIVE · EVALUATOR OPERATIONS</p><h3>Keep evaluations funded</h3></div>
+        <span className="card-index">SPONSOR FUNDED</span>
+      </div>
+      <div className="operations-funding-summary">
+        <div><span>AVAILABLE</span><strong>{formatNear(operationsAvailable)} NEAR</strong></div>
+        <div><span>PER EVALUATION</span><strong>{formatNear(executionDeposit)} NEAR</strong></div>
+      </div>
+      <p className="operations-funding-copy">
+        {operationsAvailable >= executionDeposit
+          ? "Operations funds are separate from escrow. The sponsor can add more while this commitment is active."
+          : `Another evaluation needs at least ${formatNear(executionDeposit - operationsAvailable)} NEAR in additional operations funds. If policy allows recovery, fresh compliant evidence can restore a breached commitment.`}
+      </p>
+      {sponsorCanFund ? (
+        <div className="operations-funding-row">
+          <FormField label="Add evaluator operations · NEAR">
+            <input inputMode="decimal" value={operationsFundingNear} onChange={(event) => onOperationsFundingChange(event.target.value)} />
+          </FormField>
+          <button className="lookup-button" type="button" onClick={() => void onFund("operations")} disabled={busy}>
+            {busyAction === "operations" ? <><span className="spinner" />Funding operations</> : <>Add funds <span aria-hidden="true">↗</span></>}
+          </button>
+        </div>
+      ) : <p className="form-wallet-hint">Connect sponsor wallet {policy.budget.sponsor} to add evaluator operations.</p>}
+    </section>
+  );
+}
+
 function DraftSetupCard({
   data,
   accountId,
@@ -1792,11 +1856,11 @@ function DraftSetupCard({
   escrowFundingNear: string;
   operationsFundingNear: string;
   activationStorageNear: string;
-  busyAction: DraftAction | null;
+  busyAction: SetupAction | null;
   onEscrowFundingChange: (value: string) => void;
   onOperationsFundingChange: (value: string) => void;
   onActivationStorageChange: (value: string) => void;
-  onAction: (action: DraftAction) => Promise<void>;
+  onAction: (action: SetupAction) => Promise<void>;
 }) {
   const { commitment, policy } = data;
   if (!policy) return null;
