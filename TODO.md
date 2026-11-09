@@ -2,7 +2,7 @@
 
 ## In progress
 
-- [ ] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, and evaluation in Firefox, then became `Breached` after evidence freshness and grace elapsed. The active sponsor operations top-up UI is in place. Check that recovery is allowed, add `0.01 NEAR` operations, submit compliant evaluation `2`, then continue through eligible claim, close, and sponsor refund. Retry UI remains a separate fixture check.
+- [ ] **P0 Firefox wallet journey:** commitment `24` completed create, fund, activate, evaluation, and artifact hashing in Firefox. It later became `Breached`; the user now confirms fresh compliant evidence restored `Healthy`. The challenge window is still open. After it expires, continue through eligible claim, close, and sponsor refund. Retry UI remains a separate fixture check.
 - [ ] **Public demo deployment:** deploy the finalized Next.js demo to Coolify at `lcp.gama.works`; keep the source repository private until the NEAR Hackathon entry is ready, and move evaluator artifacts to a custom Cloudflare domain before production use.
 
 ## Complete
