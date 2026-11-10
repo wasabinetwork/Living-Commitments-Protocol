@@ -10,7 +10,11 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@hpke/core": "1.9.0"
   },
   "devDependencies": {
     "typescript": "6.0.3"

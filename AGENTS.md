@@ -2,11 +2,11 @@
 
 ## Project Structure & Module Organization
 
-The product requirements document (`Living_Commitments_Protocol_[LCP]-PRD.md`), engineering baseline (`Living Commitments Protocol - Technical Specification.md`), and NEAR hackathon instructions (`NEAR-HACKATHON-SKILL.md`) live at the root. The NEAR contract is in `contracts/lcp-core`; the OutLayer WASI evaluator is in `evaluators/maintenance-heartbeat`; the TypeScript client and NEAR JSON-RPC view transport are in `packages/sdk`; the Next.js LCP Console is in `apps/console`; the Cloudflare D1 event indexer is in `services/event-indexer`.
+The product requirements document (`Living_Commitments_Protocol_[LCP]-PRD.md`), engineering baseline (`Living Commitments Protocol - Technical Specification.md`), and NEAR hackathon instructions (`NEAR-HACKATHON-SKILL.md`) live at the root. NEAR contracts are in `contracts/lcp-core` and `contracts/bounded-payout-adapter`; OutLayer evaluators are in `evaluators/maintenance-heartbeat` and `evaluators/service-availability`; the TypeScript client is in `packages/sdk`; the Next.js LCP Console is in `apps/console`; and Cloudflare Workers are in `services/event-indexer` and `services/reviewer-access`.
 
 ## Build, Test, and Development Commands
 
-Build the Rust workspace with `cargo build -p lcp-core -p maintenance-heartbeat`. Build the evaluator WASM with `cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release`. Install JavaScript workspaces with `npm install`, then build the SDK with `npm --prefix packages/sdk run build`. Run the LCP Console with `npm run dev --workspace=@lcp/console` after configuring `apps/console/.env.local` from `.env.example`. Run the indexer locally with `npm run dev:indexer`; apply D1 migrations with Wrangler. Run contract unit tests with `cargo test -p lcp-core`; keep examples reproducible against NEAR testnet.
+Build the Rust workspace with `cargo build --workspace`; build the evaluator WASM with `cargo build -p maintenance-heartbeat -p service-availability-evaluator --target wasm32-wasip2 --release` and the contracts with `--target wasm32-unknown-unknown --release`. Install JavaScript workspaces with `npm install`, then build the SDK with `npm run build:sdk`. Run the LCP Console with `npm run dev --workspace=@lcp/console` after configuring `apps/console/.env.local` from `.env.example`. Run Workers locally with `npm run dev:indexer` or `npm run dev:reviewer-access`; apply D1 migrations with Wrangler. Run the Rust suite with `cargo test --workspace` and evaluator probe checks with `node --test evaluators/service-availability/test/probe.test.mjs`. Keep examples reproducible against NEAR testnet.
 
 ## Coding Style & Naming Conventions
 
@@ -14,7 +14,7 @@ For Markdown, use descriptive ATX headings, short paragraphs, and fenced code bl
 
 ## Testing Guidelines
 
-Add tests alongside each implementation module. Contract tests use NEAR's mock runtime and deterministic timestamps to cover state transitions, callback handling, and escrow accounting. Cover temporal boundaries, stale or mismatched evaluation results, authorization, recovery, and escrow accounting as specified in the technical baseline. Run `cargo test -p lcp-core` for contract changes; report checks run and any that could not be run.
+Add tests alongside each implementation module. Contract tests use NEAR's mock runtime and deterministic timestamps to cover state transitions, callback handling, authorization, and escrow accounting. Include exact temporal boundaries, stale or mismatched evaluation results, amendment consent, adapter limits, and transfer recovery. Worker and SDK changes should cover signed request binding, privacy retention, encryption, replay protection, and error handling. Report checks run and any that could not be run.
 
 ## Commit & Pull Request Guidelines
 

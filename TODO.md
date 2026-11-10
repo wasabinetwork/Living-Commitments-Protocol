@@ -7,7 +7,7 @@
 
 ## P0 public-readiness checklist
 
-- [x] Add contract callback, refund, claim-gating, timestamp, recovery-policy, temporal, and evaluator CLI regression coverage; `cargo test --workspace` currently runs 37 tests.
+- [x] Add contract callback, refund, claim-gating, timestamp, recovery-policy, temporal, and evaluator regression coverage; see `TESTING.md` for the consolidated Rust and JavaScript commands.
 - [x] Add reproducible Rust/WASM build instructions, test coverage map, and manual testnet/browser steps in `TESTING.md` and `CONSOLE-GUIDE.md`.
 - [x] Reconcile testnet lifecycle and Firefox results in `TESTNET-E2E-STATUS.md` and the technical specification.
 - [x] Apply Apache-2.0 to project-authored material and explicitly exclude the upstream `NEAR-HACKATHON-SKILL.md` snapshot.
@@ -21,7 +21,8 @@ The production Git-integrated Pages project and `lcp.gama.works` domain are sepa
 - [x] Record the staged evidence, privacy, amendment, and authority architecture in [P1-ARCHITECTURE.md](P1-ARCHITECTURE.md).
 - [x] Define evidence confidence as visible provenance, freshness, and source agreement rather than a probability of truth.
 - [x] Add the signed-probe offline pilot kit and manually exercise compliant and corroboration-threshold outcomes with locally generated reports; this validates serialization and aggregation only, not operator independence or a live commitment.
-- [ ] Run the community-service availability pilot with at least two independent operators; the signed-probe tool, canonical request assembler, evaluator prototype, and offline runbook exist, but no independent live pilot or contract integration has been completed.
+- [x] Check `https://lcp.gama.works/health` from two operator locations on different IP addresses; both returned HTTP 200 on 2026-11-09. This confirms reachability only, not signed probes or source independence.
+- [ ] Run the community-service availability pilot with signed reports from at least two operators. The v3 contract and evaluator are deployed to testnet, and the local test/build suite passes; signed cross-network reports, callback outcomes, and live lifecycle validation remain.
 - [x] Implement a Cloudflare Worker that indexes finalized LCP events in D1, exposes paginated read-only history, and optionally displays that history in the LCP Console; contract reads remain authoritative.
 - [x] Create the testnet D1 database and deploy the Worker at `https://lcp-event-indexer.wasabinetwork.workers.dev` with a once-per-minute Cron Trigger.
 - [x] Verify preview-origin CORS preflight against the deployed Worker.
@@ -29,13 +30,18 @@ The production Git-integrated Pages project and `lcp.gama.works` domain are sepa
 - [x] Confirm the LCP Console archive card in Firefox reports the indexer's catching-up status and explains that older events may not be available yet.
 - [ ] Continue the historical backfill to the current head and verify multi-page commitment event paging once enough history is indexed.
 - [x] Draft the private reviewer request, maintainer consent, encrypted artifact, scoped-access, and revocation model; validate per-commitment OutLayer secret permissions before implementation.
-- [ ] Integrate a v3 source roster and multiple independent evidence sources while preserving v1/v2 commitments.
-- [ ] Integrate configurable quorum and corroboration thresholds on-chain; the standalone evaluator exercises these rules off-chain only.
-- [ ] Expose source agreement coverage in commitment views and the LCP Console without presenting it as a probability of truth.
-- [ ] Add consent-based policy amendments that preserve prior policy digests and record affected-party approvals.
-- [ ] Add a contract-gated authority consequence adapter that operates only for accounts that explicitly grant it authority.
+- [x] Implement the local private reviewer workflow: NEP-413 requests, maintainer approval/rejection, salted digest receipts, browser AES-GCM/HPKE encryption, local encrypted key backup, signed downloads, revocation, scheduled ciphertext expiry/orphan cleanup, and bounded 90-day retention for terminal metadata. Automated local checks pass; independent security review, Cloudflare provisioning, and deployment remain.
+- [x] Integrate a v3 source roster and multiple independent evidence sources while preserving v1/v2 commitments; v3 uses separate raw-storage policy and summary keys.
+- [x] Integrate configurable quorum and corroboration thresholds on-chain and validate callback summary arithmetic.
+- [x] Expose source agreement coverage in commitment views and the LCP Console as source agreement, not a probability of truth.
+- [x] Implement consent-based v3 source-policy amendments with affected-party approvals, future activation, cancellation/expiry, event history, policy-digest preservation, and a restarted evidence clock. Automated local checks pass; testnet deployment and lifecycle validation remain.
+- [x] Implement a bounded payout authority grant and sample NEAR adapter. Grants are limited to a named adapter and fixed recipient, require full tranche eligibility, and do not touch LCP escrow or user wallet keys. The adapter pool manager can withdraw only available pool funds with asynchronous failure reconciliation. Automated local checks pass; testnet deployment and settlement validation remain.
+- [x] Run the consolidated local validation pass: Rust workspace (56 tests), SDK/Worker/service-probe suites (22 tests), Worker typechecks and dry runs, Console production build, and Rust/WASM builds.
+- [ ] Provision private Cloudflare D1/R2 resources, configure the production origin, and deploy reviewer access after security review.
+- [ ] Verify OutLayer per-commitment secret provisioning/retrieval before implementing private evaluator input. The reviewer file is a private supplement, not evaluator input or a proven match to the public evaluation hash.
+- [ ] Deploy and validate amendments and the adapter on dedicated testnet commitments after the community-service pilot and contract upgrade review.
 
-For the indexer, use a finalized NEAR block feed and persist each block's LCP events with its cursor atomically; the LCP Console must continue reading health and settlement from the contract. The [FastNear NEAR Data Server](https://github.com/fastnear/neardata-server) provides finalized blocks and receipt outcomes without requiring a custom node. The [NEAR indexer client](https://github.com/near/near-indexer-client) remains an alternative when operating a dedicated nearcore node; public RPC endpoints do not expose its indexer method. NEAR's developer guide lists QueryAPI as deprecated. Keep the community-service pilot limited to public endpoint signals; do not pass confidential artifacts into multi-source evaluation until the reviewer privacy boundary is implemented. Leave on-chain policy and consequence authority unchanged until versioning and consent models are specified.
+For the indexer, use a finalized NEAR block feed and persist each block's LCP events with its cursor atomically; the LCP Console must continue reading health and settlement from the contract. The [FastNear NEAR Data Server](https://github.com/fastnear/neardata-server) provides finalized blocks and receipt outcomes without requiring a custom node. The [NEAR indexer client](https://github.com/near/near-indexer-client) remains an alternative when operating a dedicated nearcore node; public RPC endpoints do not expose its indexer method. NEAR's developer guide lists QueryAPI as deprecated. Keep the community-service pilot limited to public endpoint signals. The new reviewer service supports post-evaluation private review, but confidential evaluator inputs remain blocked until the TEE retrieval path is implemented and reviewed.
 
 ## Complete
 
@@ -79,8 +85,8 @@ For the indexer, use a finalized NEAR block feed and persist each block's LCP ev
 - [x] Select a recent commitment in Brave and verify its detail panel loads contract state and available actions.
 - [x] Bind the SDK JSON-RPC `fetch` implementation to `globalThis` so browser views execute correctly.
 
-## Deferred implementation: private evidence access
+## Reviewer-access boundaries
 
-- Keep email and chat handles out of the Console and do not create a public upload inbox. The proposed reviewer-request, maintainer-consent, encrypted-storage, and scoped-access model is in [P1-ARCHITECTURE.md](P1-ARCHITECTURE.md).
-- Current v1/v2 evaluation arguments and signed payloads are public on NEAR; only the selected artifact file stays in the browser. The current digest does not prove artifact contents or provide private sharing.
-- Before implementation, verify the per-commitment OutLayer secret grant and retrieval path, add salted commitments for private artifacts, and preserve v1/v2 behavior. Revocation can stop future access but cannot erase copies already received.
+- Keep email and chat handles out of the Console and do not create a public upload inbox. Reviewer identity is a NEAR account, with signed requests and maintainer consent.
+- The private salted digest is separate from the public on-chain evaluation hash; the grant does not prove that a file was the evaluator's input. Keep confidential files out of evaluator inputs until the OutLayer secret retrieval path is implemented.
+- Revocation blocks future downloads and removes stored ciphertext after deployment; it cannot erase copies already received. See [P1-ARCHITECTURE.md](P1-ARCHITECTURE.md) and [services/reviewer-access/README.md](services/reviewer-access/README.md).

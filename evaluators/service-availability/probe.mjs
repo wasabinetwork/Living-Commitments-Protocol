@@ -124,7 +124,7 @@ async function assembleRequest(metadataPath, policyPath, reportPaths) {
   const reports = await Promise.all(reportPaths.map(async (path) =>
     canonicalizeReport(JSON.parse(await readFile(path, "utf8")))
   ));
-  const metadataFields = ["contract_id", "commitment_id", "evaluation_id", "policy_hash", "requested_at_ns"];
+  const metadataFields = ["contract_id", "commitment_id", "evaluation_id", "policy_hash", "requested_at_ns", "subject"];
   requireOnlyKeys(metadata, metadataFields, "request metadata");
   if (!metadata || metadataFields.some((field) => typeof metadata[field] !== "string" || !metadata[field])) {
     throw new Error("Metadata file must provide " + metadataFields.join(", ") + ".");
@@ -133,7 +133,10 @@ async function assembleRequest(metadataPath, policyPath, reportPaths) {
       || !/^(0|[1-9][0-9]*)$/.test(metadata.commitment_id)
       || !/^(0|[1-9][0-9]*)$/.test(metadata.evaluation_id)
       || !/^(0|[1-9][0-9]*)$/.test(metadata.requested_at_ns)
-      || !/^[0-9a-f]{64}$/.test(metadata.policy_hash)) {
+      || !/^[0-9a-f]{64}$/.test(metadata.policy_hash)
+      || typeof metadata.subject !== "string"
+      || metadata.subject.length === 0
+      || metadata.subject.length > 128) {
     throw new Error("Metadata contains a noncanonical account ID, decimal value, or policy hash.");
   }
   const request = {
@@ -143,7 +146,9 @@ async function assembleRequest(metadataPath, policyPath, reportPaths) {
     evaluation_id: metadata.evaluation_id,
     policy_version: 3,
     policy_hash: metadata.policy_hash,
+    evidence_hash: createHash("sha256").update(JSON.stringify(reports)).digest("hex"),
     requested_at_ns: metadata.requested_at_ns,
+    subject: metadata.subject,
     source_policy_hash: createHash("sha256").update(policyCanonicalJson).digest("hex"),
     source_policy: policy,
     reports,
@@ -169,6 +174,8 @@ function canonicalizePolicy(input) {
   if (!/^[0-9a-f]{64}$/.test(input.target_id)
       || typeof input.max_source_lag_ns !== "string"
       || !/^[1-9][0-9]*$/.test(input.max_source_lag_ns)
+      || input.max_source_lag_ns.length > 20
+      || (input.max_source_lag_ns.length === 20 && input.max_source_lag_ns > "18446744073709551615")
       || !Number.isSafeInteger(input.expected_status_min)
       || !Number.isSafeInteger(input.expected_status_max)
       || input.expected_status_min < 100

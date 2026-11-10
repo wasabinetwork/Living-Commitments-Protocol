@@ -1,60 +1,61 @@
-# Service Availability Evaluator (P1 prototype)
+# Service Availability Evaluator
 
-This standalone evaluator is the first domain-specific P1 slice: a community service is checked by independent HTTPS probe operators, and signed reports are aggregated under a threshold policy. It is not connected to `lcp-core` yet. Existing v1 and v2 commitments continue to use `maintenance-heartbeat` unchanged.
+This evaluator aggregates signed HTTPS observations from independent operators for an LCP policy v3 commitment. The v3 contract and evaluator are deployed to NEAR testnet, and the Console/SDK integration is implemented locally. The live v3 commitment lifecycle has not yet been exercised; existing v1 and v2 commitments continue to use the maintenance-heartbeat evaluator. The evaluator artifact is available at https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/da867cdca199f0c663e848a33cc0962bdeb84ca98553c45b5e11583ee6aee627.wasm with SHA-256 `da867cdca199f0c663e848a33cc0962bdeb84ca98553c45b5e11583ee6aee627`.
 
-## Rule model
+## Policy and outcomes
 
-The request contains a source policy and signed probe reports. The policy pins each `source_id`, `operator_id`, and Ed25519 public key; it requires 2–8 sources sorted by unique source ID, distinct operator IDs, and distinct keys. `minimum_agreeing_sources` must be a strict majority. `minimum_corroboration_bps` adds an independent agreement floor from 0 to 10000; for three sources, a 7000-bps floor means all three must agree. The source-policy digest is SHA-256 over compact JSON in the Rust struct field order. `probe.mjs policy-hash <policy.json>` emits that digest and canonical serialization.
+The immutable policy pins 2–8 source IDs, distinct operator IDs, and distinct Ed25519 public keys. It also fixes the salted target fingerprint, maximum report age, acceptable HTTP status range, latency limit, strict-majority quorum, and minimum corroboration in basis points. The Console accepts this policy as JSON when creating a v3 commitment.
 
-Each report signs compact JSON for `lcp.service_availability.report.v1` with Ed25519. It binds the contract, commitment, evaluation, full policy digest, source-policy digest, source/operator IDs, salted target fingerprint, observation time, and probe result. The target fingerprint is `SHA256(salt_bytes || canonical_HTTPS_URL_UTF8)`; the URL and salt stay with the operators and are not put in the report.
+Each report signs canonical compact JSON for `lcp.service_availability.report.v1`. It binds the contract, commitment, evaluation, v3 policy digest, source-policy digest, source and operator IDs, target fingerprint, observation time, and result. The target fingerprint is `SHA-256(salt_bytes || canonical_HTTPS_URL_UTF8)`; the endpoint URL and salt stay with the operators.
 
-- A verified HTTP response is **up** when TLS validates, its status is in the configured range, and latency is within the limit. Other valid HTTP responses and timeouts are **down**.
-- A signed `source_error` abstains. Invalid, stale, replayed, or wrongly bound reports do not count; duplicate reports for one source reject the bundle.
-- Both the strict-majority count and corroboration floor must be met for a positive or negative quorum. A split or insufficient quorum returns `Inconclusive`.
-- `corroboration_bps` is the maximum agreeing vote count divided by configured operators. It measures source agreement, not the probability that the service is truthful.
+- A TLS-verified response in the configured status range and latency limit votes **up**. Other valid HTTP responses, timeouts, and TLS errors vote **down**. Signed source-side errors abstain.
+- Invalid, stale, or wrongly bound reports do not count. Duplicate source reports reject the bundle.
+- `Compliant` and `NonCompliant` require both the configured majority and coverage threshold. Otherwise the result is `Inconclusive`.
+- Coverage is the largest agreeing vote divided by the configured roster. It measures source agreement, not probability of truth. An inconclusive result is stored but changes neither health clock nor claim eligibility.
 
-## Probe operator commands
+The contract stores the v3 source policy and accepted source-count summary in prefixed raw storage keys, counts them toward storage bonds, and checks callback bindings and quorum arithmetic. Existing persisted commitment and policy Borsh layouts remain unchanged; `Inconclusive` is appended after the existing verdict variants.
 
-Generate a source key once; keep the private PEM on the operator's machine and place only its public key in policy:
+## Operator setup
+
+Generate a key independently for each operator. Keep the private PEM on that operator's machine and share only the public key with the policy author:
 
 ```sh
 node evaluators/service-availability/probe.mjs keygen ./probe-private.pem
-```
-
-Create a salted target fingerprint and calculate a policy digest with:
-
-```sh
 node evaluators/service-availability/probe.mjs target-id https://status.example.org/health <64-hex-salt>
 node evaluators/service-availability/probe.mjs policy-hash ./source-policy.json
 ```
 
-Prepare a `lcp.service_availability.probe_config.v1` JSON file with the policy-bound IDs and hashes, HTTPS target URL, salt, pinned public key, and timeout. Then produce the signed report:
+The policy author pins the resulting public keys and shares each operator a private `lcp.service_availability.probe_config.v1` containing the authorized HTTPS URL, salt, source IDs, commitment/evaluation IDs, policy digests, and the operator's public key. Then each operator runs:
 
 ```sh
-node evaluators/service-availability/probe.mjs probe ./probe-config.json ./probe-private.pem
+node evaluators/service-availability/probe.mjs probe ./probe-config.json ./probe-private.pem > ./probe-report.json
 ```
 
-The probe tool rejects IP literals, private/reserved IPv4 results, non-HTTPS URLs, embedded credentials, nonstandard ports, and redirects. It pins the validated public IPv4 address for the request. DNS timeouts and ordinary source-side DNS/network errors are signed as abstentions; an HTTPS request timeout or TLS failure is a `down` observation. The operator should still run probes only for targets allowed by the policy and under their control or authorization.
+The probe rejects IP literals, private/reserved IPv4 results, non-HTTPS URLs, credentials, nonstandard ports, and redirects. Keep operator clocks synchronized; the evaluator checks report age against the request's NEAR block timestamp. Only probe endpoints the policy author is authorized to check.
 
-## Offline pilot procedure
+## Console pilot flow
 
-This procedure exercises signed, multi-source service evidence against an authorized public health endpoint. It does not create or update a NEAR commitment: policy_hash is an external commitment digest in the eventual v3 flow. For an isolated evaluator exercise, use the source-policy digest as policy_hash and label the run as local-only.
+1. In **Create commitment**, choose **Independent service probes · v3**, pin the maintainer NEAR key, and enter a policy with sorted source IDs and distinct operators/keys. Generate `target_id` with the command above. Set the temporal maximum source lag at least as long as the source policy report-age limit.
+2. Create, fund, and activate the commitment. For each evaluation, read the current commitment ID, `next_evaluation_id`, and policy digest from the Console. Generate reports bound to those exact values and the source-policy digest.
+3. Paste the reports into **Submit signed service probes**. The Console checks their policy and evaluation bindings; the evaluator verifies signatures and aggregation. NEAR receives the report JSON publicly, so never include private URLs, salts, credentials, response bodies, or personal data.
+4. The Console displays verdict, valid/up/down/abstain counts, and coverage. The contract remains authoritative for health and payouts.
 
-1. The service maintainer chooses an HTTPS health endpoint they control, generates a private 32-byte salt, and computes its target_id. Share the URL and salt privately with each operator. Do not publish the salt.
-2. Each operator runs keygen on their own machine, then sends only their public key, operator ID, and source ID to the policy author. Use distinct operators on distinct networks for a meaningful independence check.
-3. The policy author creates the source policy, sorts sources by source_id, and runs policy-hash. Each operator receives a private probe config containing the URL, salt, policy hashes, IDs, and their own public key. The operator keeps the private key local and runs probe, saving the output as one report JSON file.
-4. Create metadata with the contract account, commitment and evaluation IDs, policy hash, and request timestamp. In the offline exercise, set policy_hash to the source_policy_hash printed by policy-hash; for a contract-backed request, the v3 contract must supply its actual digest and block timestamp.
-5. Assemble the canonical request and evaluate it:
+The selected pilot endpoint, `https://lcp.gama.works/health`, returned HTTP 200 from two operator locations on different IP addresses on 2026-11-09. This confirms reachability from those locations only; signed report aggregation and a contract-backed testnet evaluation are still pending.
 
-       node evaluators/service-availability/probe.mjs assemble-request ./metadata.json ./source-policy.json ./reports/probe-a.json ./reports/probe-b.json ./reports/probe-c.json > ./request.json
-       cargo run -p service-availability-evaluator < ./request.json
+## Offline evaluator checks
 
-   The result should be Compliant when the up quorum and coverage floor are met, NonCompliant when the down quorum and floor are met, and Inconclusive otherwise.
+`probe.mjs assemble-request` builds the same canonical evaluator request shape for local runs. The metadata JSON must include `contract_id`, `commitment_id`, `evaluation_id`, `policy_hash`, `requested_at_ns`, and `subject`; use the actual commitment digest and request timestamp for a contract-backed exercise. Evaluate with a valid base58 encoding of a 32-byte transaction hash:
 
-For a useful pilot record the operator networks, endpoint owner, policy digest, report timestamps, outcome, and reason code. Do not claim independent validation when keys or probes were controlled from one operator or network. The contract v3 path, Console display, and testnet lifecycle are still pending.
+```sh
+node evaluators/service-availability/probe.mjs assemble-request ./metadata.json ./source-policy.json ./reports/probe-a.json ./reports/probe-b.json > ./request.json
+NEAR_TRANSACTION_HASH=<32-byte-base58-tx-hash> cargo run -p service-availability-evaluator < ./request.json
+```
 
-## Build and integration boundary
+Run regression coverage and builds with:
 
-Build the prototype with `cargo build -p service-availability-evaluator`. The evaluator accepts canonical compact JSON up to 32 KiB on stdin, allows one final line feed for shell piping, and emits a bounded JSON verdict. Contract integration requires the separately designed v3 schema to store and hash this source policy, accept `Inconclusive` without refreshing evidence, and preserve old serialized commitment state. Do not deploy this prototype as a commitment evaluator until that contract path exists.
-
-Reports in this pilot describe a public service. The current NEAR evaluation flow publishes request arguments, so do not put confidential URLs, response bodies, credentials, or private user data in these reports.
+```sh
+cargo test -p lcp-core -p service-availability-evaluator
+node --test evaluators/service-availability/test/probe.test.mjs
+npm --prefix packages/sdk run build
+npm --workspace=@lcp/console run build
+```

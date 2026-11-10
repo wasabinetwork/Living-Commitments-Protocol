@@ -1117,6 +1117,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lcp-bounded-payout-adapter"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
+]
+
+[[package]]
 name = "lcp-core"
 version = "0.1.0"
 dependencies = [
@@ -2070,6 +2077,7 @@ dependencies = [
 name = "service-availability-evaluator"
 version = "0.1.0"
 dependencies = [
+ "bs58 0.5.1",
  "ed25519-dalek",
  "serde",
  "serde_json",

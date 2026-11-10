@@ -1,0 +1,44 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "lcp-reviewer-access",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-10",
+  "workers_dev": true,
+  "upload_source_maps": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+      "persist": true
+    }
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "r2_buckets": [
+    {
+      "binding": "PRIVATE_ARTIFACTS",
+      "bucket_name": "lcp-reviewer-private-artifacts"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lcp-reviewer-access",
+      "database_id": "00000000-0000-4000-8000-000000000001",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "NETWORK": "testnet",
+    "CONTRACT_ID": "livingcommitmentsprotocol.testnet",
+    "NEAR_RPC_URL": "https://test.rpc.fastnear.com",
+    "APP_ORIGINS": "http://localhost:3000,https://preview.lcp-preview.pages.dev,https://lcp.gama.works",
+    "ACCESS_RECIPIENT": "lcp.gama.works/reviewer-access",
+    "MAX_ARTIFACT_BYTES": "8388608",
+    "MAX_REQUESTS_PER_HOUR": "30",
+    "MAX_DOWNLOADS_PER_GRANT": "20"
+  }
+}

@@ -38,6 +38,24 @@ Use a test commitment and the appropriate role wallet for each action:
 4. Connect the configured beneficiary wallet and claim only when the contract reports an eligible tranche. If a transfer fails and the callback restores eligibility, retry from the same action card.
 5. Resolve pending evaluations, challenges, and transfers before closing. Connect an authorized party to close, then connect the sponsor wallet to request any residual escrow refund.
 
+## Staged P1 Workflows
+
+These local workflows are implemented and their consolidated automated checks pass, but they have not been deployed or exercised on testnet. Rerun the checks in [TESTING.md](TESTING.md) after code changes and before using fresh testnet commitments. The currently deployed testnet contract includes v3 source policies; amendment and authority methods require a later contract update. Reviewer access remains disabled until its private Worker resources are provisioned and deployed.
+
+### Independent service probes
+
+Use a dedicated v3 commitment and at least two operators on separate networks. Generate a private key on each operator machine, pin only the public keys in the sorted source roster, and give each operator the exact commitment ID, next evaluation ID, policy digests, authorized HTTPS URL, and its private salt in a private configuration file. Each operator runs `node evaluators/service-availability/probe.mjs probe ./probe-config.json ./probe-private.pem > ./probe-report.json`. Paste the resulting signed reports into **Submit signed service probes**. The reports are public NEAR transaction arguments; include no response body, credentials, private URL, salt, or personal data. The Console shows the configured denominator, valid/up/down/abstain counts, and agreement coverage. Follow [the evaluator guide](evaluators/service-availability/README.md) for generating the target fingerprint and testing quorum outcomes.
+
+### Private reviewer access
+
+After provisioning the private Worker, D1 database, and private R2 bucket as described in [the service guide](services/reviewer-access/README.md), set `NEXT_PUBLIC_LCP_REVIEWER_ACCESS_URL` and run the Console on its configured HTTPS origin. The maintainer creates a salted digest receipt from a local file and shares the digest and receipt with the intended reviewer over a private channel. The reviewer creates a local key, keeps the downloaded encrypted backup and passphrase, and signs an access request with their NEAR wallet. The maintainer loads the pending request, selects the matching file and receipt, and signs **Encrypt file and approve**. The reviewer signs the download and decrypts the artifact in their browser; the UI verifies the salted digest. The maintainer can then revoke the grant. Revocation prevents future downloads and purges stored ciphertext, but cannot recall a decrypted copy. This workflow shares supplemental evidence; it does not prove the file was used by the evaluator.
+
+### Policy amendment and authority adapter
+
+On a dedicated v3 commitment with the updated contract deployed, prepare the new source-policy JSON and propose an amendment at least one hour in the future. Each distinct sponsor, maintainer, beneficiary, and arbiter connects their own wallet and approves. Once the activation time and all approvals are satisfied, activate the amendment; confirm the policy digest changes and the evidence clock restarts. Also exercise proposer cancellation and permissionless expiry on separate proposals.
+
+For the adapter, deploy an instance with the LCP contract, fixed resource recipient, and pool-manager account, then prefund its pool. A sponsor or beneficiary can create a bounded grant with an adapter account, recipient, per-action and cumulative limits, and expiry. Only execute after NEAR reports the normal claim eligibility as true. Verify that an empty pool or failed recipient transfer restores the adapter's available pool, that the LCP grant allowance remains consumed on a failed adapter call, and that the pool manager can withdraw only available funds after pending transfers settle.
+
 ## Verified Browser Journeys
 
 These flows were manually verified in Firefox on NEAR testnet:

@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 const REQUEST_SCHEMA: &str = "lcp.service_availability.request.v1";
 const POLICY_SCHEMA: &str = "lcp.service_availability.policy.v1";
 const REPORT_SCHEMA: &str = "lcp.service_availability.report.v1";
-const VERDICT_SCHEMA: &str = "lcp.service_availability.verdict.v1";
+const VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v3";
 const MAX_INPUT_BYTES: usize = 32_768;
 const MAX_SOURCES: usize = 8;
 
@@ -23,7 +23,9 @@ struct EvaluationRequest {
     evaluation_id: String,
     policy_version: u32,
     policy_hash: String,
+    evidence_hash: String,
     requested_at_ns: String,
+    subject: String,
     source_policy_hash: String,
     source_policy: SourcePolicy,
     reports: Vec<SignedProbeReport>,
@@ -95,6 +97,7 @@ enum ProbeObservation {
 #[derive(Serialize)]
 struct EvaluationVerdict {
     schema: &'static str,
+    request_transaction_hash: String,
     contract_id: String,
     commitment_id: String,
     evaluation_id: String,
@@ -102,7 +105,8 @@ struct EvaluationVerdict {
     policy_hash: String,
     source_policy_hash: String,
     input_hash: String,
-    outcome: &'static str,
+    evidence_hash: String,
+    verdict: &'static str,
     observed_at_ns: String,
     source_counts: SourceCounts,
     corroboration_bps: u16,
@@ -148,7 +152,12 @@ fn evaluate_stdin() -> Result<String, &'static str> {
     if input.len() > MAX_INPUT_BYTES {
         return Err("input exceeds the 32768-byte limit");
     }
+    let request_transaction_hash = std::env::var("NEAR_TRANSACTION_HASH")
+        .map_err(|_| "OutLayer did not provide the originating NEAR transaction hash")?;
+    evaluate_input(&input, &request_transaction_hash)
+}
 
+fn evaluate_input(input: &[u8], request_transaction_hash: &str) -> Result<String, &'static str> {
     let input_text = std::str::from_utf8(&input).map_err(|_| "input is not UTF-8")?;
     let request: EvaluationRequest =
         serde_json::from_str(input_text).map_err(|_| "request JSON is malformed")?;
@@ -166,6 +175,19 @@ fn evaluate_stdin() -> Result<String, &'static str> {
     let source_policy_hash = sha256_hex(&source_policy_bytes);
     if source_policy_hash != request.source_policy_hash {
         return Err("source policy digest does not match its canonical bytes");
+    }
+    let reports_bytes =
+        serde_json::to_vec(&request.reports).map_err(|_| "probe report serialization failed")?;
+    if !lower_hex_32(&request.evidence_hash) || sha256_hex(&reports_bytes) != request.evidence_hash
+    {
+        return Err("evidence digest does not match the canonical report bundle");
+    }
+
+    let transaction_hash = bs58::decode(request_transaction_hash)
+        .into_vec()
+        .map_err(|_| "OutLayer provided an invalid NEAR transaction hash")?;
+    if transaction_hash.len() != 32 {
+        return Err("OutLayer provided an invalid NEAR transaction hash");
     }
 
     let mut votes = Vec::with_capacity(request.reports.len());
@@ -197,24 +219,15 @@ fn evaluate_stdin() -> Result<String, &'static str> {
     let mut abstained = 0u8;
     let mut up_times = Vec::with_capacity(votes.len());
     let mut down_times = Vec::with_capacity(votes.len());
-    let mut any_observation_time: Option<u64> = None;
     for vote in &votes {
         match vote {
             Vote::Up(observed_at_ns) => {
                 up = up.saturating_add(1);
                 up_times.push(*observed_at_ns);
-                any_observation_time = Some(
-                    any_observation_time
-                        .map_or(*observed_at_ns, |oldest| oldest.min(*observed_at_ns)),
-                );
             }
             Vote::Down(observed_at_ns) => {
                 down = down.saturating_add(1);
                 down_times.push(*observed_at_ns);
-                any_observation_time = Some(
-                    any_observation_time
-                        .map_or(*observed_at_ns, |oldest| oldest.min(*observed_at_ns)),
-                );
             }
             Vote::Abstain => abstained = abstained.saturating_add(1),
         }
@@ -246,13 +259,14 @@ fn evaluate_stdin() -> Result<String, &'static str> {
     let observed_at_ns = match outcome {
         "Compliant" => up_times.into_iter().min(),
         "NonCompliant" => down_times.into_iter().min(),
-        _ => any_observation_time,
+        _ => None,
     }
     .unwrap_or_else(|| request.requested_at_ns.parse().unwrap_or_default());
 
     let input_hash = sha256_hex(&input);
     let verdict = EvaluationVerdict {
         schema: VERDICT_SCHEMA,
+        request_transaction_hash: request_transaction_hash.to_string(),
         contract_id: request.contract_id,
         commitment_id: request.commitment_id,
         evaluation_id: request.evaluation_id,
@@ -260,7 +274,8 @@ fn evaluate_stdin() -> Result<String, &'static str> {
         policy_hash: request.policy_hash,
         source_policy_hash,
         input_hash,
-        outcome,
+        evidence_hash: request.evidence_hash,
+        verdict: outcome,
         observed_at_ns: observed_at_ns.to_string(),
         source_counts: SourceCounts {
             configured: request.source_policy.sources.len() as u8,
@@ -504,4 +519,160 @@ fn sha256_hex(bytes: &[u8]) -> String {
         let _ = write!(output, "{byte:02x}");
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn lower_hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn request_with_votes(up_votes: &[bool]) -> Vec<u8> {
+        request_with_threshold(up_votes, 6_000)
+    }
+
+    fn request_with_threshold(up_votes: &[bool], threshold_bps: u16) -> Vec<u8> {
+        let signing_keys = [
+            SigningKey::from_bytes(&[1; 32]),
+            SigningKey::from_bytes(&[2; 32]),
+            SigningKey::from_bytes(&[3; 32]),
+        ];
+        let sources = signing_keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| SourceDefinition {
+                source_id: format!("source-{index}"),
+                operator_id: format!("operator-{index}"),
+                public_key_hex: lower_hex(&key.verifying_key().to_bytes()),
+            })
+            .collect();
+        let source_policy = SourcePolicy {
+            schema: POLICY_SCHEMA.to_string(),
+            target_id: "a".repeat(64),
+            max_source_lag_ns: "1000".to_string(),
+            expected_status_min: 200,
+            expected_status_max: 299,
+            max_latency_ms: 500,
+            minimum_agreeing_sources: 2,
+            minimum_corroboration_bps: threshold_bps,
+            sources,
+        };
+        let source_policy_hash = sha256_hex(&serde_json::to_vec(&source_policy).unwrap());
+        let reports = up_votes
+            .iter()
+            .enumerate()
+            .map(|(index, is_up)| {
+                let payload = ProbeReportPayload {
+                    schema: REPORT_SCHEMA.to_string(),
+                    contract_id: "lcp.testnet".to_string(),
+                    commitment_id: "7".to_string(),
+                    evaluation_id: "3".to_string(),
+                    policy_version: 3,
+                    policy_hash: "b".repeat(64),
+                    source_policy_hash: source_policy_hash.clone(),
+                    source_id: format!("source-{index}"),
+                    operator_id: format!("operator-{index}"),
+                    target_id: "a".repeat(64),
+                    observed_at_ns: "199".to_string(),
+                    observation: if *is_up {
+                        ProbeObservation::HttpResponse {
+                            status_code: 200,
+                            latency_ms: 40,
+                            tls_verified: true,
+                        }
+                    } else {
+                        ProbeObservation::HttpResponse {
+                            status_code: 503,
+                            latency_ms: 40,
+                            tls_verified: true,
+                        }
+                    },
+                };
+                let signature = signing_keys[index].sign(&serde_json::to_vec(&payload).unwrap());
+                SignedProbeReport {
+                    payload,
+                    signature_hex: lower_hex(&signature.to_bytes()),
+                }
+            })
+            .collect::<Vec<_>>();
+        let evidence_hash = sha256_hex(&serde_json::to_vec(&reports).unwrap());
+        serde_json::to_vec(&EvaluationRequest {
+            schema: REQUEST_SCHEMA.to_string(),
+            contract_id: "lcp.testnet".to_string(),
+            commitment_id: "7".to_string(),
+            evaluation_id: "3".to_string(),
+            policy_version: 3,
+            policy_hash: "b".repeat(64),
+            evidence_hash,
+            requested_at_ns: "200".to_string(),
+            subject: "Service availability test".to_string(),
+            source_policy_hash,
+            source_policy,
+            reports,
+        })
+        .unwrap()
+    }
+
+    fn evaluate(up_votes: &[bool]) -> serde_json::Value {
+        let transaction_hash = bs58::encode([9; 32]).into_string();
+        let bytes = evaluate_input(&request_with_votes(up_votes), &transaction_hash).unwrap();
+        serde_json::from_str(&bytes).unwrap()
+    }
+
+    #[test]
+    fn two_independent_up_reports_produce_v3_compliant_verdict() {
+        let output = evaluate(&[true, true]);
+        assert_eq!(output["schema"], VERDICT_SCHEMA);
+        assert_eq!(output["verdict"], "Compliant");
+        assert_eq!(
+            output["request_transaction_hash"],
+            bs58::encode([9; 32]).into_string()
+        );
+        assert_eq!(output["source_counts"]["configured"], 3);
+        assert_eq!(output["source_counts"]["up"], 2);
+        assert_eq!(output["corroboration_bps"], 6_666);
+        assert_eq!(output["observed_at_ns"], "199");
+    }
+
+    #[test]
+    fn split_reports_are_inconclusive_and_use_the_request_time() {
+        let output = evaluate(&[true, false]);
+        assert_eq!(output["verdict"], "Inconclusive");
+        assert_eq!(output["source_counts"]["up"], 1);
+        assert_eq!(output["source_counts"]["down"], 1);
+        assert_eq!(output["observed_at_ns"], "200");
+    }
+
+    #[test]
+    fn down_quorum_is_noncompliant_and_stronger_coverage_floor_can_still_abstain() {
+        let output = evaluate(&[false, false]);
+        assert_eq!(output["verdict"], "NonCompliant");
+        assert_eq!(output["source_counts"]["down"], 2);
+
+        let transaction_hash = bs58::encode([9; 32]).into_string();
+        let bytes = evaluate_input(
+            &request_with_threshold(&[true, true], 7_000),
+            &transaction_hash,
+        )
+        .unwrap();
+        let output: serde_json::Value = serde_json::from_str(&bytes).unwrap();
+        assert_eq!(output["verdict"], "Inconclusive");
+        assert_eq!(output["reason_codes"][0], "CORROBORATION_THRESHOLD_NOT_MET");
+    }
+
+    #[test]
+    fn evidence_hash_must_bind_the_canonical_report_bundle() {
+        let mut request: EvaluationRequest =
+            serde_json::from_slice(&request_with_votes(&[true, true])).unwrap();
+        request.evidence_hash = "0".repeat(64);
+        let bytes = serde_json::to_vec(&request).unwrap();
+        let transaction_hash = bs58::encode([9; 32]).into_string();
+        assert_eq!(
+            evaluate_input(&bytes, &transaction_hash),
+            Err("evidence digest does not match the canonical report bundle")
+        );
+    }
 }

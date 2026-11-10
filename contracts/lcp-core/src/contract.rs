@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 #[cfg(feature = "testnet-transfer-failure-fixture")]
 use near_sdk::AccountId;
 use near_sdk::{
-    borsh::BorshSerialize,
+    borsh::{BorshDeserialize, BorshSerialize},
     env,
     json_types::{U128, U64},
     near, require,
@@ -14,15 +14,19 @@ use near_sdk::{
 use crate::{
     effective_health,
     models::{
-        encode_hex, BudgetPolicy, BudgetPolicyArgs, Challenge, ChallengeStatus, ChallengeView,
-        ClaimEligibilityView, Commitment, CommitmentId, CommitmentPolicy, CommitmentPolicyArgs,
-        CommitmentPolicyView, CommitmentSummaryView, CommitmentView, CreateCommitmentArgs,
+        encode_hex, BoundedPayoutAuthorityGrantView, BudgetPolicy, BudgetPolicyArgs, Challenge,
+        ChallengeStatus, ChallengeView, ClaimEligibilityView, Commitment, CommitmentId,
+        CommitmentPolicy, CommitmentPolicyArgs, CommitmentPolicyView, CommitmentSummaryView,
+        CommitmentView, CreateCommitmentArgs, CreateServiceAvailabilityCommitmentArgs,
         EscrowStatusView, EvaluationInput, EvaluationRecord, EvaluationRecordView,
         EvaluationRequest, EvaluationStatus, EvaluationVerdictOutput, EvaluatorPolicy,
         EvaluatorPolicyArgs, EvidencePolicy, GoodObservation, HeartbeatPayload, PendingTransfer,
-        SignedHeartbeatEvidence, Tranche, TrancheStatus, TrancheView, TransferKind, Verdict,
+        PolicyAmendmentStatus, ServiceAvailabilityEvaluationInput,
+        ServiceAvailabilityEvaluationSummary, ServiceAvailabilityPolicy,
+        ServiceAvailabilitySourceCounts, ServicePolicyAmendmentView, SignedHeartbeatEvidence,
+        SignedProbeReport, Tranche, TrancheStatus, TrancheView, TransferKind, Verdict,
         EVALUATION_REQUEST_SCHEMA, EVALUATION_VERDICT_SCHEMA, HEARTBEAT_EVIDENCE_TYPE,
-        HEARTBEAT_SCHEMA,
+        HEARTBEAT_SCHEMA, SERVICE_AVAILABILITY_REQUEST_SCHEMA, SERVICE_AVAILABILITY_VERDICT_SCHEMA,
     },
     temporal::{validate_temporal_policy, Health, Lifecycle, TemporalPolicy},
 };
@@ -40,12 +44,38 @@ const MAX_PROGRAM_EPOCHS: u32 = 64;
 const MAX_EVIDENCE_BYTES: usize = 4_096;
 const MAX_CHALLENGE_REASON_BYTES: usize = 1_024;
 const MAX_EVALUATOR_INPUT_BYTES: usize = 8_192;
+const MAX_SERVICE_EVALUATOR_INPUT_BYTES: usize = 32_768;
 const MAX_EVALUATOR_OUTPUT_BYTES: usize = 4_096;
 const MAX_REASON_CODES: usize = 16;
 const MAX_REASON_CODE_BYTES: usize = 64;
 const OUTLAYER_REQUEST_GAS_TGAS: u64 = 100;
 const CALLBACK_GAS_TGAS: u64 = 20;
 const CHALLENGE_COMPLETION_STORAGE_PREFIX: &[u8] = b"lcp:challenge-completion:v1:";
+const SERVICE_POLICY_STORAGE_PREFIX: &[u8] = b"lcp:service-policy:v3:";
+const SERVICE_SUMMARY_STORAGE_PREFIX: &[u8] = b"lcp:service-summary:v3:";
+const SERVICE_AMENDMENT_STORAGE_PREFIX: &[u8] = b"lcp:service-amendment:v1:";
+const SERVICE_AMENDMENT_LATEST_PREFIX: &[u8] = b"lcp:service-amendment-latest:v1:";
+const SERVICE_POLICY_HEALTH_START_PREFIX: &[u8] = b"lcp:service-policy-health-start:v1:";
+const AUTHORITY_GRANT_PREFIX: &[u8] = b"lcp:authority-grant:v1:";
+const AUTHORITY_GRANT_LATEST_PREFIX: &[u8] = b"lcp:authority-grant-latest:v1:";
+const MAX_AMENDMENT_LIFETIME_NS: u64 = 30 * 24 * 60 * 60 * 1_000_000_000;
+const AUTHORITY_ADAPTER_GAS_TGAS: u64 = 25;
+
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+struct AuthorityGrantState {
+    granting_account: near_sdk::AccountId,
+    adapter_account: near_sdk::AccountId,
+    resource_account: near_sdk::AccountId,
+    per_action_limit_yocto: u128,
+    cumulative_limit_yocto: u128,
+    authorized_yocto: u128,
+    expires_at_ns: u64,
+    last_action_nonce: u64,
+    /// u64::MAX means that no action has been authorized yet.
+    last_authorized_epoch: u64,
+    revoked: bool,
+}
 
 #[derive(BorshSerialize, BorshStorageKey)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -102,84 +132,650 @@ impl Contract {
 
     #[payable]
     pub fn create_commitment(&mut self, args: CreateCommitmentArgs) -> U64 {
-        require!(
-            !args.subject.trim().is_empty()
-                && args.subject.len() <= MAX_SUBJECT_BYTES
-                && is_printable_ascii(&args.subject),
-            "subject must be non-empty printable ASCII and at most 128 bytes"
-        );
-
-        let creator = env::predecessor_account_id();
         let policy = build_policy(args.policy);
-        let policy_version = policy.version;
         let policy_bytes = near_sdk::borsh::to_vec(&policy)
             .unwrap_or_else(|_| env::panic_str("failed to serialize commitment policy"));
         let policy_hash = env::sha256_array(&policy_bytes);
-        let id = self
-            .next_commitment_id
-            .checked_add(1)
-            .unwrap_or_else(|| env::panic_str("commitment ID overflow"));
-
-        let mut commitment = Commitment {
-            id,
-            subject: args.subject,
-            creator: creator.clone(),
-            maintainer: args.maintainer,
-            arbiter: args.arbiter,
-            lifecycle: Lifecycle::Draft,
+        self.insert_commitment(
+            args.subject,
+            args.maintainer,
+            args.arbiter,
             policy,
             policy_hash,
-            activated_at_ns: None,
-            last_good: None::<GoodObservation>,
-            last_observed_at_ns: None,
-            negative_since_ns: None,
-            pending_evaluation_id: None,
-            active_challenge_id: None,
-            breach_latched: false,
-            escrow_funded_yocto: 0,
-            escrow_paid_yocto: 0,
-            escrow_refunded_yocto: 0,
-            escrow_pending_yocto: 0,
-            operations_funded_yocto: 0,
-            operations_authorized_spend_yocto: 0,
-            storage_deposit_yocto: 0,
-            next_evaluation_id: 1,
-            challenge_count: 0,
-            pending_transfer_count: 0,
-        };
+            None,
+        )
+    }
 
+    #[payable]
+    pub fn create_service_availability_commitment(
+        &mut self,
+        args: CreateServiceAvailabilityCommitmentArgs,
+    ) -> U64 {
+        validate_service_availability_policy(&args.service_availability);
+        require!(
+            args.policy.evidence.signature_scheme.as_deref() == Some("near_nep413"),
+            "service availability commitments require the near_nep413 maintainer policy"
+        );
+        let mut policy = build_policy(args.policy);
+        require!(
+            policy.version == 2,
+            "service availability requires a NEP-413 policy"
+        );
+        policy.version = 3;
+        require!(
+            parse_decimal_u64(&args.service_availability.max_source_lag_ns)
+                .is_some_and(|lag| lag <= policy.temporal.max_source_lag_ns
+                    && lag <= policy.temporal.evidence_ttl_ns),
+            "service source lag must fit the commitment temporal bounds"
+        );
+        let policy_hash = service_availability_policy_digest(&policy, &args.service_availability);
+        self.insert_commitment(
+            args.subject,
+            args.maintainer,
+            args.arbiter,
+            policy,
+            policy_hash,
+            Some(args.service_availability),
+        )
+    }
+
+    #[payable]
+    pub fn propose_service_policy_amendment(
+        &mut self,
+        commitment_id: U64,
+        new_policy: ServiceAvailabilityPolicy,
+        effective_at_ns: U64,
+        expires_at_ns: U64,
+        proposal_nonce_hex: String,
+    ) -> String {
+        let mut commitment = self.load_commitment(commitment_id.0);
+        let caller = env::predecessor_account_id();
+        let now_ns = env::block_timestamp();
+        require!(
+            commitment.policy.version == 3,
+            "only v3 service policies can be amended"
+        );
+        require!(
+            commitment.lifecycle != Lifecycle::Closed,
+            "closed commitments cannot be amended"
+        );
+        require!(
+            commitment.pending_evaluation_id.is_none(),
+            "resolve the pending evaluation before proposing an amendment"
+        );
+        require!(
+            commitment.active_challenge_id.is_none(),
+            "resolve the active challenge before proposing an amendment"
+        );
+        validate_service_availability_policy(&new_policy);
+        require!(
+            parse_decimal_u64(&new_policy.max_source_lag_ns)
+                .is_some_and(|lag| lag <= commitment.policy.temporal.max_source_lag_ns
+                    && lag <= commitment.policy.temporal.evidence_ttl_ns),
+            "source lag must fit the commitment temporal bounds"
+        );
+        require!(
+            is_lower_hex_32(&proposal_nonce_hex),
+            "amendment nonce must be 32-byte lowercase hexadecimal"
+        );
+        let effective_at = effective_at_ns.0;
+        let expires_at = expires_at_ns.0;
+        require!(
+            effective_at > now_ns,
+            "amendment activation must be in the future"
+        );
+        require!(
+            expires_at > effective_at,
+            "amendment expiry must follow its activation boundary"
+        );
+        require!(
+            expires_at <= now_ns.saturating_add(MAX_AMENDMENT_LIFETIME_NS),
+            "amendment expiry cannot be more than 30 days away"
+        );
+
+        let latest_id = read_latest_service_amendment_id(commitment_id.0);
+        if let Some(previous_id) = latest_id {
+            if let Some(previous) = read_service_amendment(commitment_id.0, &previous_id) {
+                require!(
+                    previous.status != PolicyAmendmentStatus::Proposed,
+                    "resolve or expire the current policy amendment before proposing another"
+                );
+            }
+        }
+        let old_policy = read_service_policy(commitment_id.0)
+            .unwrap_or_else(|| env::panic_str("service availability policy is missing"));
+        let old_policy_hash = service_availability_policy_digest(&commitment.policy, &old_policy);
+        require!(
+            old_policy_hash == commitment.policy_hash,
+            "active service policy digest does not match commitment state"
+        );
+        let new_policy_hash = service_availability_policy_digest(&commitment.policy, &new_policy);
+        require!(
+            new_policy_hash != old_policy_hash,
+            "amendment must change the active policy digest"
+        );
+
+        let mut required_approvers = Vec::with_capacity(4);
+        for account in [
+            commitment.policy.budget.sponsor.clone(),
+            commitment.maintainer.clone(),
+            commitment.policy.budget.beneficiary.clone(),
+            commitment.arbiter.clone(),
+        ] {
+            if !required_approvers.contains(&account) {
+                required_approvers.push(account);
+            }
+        }
+        require!(
+            required_approvers.contains(&caller),
+            "only an affected commitment party may propose an amendment"
+        );
+
+        let amendment = ServicePolicyAmendmentView {
+            schema: "lcp.service-policy-amendment.v1".to_string(),
+            amendment_id: proposal_nonce_hex.clone(),
+            commitment_id,
+            proposed_by: caller.clone(),
+            old_policy_hash: encode_hex(&old_policy_hash),
+            new_policy_hash: encode_hex(&new_policy_hash),
+            new_policy,
+            proposed_at_ns: U64(now_ns),
+            effective_at_ns,
+            activated_at_ns: None,
+            expires_at_ns,
+            required_approvers,
+            approved_by: Vec::new(),
+            status: PolicyAmendmentStatus::Proposed,
+        };
         let storage_before = env::storage_usage();
-        self.commitments.insert(id, commitment.clone());
-        // LookupMap buffers mutations until flushed. Flush before measuring the storage bond.
-        self.commitments.flush();
-        let storage_bytes = env::storage_usage()
-            .checked_sub(storage_before)
-            .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
-        let required_storage_bond = storage_cost(storage_bytes);
+        write_service_amendment(&amendment);
+        write_latest_service_amendment_id(commitment_id.0, &proposal_nonce_hex);
+        let required_storage_bond =
+            storage_cost(env::storage_usage().saturating_sub(storage_before));
         let attached = env::attached_deposit().as_yoctonear();
         require!(
             attached >= required_storage_bond,
-            format!("attach at least {required_storage_bond} yoctoNEAR for storage")
+            format!("attach at least {required_storage_bond} yoctoNEAR for amendment storage")
         );
-
-        commitment.storage_deposit_yocto = required_storage_bond;
-        self.commitments.insert(id, commitment);
+        commitment.storage_deposit_yocto = commitment
+            .storage_deposit_yocto
+            .checked_add(required_storage_bond)
+            .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
+        self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        self.next_commitment_id = id;
-
-        refund_excess(creator.clone(), attached, required_storage_bond);
-
+        refund_excess(caller.clone(), attached, required_storage_bond);
         emit_event(
-            "commitment_created",
+            "service_policy_amendment_proposed",
             json!({
-                "commitment_id": id.to_string(),
-                "creator": creator,
-                "policy_version": policy_version,
-                "policy_hash": encode_hex(&policy_hash),
+                "commitment_id": commitment_id.0.to_string(),
+                "amendment_id": proposal_nonce_hex,
+                "proposed_by": caller,
+                "old_policy_hash": encode_hex(&old_policy_hash),
+                "new_policy_hash": encode_hex(&new_policy_hash),
+                "effective_at_ns": effective_at.to_string(),
+                "expires_at_ns": expires_at.to_string(),
+                "required_approvers": amendment.required_approvers,
             }),
         );
+        proposal_nonce_hex
+    }
 
-        U64(id)
+    #[payable]
+    pub fn approve_service_policy_amendment(
+        &mut self,
+        commitment_id: U64,
+        amendment_id: String,
+    ) -> bool {
+        let mut commitment = self.load_commitment(commitment_id.0);
+        let caller = env::predecessor_account_id();
+        let now_ns = env::block_timestamp();
+        let mut amendment = read_service_amendment(commitment_id.0, &amendment_id)
+            .unwrap_or_else(|| env::panic_str("service policy amendment not found"));
+        require!(
+            amendment.status == PolicyAmendmentStatus::Proposed,
+            "amendment is no longer pending"
+        );
+        require!(
+            now_ns < amendment.expires_at_ns.0,
+            "amendment has expired; expire it before proposing another"
+        );
+        require!(
+            amendment.required_approvers.contains(&caller),
+            "caller is not an affected party named by this amendment"
+        );
+        require!(
+            !amendment.approved_by.contains(&caller),
+            "caller has already approved this amendment"
+        );
+        amendment.approved_by.push(caller.clone());
+
+        let all_approved = amendment
+            .required_approvers
+            .iter()
+            .all(|account| amendment.approved_by.contains(account));
+        let activate = all_approved && now_ns >= amendment.effective_at_ns.0;
+        let storage_before = env::storage_usage();
+        if activate {
+            require!(
+                commitment.lifecycle != Lifecycle::Closed,
+                "closed commitments cannot activate an amendment"
+            );
+            require!(
+                commitment.pending_evaluation_id.is_none(),
+                "resolve the pending evaluation before activating an amendment"
+            );
+            require!(
+                commitment.active_challenge_id.is_none(),
+                "resolve the active challenge before activating an amendment"
+            );
+            let expected_old_hash = decode_32_byte_hex(&amendment.old_policy_hash)
+                .unwrap_or_else(|| env::panic_str("amendment policy digest is malformed"));
+            require!(
+                commitment.policy_hash == expected_old_hash,
+                "amendment no longer matches the active policy"
+            );
+            amendment.status = PolicyAmendmentStatus::Activated;
+            amendment.activated_at_ns = Some(U64(now_ns));
+            commitment.policy_hash = decode_32_byte_hex(&amendment.new_policy_hash)
+                .unwrap_or_else(|| env::panic_str("amendment policy digest is malformed"));
+            commitment.last_good = None;
+            write_service_policy(commitment_id.0, &amendment.new_policy);
+            write_service_policy_health_start(commitment_id.0, now_ns);
+        }
+        write_service_amendment(&amendment);
+        self.commitments.insert(commitment_id.0, commitment.clone());
+        self.commitments.flush();
+        let required_storage_bond =
+            storage_cost(env::storage_usage().saturating_sub(storage_before));
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached >= required_storage_bond,
+            format!("attach at least {required_storage_bond} yoctoNEAR for amendment storage")
+        );
+        commitment.storage_deposit_yocto = commitment
+            .storage_deposit_yocto
+            .checked_add(required_storage_bond)
+            .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
+        self.commitments.insert(commitment_id.0, commitment);
+        self.commitments.flush();
+        refund_excess(caller.clone(), attached, required_storage_bond);
+        emit_event(
+            "service_policy_amendment_approved",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "amendment_id": amendment_id,
+                "approver": caller,
+                "approved_count": amendment.approved_by.len(),
+                "required_count": amendment.required_approvers.len(),
+            }),
+        );
+        if activate {
+            emit_event(
+                "service_policy_amendment_activated",
+                json!({
+                    "commitment_id": commitment_id.0.to_string(),
+                    "amendment_id": amendment.amendment_id.clone(),
+                    "old_policy_hash": amendment.old_policy_hash.clone(),
+                    "new_policy_hash": amendment.new_policy_hash.clone(),
+                    "effective_at_ns": amendment.effective_at_ns.0.to_string(),
+                    "activated_at_ns": now_ns.to_string(),
+                    "approved_by": amendment.approved_by.clone(),
+                }),
+            );
+        }
+        activate
+    }
+
+    #[payable]
+    pub fn activate_service_policy_amendment(&mut self, commitment_id: U64, amendment_id: String) {
+        let mut commitment = self.load_commitment(commitment_id.0);
+        let now_ns = env::block_timestamp();
+        let mut amendment = read_service_amendment(commitment_id.0, &amendment_id)
+            .unwrap_or_else(|| env::panic_str("service policy amendment not found"));
+        require!(
+            amendment.status == PolicyAmendmentStatus::Proposed,
+            "amendment is no longer pending"
+        );
+        require!(
+            now_ns >= amendment.effective_at_ns.0,
+            "amendment effective boundary has not arrived"
+        );
+        require!(
+            now_ns < amendment.expires_at_ns.0,
+            "amendment has expired; expire it before proposing another"
+        );
+        require!(
+            amendment
+                .required_approvers
+                .iter()
+                .all(|account| amendment.approved_by.contains(account)),
+            "all affected parties must approve before activation"
+        );
+        require!(
+            commitment.lifecycle != Lifecycle::Closed,
+            "closed commitments cannot activate an amendment"
+        );
+        require!(
+            commitment.pending_evaluation_id.is_none(),
+            "resolve the pending evaluation before activating an amendment"
+        );
+        require!(
+            commitment.active_challenge_id.is_none(),
+            "resolve the active challenge before activating an amendment"
+        );
+        let expected_old_hash = decode_32_byte_hex(&amendment.old_policy_hash)
+            .unwrap_or_else(|| env::panic_str("amendment policy digest is malformed"));
+        require!(
+            commitment.policy_hash == expected_old_hash,
+            "amendment no longer matches the active policy"
+        );
+
+        let caller = env::predecessor_account_id();
+        let storage_before = env::storage_usage();
+        commitment.policy_hash = decode_32_byte_hex(&amendment.new_policy_hash)
+            .unwrap_or_else(|| env::panic_str("amendment policy digest is malformed"));
+        amendment.status = PolicyAmendmentStatus::Activated;
+        amendment.activated_at_ns = Some(U64(now_ns));
+        commitment.last_good = None;
+        write_service_policy(commitment_id.0, &amendment.new_policy);
+        write_service_policy_health_start(commitment_id.0, now_ns);
+        write_service_amendment(&amendment);
+        self.commitments.insert(commitment_id.0, commitment.clone());
+        self.commitments.flush();
+        let required_storage_bond =
+            storage_cost(env::storage_usage().saturating_sub(storage_before));
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached >= required_storage_bond,
+            format!("attach at least {required_storage_bond} yoctoNEAR for amendment storage")
+        );
+        commitment.storage_deposit_yocto = commitment
+            .storage_deposit_yocto
+            .checked_add(required_storage_bond)
+            .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
+        self.commitments.insert(commitment_id.0, commitment);
+        self.commitments.flush();
+        refund_excess(caller, attached, required_storage_bond);
+        emit_event(
+            "service_policy_amendment_activated",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "amendment_id": amendment.amendment_id,
+                "old_policy_hash": amendment.old_policy_hash,
+                "new_policy_hash": amendment.new_policy_hash,
+                "effective_at_ns": amendment.effective_at_ns.0.to_string(),
+                "activated_at_ns": now_ns.to_string(),
+                "approved_by": amendment.approved_by,
+            }),
+        );
+    }
+
+    pub fn expire_service_policy_amendment(&mut self, commitment_id: U64, amendment_id: String) {
+        let mut amendment = read_service_amendment(commitment_id.0, &amendment_id)
+            .unwrap_or_else(|| env::panic_str("service policy amendment not found"));
+        require!(
+            amendment.status == PolicyAmendmentStatus::Proposed,
+            "amendment is no longer pending"
+        );
+        let now_ns = env::block_timestamp();
+        require!(
+            now_ns >= amendment.expires_at_ns.0,
+            "amendment has not expired"
+        );
+        amendment.status = PolicyAmendmentStatus::Expired;
+        write_service_amendment(&amendment);
+        emit_event(
+            "service_policy_amendment_expired",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "amendment_id": amendment_id,
+                "old_policy_hash": amendment.old_policy_hash,
+                "new_policy_hash": amendment.new_policy_hash,
+                "expired_at_ns": now_ns.to_string(),
+                "approved_by": amendment.approved_by,
+            }),
+        );
+    }
+
+    pub fn cancel_service_policy_amendment(&mut self, commitment_id: U64, amendment_id: String) {
+        let mut amendment = read_service_amendment(commitment_id.0, &amendment_id)
+            .unwrap_or_else(|| env::panic_str("service policy amendment not found"));
+        require!(
+            amendment.status == PolicyAmendmentStatus::Proposed,
+            "amendment is no longer pending"
+        );
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == amendment.proposed_by,
+            "only the proposer may cancel this amendment"
+        );
+        amendment.status = PolicyAmendmentStatus::Cancelled;
+        write_service_amendment(&amendment);
+        emit_event(
+            "service_policy_amendment_cancelled",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "amendment_id": amendment_id,
+                "proposed_by": caller,
+                "cancelled_at_ns": env::block_timestamp().to_string(),
+                "approved_by": amendment.approved_by,
+            }),
+        );
+    }
+
+    #[payable]
+    pub fn create_bounded_payout_authority_grant(
+        &mut self,
+        commitment_id: U64,
+        grant_id: String,
+        adapter_account: near_sdk::AccountId,
+        resource_account: near_sdk::AccountId,
+        per_action_limit_yocto: U128,
+        cumulative_limit_yocto: U128,
+        expires_at_ns: U64,
+    ) -> String {
+        let mut commitment = self.load_commitment(commitment_id.0);
+        let caller = env::predecessor_account_id();
+        let now_ns = env::block_timestamp();
+        require!(
+            commitment.lifecycle != Lifecycle::Closed,
+            "closed commitments cannot add authority grants"
+        );
+        require!(
+            caller == commitment.policy.budget.sponsor
+                || caller == commitment.policy.budget.beneficiary,
+            "only the sponsor or beneficiary can grant bounded payout authority"
+        );
+        require!(
+            is_lower_hex_32(&grant_id),
+            "grant ID must be 32-byte lowercase hexadecimal"
+        );
+        require!(
+            per_action_limit_yocto.0 > 0,
+            "per-action payout limit must be positive"
+        );
+        require!(
+            per_action_limit_yocto.0 <= commitment.policy.budget.tranche_yocto,
+            "per-action limit cannot exceed the configured tranche"
+        );
+        let program_limit = commitment
+            .policy
+            .budget
+            .tranche_yocto
+            .checked_mul(u128::from(commitment.policy.budget.max_epochs))
+            .unwrap_or_else(|| env::panic_str("commitment payout limit overflow"));
+        require!(
+            cumulative_limit_yocto.0 > 0 && cumulative_limit_yocto.0 <= program_limit,
+            "cumulative limit must fit within the configured recurring budget"
+        );
+        let budget_horizon = commitment
+            .policy
+            .budget
+            .epoch_ns
+            .checked_mul(u64::from(commitment.policy.budget.max_epochs))
+            .unwrap_or_else(|| env::panic_str("commitment budget horizon overflow"));
+        let maximum_expiry = commitment
+            .activated_at_ns
+            .and_then(|activated_at| activated_at.checked_add(budget_horizon))
+            .unwrap_or_else(|| env::panic_str("commitment budget horizon overflow"));
+        require!(
+            expires_at_ns.0 > now_ns && expires_at_ns.0 <= maximum_expiry,
+            "grant expiry must fit the commitment budget horizon"
+        );
+        require!(
+            adapter_account != env::current_account_id(),
+            "the LCP contract cannot be its own authority adapter"
+        );
+        let storage_key = authority_grant_storage_key(commitment_id.0, &grant_id);
+        require!(
+            env::storage_read(&storage_key).is_none(),
+            "authority grant ID has already been used"
+        );
+        let grant = AuthorityGrantState {
+            granting_account: caller.clone(),
+            adapter_account: adapter_account.clone(),
+            resource_account: resource_account.clone(),
+            per_action_limit_yocto: per_action_limit_yocto.0,
+            cumulative_limit_yocto: cumulative_limit_yocto.0,
+            authorized_yocto: 0,
+            expires_at_ns: expires_at_ns.0,
+            last_action_nonce: 0,
+            last_authorized_epoch: u64::MAX,
+            revoked: false,
+        };
+        let storage_before = env::storage_usage();
+        write_authority_grant(commitment_id.0, &grant_id, &grant);
+        write_latest_authority_grant_id(commitment_id.0, &grant_id);
+        let required_storage_bond =
+            storage_cost(env::storage_usage().saturating_sub(storage_before));
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached >= required_storage_bond,
+            format!(
+                "attach at least {required_storage_bond} yoctoNEAR for authority grant storage"
+            )
+        );
+        commitment.storage_deposit_yocto = commitment
+            .storage_deposit_yocto
+            .checked_add(required_storage_bond)
+            .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
+        self.commitments.insert(commitment_id.0, commitment);
+        self.commitments.flush();
+        refund_excess(caller.clone(), attached, required_storage_bond);
+        emit_event(
+            "bounded_payout_authority_granted",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "grant_id": grant_id.clone(),
+                "granting_account": caller,
+                "adapter_account": adapter_account,
+                "resource_account": resource_account,
+                "capability": "bounded_payout",
+                "per_action_limit_yocto": per_action_limit_yocto.0.to_string(),
+                "cumulative_limit_yocto": cumulative_limit_yocto.0.to_string(),
+                "expires_at_ns": expires_at_ns.0.to_string(),
+            }),
+        );
+        grant_id
+    }
+
+    pub fn revoke_authority_grant(&mut self, commitment_id: U64, grant_id: String) {
+        let mut grant = read_authority_grant(commitment_id.0, &grant_id)
+            .unwrap_or_else(|| env::panic_str("authority grant not found"));
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == grant.granting_account,
+            "only the account that granted this authority can revoke it"
+        );
+        require!(!grant.revoked, "authority grant is already revoked");
+        grant.revoked = true;
+        write_authority_grant(commitment_id.0, &grant_id, &grant);
+        emit_event(
+            "bounded_payout_authority_revoked",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "grant_id": grant_id,
+                "granting_account": caller,
+                "revoked_at_ns": env::block_timestamp().to_string(),
+            }),
+        );
+    }
+
+    pub fn execute_authority_grant(
+        &mut self,
+        commitment_id: U64,
+        grant_id: String,
+        action_nonce: U64,
+        amount_yocto: U128,
+    ) -> Promise {
+        let commitment = self.load_commitment(commitment_id.0);
+        let mut grant = read_authority_grant(commitment_id.0, &grant_id)
+            .unwrap_or_else(|| env::panic_str("authority grant not found"));
+        let now_ns = env::block_timestamp();
+        let caller = env::predecessor_account_id();
+        require!(
+            !grant.revoked && now_ns < grant.expires_at_ns,
+            "authority grant is revoked or expired"
+        );
+        require!(
+            caller == grant.granting_account || caller == grant.adapter_account,
+            "only the grantor or named adapter can trigger this authority action"
+        );
+        let epoch = u64::from(self.claim_eligibility(&commitment, now_ns).unwrap_or_else(
+            |reason| env::panic_str(&format!("authority action is not eligible: {reason}")),
+        ));
+        require!(
+            grant.last_authorized_epoch != epoch,
+            "this authority grant already acted during the current epoch"
+        );
+        require!(
+            action_nonce.0 > grant.last_action_nonce,
+            "action nonce must increase to prevent replay"
+        );
+        require!(
+            amount_yocto.0 > 0 && amount_yocto.0 <= grant.per_action_limit_yocto,
+            "action exceeds its per-action payout limit"
+        );
+        let authorized_total = grant
+            .authorized_yocto
+            .checked_add(amount_yocto.0)
+            .unwrap_or_else(|| env::panic_str("authority payout accounting overflow"));
+        require!(
+            authorized_total <= grant.cumulative_limit_yocto,
+            "action exceeds the grant's cumulative payout limit"
+        );
+
+        grant.authorized_yocto = authorized_total;
+        grant.last_action_nonce = action_nonce.0;
+        grant.last_authorized_epoch = epoch;
+        write_authority_grant(commitment_id.0, &grant_id, &grant);
+        emit_event(
+            "bounded_payout_authority_action",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "grant_id": grant_id.clone(),
+                "adapter_account": grant.adapter_account.clone(),
+                "resource_account": grant.resource_account.clone(),
+                "action_nonce": action_nonce.0.to_string(),
+                "epoch": epoch.to_string(),
+                "amount_yocto": amount_yocto.0.to_string(),
+                "authorized_total_yocto": authorized_total.to_string(),
+            }),
+        );
+        let adapter_args = near_sdk::serde_json::to_vec(&json!({
+            "commitment_id": commitment_id,
+            "grant_id": grant_id.clone(),
+            "action_nonce": action_nonce,
+            "resource_account": grant.resource_account.clone(),
+            "amount_yocto": amount_yocto,
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize authority adapter request"));
+        Promise::new(grant.adapter_account).function_call(
+            "execute_authorized_action".to_string(),
+            adapter_args,
+            NearToken::from_yoctonear(0),
+            Gas::from_tgas(AUTHORITY_ADAPTER_GAS_TGAS),
+        )
     }
 
     #[payable]
@@ -538,6 +1134,237 @@ impl Contract {
         U64(evaluation_id)
     }
 
+    #[payable]
+    pub fn request_service_evaluation(
+        &mut self,
+        commitment_id: U64,
+        reports: Vec<SignedProbeReport>,
+    ) -> U64 {
+        let caller = env::predecessor_account_id();
+        let now_ns = env::block_timestamp();
+        let mut commitment = self.load_commitment(commitment_id.0);
+        require!(
+            commitment.policy.version == 3,
+            "commitment does not use service availability policy v3"
+        );
+        require!(
+            caller == commitment.maintainer || caller == commitment.policy.budget.sponsor,
+            "only the commitment maintainer or sponsor may request evaluation"
+        );
+        require!(
+            commitment.lifecycle == Lifecycle::Active,
+            "only active commitments can be evaluated"
+        );
+        require!(
+            commitment.pending_evaluation_id.is_none(),
+            "an evaluation is already pending"
+        );
+        require!(
+            commitment.active_challenge_id.is_none(),
+            "resolve the active challenge before requesting another evaluation"
+        );
+        require!(
+            commitment.next_evaluation_id <= MAX_EVALUATIONS_PER_COMMITMENT,
+            "evaluation limit reached"
+        );
+
+        let service_policy = read_service_policy(commitment_id.0)
+            .unwrap_or_else(|| env::panic_str("service availability policy is missing"));
+        require!(
+            !reports.is_empty() && reports.len() <= service_policy.sources.len(),
+            "report bundle must contain between one and the configured source count"
+        );
+        let mut seen_sources: Vec<&str> = Vec::with_capacity(reports.len());
+        for report in &reports {
+            let source_id = report.payload.source_id.as_str();
+            require!(
+                service_policy
+                    .sources
+                    .iter()
+                    .any(|source| source.source_id == source_id),
+                "report source is not in the commitment policy"
+            );
+            require!(
+                !seen_sources.contains(&source_id),
+                "an evaluation may include at most one report per source"
+            );
+            seen_sources.push(source_id);
+        }
+
+        let operations_available = commitment
+            .operations_funded_yocto
+            .checked_sub(commitment.operations_authorized_spend_yocto)
+            .unwrap_or_else(|| env::panic_str("operations accounting invariant violated"));
+        let execution_deposit = commitment.policy.evaluator.execution_deposit_yocto;
+        require!(
+            operations_available >= execution_deposit,
+            "evaluator operations budget is exhausted"
+        );
+
+        let evaluation_id = commitment.next_evaluation_id;
+        let evidence_bytes = near_sdk::serde_json::to_vec(&reports)
+            .unwrap_or_else(|_| env::panic_str("failed to serialize probe reports"));
+        let evidence_hash = env::sha256_array(&evidence_bytes);
+        let source_policy_hash = service_source_policy_hash(&service_policy);
+        let input = ServiceAvailabilityEvaluationInput {
+            schema: SERVICE_AVAILABILITY_REQUEST_SCHEMA,
+            contract_id: env::current_account_id().to_string(),
+            commitment_id: commitment_id.0.to_string(),
+            evaluation_id: evaluation_id.to_string(),
+            policy_version: 3,
+            policy_hash: encode_hex(&commitment.policy_hash),
+            evidence_hash: encode_hex(&evidence_hash),
+            requested_at_ns: now_ns.to_string(),
+            subject: &commitment.subject,
+            source_policy_hash,
+            source_policy: &service_policy,
+            reports: &reports,
+        };
+        let input_data = near_sdk::serde_json::to_string(&input)
+            .unwrap_or_else(|_| env::panic_str("failed to serialize service evaluator input"));
+        require!(
+            input_data.len() <= MAX_SERVICE_EVALUATOR_INPUT_BYTES,
+            "service evaluator input exceeds the 32768-byte limit"
+        );
+        let input_hash = env::sha256_array(input_data.as_bytes());
+        let timeout_at_ns = now_ns
+            .checked_add(commitment.policy.evaluator.request_timeout_ns)
+            .unwrap_or_else(|| env::panic_str("evaluation timeout timestamp overflow"));
+        let request = EvaluationRequest {
+            id: evaluation_id,
+            commitment_id: commitment_id.0,
+            policy_version: 3,
+            policy_hash: commitment.policy_hash,
+            input_hash,
+            evidence_hash,
+            observed_at_ns: now_ns,
+            requested_at_ns: now_ns,
+            timeout_at_ns,
+            request_transaction_hash: Some([0; 32]),
+            status: EvaluationStatus::Pending,
+        };
+        let record = EvaluationRecord {
+            request_id: evaluation_id,
+            commitment_id: commitment_id.0,
+            request_transaction_hash: Some([0; 32]),
+            status: EvaluationStatus::Pending,
+            verdict: Some(Verdict::NonCompliant),
+            reason_codes: vec!["X".repeat(MAX_REASON_CODE_BYTES); MAX_REASON_CODES],
+            input_hash,
+            evidence_hash,
+            observed_at_ns: now_ns,
+            accepted_at_ns: Some(0),
+            policy_hash: commitment.policy_hash,
+            output_hash: Some([0; 32]),
+        };
+
+        commitment.next_evaluation_id = evaluation_id
+            .checked_add(1)
+            .unwrap_or_else(|| env::panic_str("evaluation ID overflow"));
+        commitment.pending_evaluation_id = Some(evaluation_id);
+        commitment.operations_authorized_spend_yocto = commitment
+            .operations_authorized_spend_yocto
+            .checked_add(execution_deposit)
+            .unwrap_or_else(|| env::panic_str("operations authorization overflow"));
+
+        let storage_before = env::storage_usage();
+        let key = (commitment_id.0, evaluation_id);
+        self.evaluation_requests.insert(key, request);
+        self.evaluation_records.insert(key, record);
+        self.commitments.insert(commitment_id.0, commitment.clone());
+        reserve_service_summary(
+            commitment_id.0,
+            evaluation_id,
+            service_policy.sources.len() as u8,
+            service_policy.minimum_agreeing_sources,
+        );
+        self.evaluation_requests.flush();
+        self.evaluation_records.flush();
+        self.commitments.flush();
+        let request_state_usage = env::storage_usage();
+
+        let mut callback_reserve = commitment.clone();
+        callback_reserve.pending_evaluation_id = None;
+        callback_reserve.last_good = Some(GoodObservation {
+            evaluation_id,
+            evidence_hash,
+            observed_at_ns: now_ns,
+            accepted_at_ns: now_ns,
+        });
+        callback_reserve.last_observed_at_ns = Some(now_ns);
+        callback_reserve.negative_since_ns = Some(now_ns);
+        self.commitments.insert(commitment_id.0, callback_reserve);
+        self.commitments.flush();
+        let callback_state_usage = env::storage_usage();
+        self.commitments.insert(commitment_id.0, commitment.clone());
+        self.commitments.flush();
+        let peak_usage = request_state_usage.max(callback_state_usage);
+        let storage_bytes = peak_usage
+            .checked_sub(storage_before)
+            .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
+        let required_storage_bond = storage_cost(storage_bytes);
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached >= required_storage_bond,
+            format!("attach at least {required_storage_bond} yoctoNEAR for evaluation storage")
+        );
+        commitment.storage_deposit_yocto = commitment
+            .storage_deposit_yocto
+            .checked_add(required_storage_bond)
+            .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
+        self.commitments.insert(commitment_id.0, commitment.clone());
+        self.commitments.flush();
+        refund_excess(caller, attached, required_storage_bond);
+
+        let outlayer_args = json!({
+            "source": { "WasmUrl": {
+                "url": commitment.policy.evaluator.wasm_url,
+                "hash": encode_hex(&commitment.policy.evaluator.wasm_sha256),
+                "build_target": commitment.policy.evaluator.build_target,
+            }},
+            "resource_limits": {
+                "max_instructions": commitment.policy.evaluator.max_instructions,
+                "max_memory_mb": commitment.policy.evaluator.max_memory_mb,
+                "max_execution_seconds": commitment.policy.evaluator.max_execution_seconds,
+            },
+            "input_data": input_data,
+            "response_format": "Json",
+        });
+        let outlayer_args = near_sdk::serde_json::to_vec(&outlayer_args)
+            .unwrap_or_else(|_| env::panic_str("failed to serialize OutLayer request"));
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "commitment_id": commitment_id,
+            "evaluation_id": U64(evaluation_id),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize evaluation callback"));
+        let _outlayer_promise = Promise::new(commitment.policy.evaluator.outlayer_account)
+            .function_call(
+                "request_execution".to_string(),
+                outlayer_args,
+                NearToken::from_yoctonear(execution_deposit),
+                Gas::from_tgas(OUTLAYER_REQUEST_GAS_TGAS),
+            )
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_outlayer_result".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
+            ));
+        emit_event(
+            "evaluation_requested",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "evaluation_id": evaluation_id.to_string(),
+                "requested_at_ns": now_ns.to_string(),
+                "timeout_at_ns": timeout_at_ns.to_string(),
+                "input_hash": encode_hex(&input_hash),
+                "evidence_hash": encode_hex(&evidence_hash),
+                "source_policy_hash": service_source_policy_hash(&service_policy),
+            }),
+        );
+        U64(evaluation_id)
+    }
+
     #[private]
     pub fn on_outlayer_result(&mut self, commitment_id: U64, evaluation_id: U64) {
         let key = (commitment_id.0, evaluation_id.0);
@@ -663,24 +1490,42 @@ impl Contract {
             return;
         }
 
-        let was_breached = health_of(&commitment, now_ns) == Health::Breached;
-        if was_breached && !commitment.policy.temporal.recovery_allowed {
-            commitment.breach_latched = true;
+        if request.policy_version == 3 {
+            request.observed_at_ns =
+                parse_decimal_u64(&output.observed_at_ns).unwrap_or_else(|| {
+                    env::panic_str("validated service observation time disappeared")
+                });
+            let summary = ServiceAvailabilityEvaluationSummary {
+                source_counts: output
+                    .source_counts
+                    .clone()
+                    .unwrap_or_else(|| env::panic_str("validated source counts disappeared")),
+                corroboration_bps: output
+                    .corroboration_bps
+                    .unwrap_or_else(|| env::panic_str("validated corroboration value disappeared")),
+            };
+            write_service_summary(commitment_id.0, evaluation_id.0, &summary);
         }
-        if output.verdict == Verdict::Compliant {
-            commitment.last_good = Some(GoodObservation {
-                evaluation_id: evaluation_id.0,
-                evidence_hash: request.evidence_hash,
-                observed_at_ns: request.observed_at_ns,
-                accepted_at_ns: now_ns,
-            });
-            if commitment.policy.temporal.recovery_allowed {
-                commitment.negative_since_ns = None;
+        if output.verdict != Verdict::Inconclusive {
+            let was_breached = health_of(&commitment, now_ns) == Health::Breached;
+            if was_breached && !commitment.policy.temporal.recovery_allowed {
+                commitment.breach_latched = true;
             }
-        } else if commitment.negative_since_ns.is_none() {
-            commitment.negative_since_ns = Some(now_ns);
+            if output.verdict == Verdict::Compliant {
+                commitment.last_good = Some(GoodObservation {
+                    evaluation_id: evaluation_id.0,
+                    evidence_hash: request.evidence_hash,
+                    observed_at_ns: request.observed_at_ns,
+                    accepted_at_ns: now_ns,
+                });
+                if commitment.policy.temporal.recovery_allowed {
+                    commitment.negative_since_ns = None;
+                }
+            } else if commitment.negative_since_ns.is_none() {
+                commitment.negative_since_ns = Some(now_ns);
+            }
+            commitment.last_observed_at_ns = Some(request.observed_at_ns);
         }
-        commitment.last_observed_at_ns = Some(request.observed_at_ns);
 
         self.finish_evaluation(
             &mut commitment,
@@ -734,7 +1579,19 @@ impl Contract {
     ) -> Option<EvaluationRecordView> {
         self.evaluation_records
             .get(&(commitment_id.0, evaluation_id.0))
-            .map(EvaluationRecordView::from)
+            .map(|record| {
+                let mut view = EvaluationRecordView::from(record);
+                if record.status == EvaluationStatus::Accepted
+                    && self
+                        .commitments
+                        .get(&commitment_id.0)
+                        .is_some_and(|commitment| commitment.policy.version == 3)
+                {
+                    view.service_availability =
+                        read_service_summary(commitment_id.0, evaluation_id.0);
+                }
+                view
+            })
     }
 
     pub fn get_evaluation_timeout(&self, commitment_id: U64, evaluation_id: U64) -> Option<U64> {
@@ -1472,6 +2329,65 @@ impl Contract {
             .map(|commitment| CommitmentPolicyView::from(&commitment.policy))
     }
 
+    pub fn get_service_availability_policy(
+        &self,
+        commitment_id: U64,
+    ) -> Option<ServiceAvailabilityPolicy> {
+        let commitment = self.commitments.get(&commitment_id.0)?;
+        (commitment.policy.version == 3)
+            .then(|| read_service_policy(commitment_id.0))
+            .flatten()
+    }
+
+    pub fn get_service_policy_amendment(
+        &self,
+        commitment_id: U64,
+        amendment_id: String,
+    ) -> Option<ServicePolicyAmendmentView> {
+        read_service_amendment(commitment_id.0, &amendment_id)
+    }
+
+    pub fn get_latest_service_policy_amendment(
+        &self,
+        commitment_id: U64,
+    ) -> Option<ServicePolicyAmendmentView> {
+        let amendment_id = read_latest_service_amendment_id(commitment_id.0)?;
+        read_service_amendment(commitment_id.0, &amendment_id)
+    }
+
+    pub fn get_bounded_payout_authority_grant(
+        &self,
+        commitment_id: U64,
+        grant_id: String,
+    ) -> Option<BoundedPayoutAuthorityGrantView> {
+        let grant = read_authority_grant(commitment_id.0, &grant_id)?;
+        Some(BoundedPayoutAuthorityGrantView {
+            schema: "lcp.bounded-payout-authority.v1".to_string(),
+            commitment_id,
+            grant_id,
+            granting_account: grant.granting_account,
+            adapter_account: grant.adapter_account,
+            resource_account: grant.resource_account,
+            capability: "bounded_payout".to_string(),
+            per_action_limit_yocto: U128(grant.per_action_limit_yocto),
+            cumulative_limit_yocto: U128(grant.cumulative_limit_yocto),
+            authorized_yocto: U128(grant.authorized_yocto),
+            expires_at_ns: U64(grant.expires_at_ns),
+            last_action_nonce: U64(grant.last_action_nonce),
+            last_authorized_epoch: (grant.last_authorized_epoch != u64::MAX)
+                .then_some(U64(grant.last_authorized_epoch)),
+            revoked: grant.revoked,
+        })
+    }
+
+    pub fn get_latest_bounded_payout_authority_grant(
+        &self,
+        commitment_id: U64,
+    ) -> Option<BoundedPayoutAuthorityGrantView> {
+        let grant_id = read_latest_authority_grant_id(commitment_id.0)?;
+        self.get_bounded_payout_authority_grant(commitment_id, grant_id)
+    }
+
     pub fn get_effective_health(&self, commitment_id: U64) -> Option<Health> {
         self.commitments
             .get(&commitment_id.0)
@@ -1480,6 +2396,88 @@ impl Contract {
 }
 
 impl Contract {
+    fn insert_commitment(
+        &mut self,
+        subject: String,
+        maintainer: near_sdk::AccountId,
+        arbiter: near_sdk::AccountId,
+        policy: CommitmentPolicy,
+        policy_hash: [u8; 32],
+        service_policy: Option<ServiceAvailabilityPolicy>,
+    ) -> U64 {
+        require!(
+            !subject.trim().is_empty()
+                && subject.len() <= MAX_SUBJECT_BYTES
+                && is_printable_ascii(&subject),
+            "subject must be non-empty printable ASCII and at most 128 bytes"
+        );
+        let creator = env::predecessor_account_id();
+        let id = self
+            .next_commitment_id
+            .checked_add(1)
+            .unwrap_or_else(|| env::panic_str("commitment ID overflow"));
+        let policy_version = policy.version;
+        let mut commitment = Commitment {
+            id,
+            subject,
+            creator: creator.clone(),
+            maintainer,
+            arbiter,
+            lifecycle: Lifecycle::Draft,
+            policy,
+            policy_hash,
+            activated_at_ns: None,
+            last_good: None,
+            last_observed_at_ns: None,
+            negative_since_ns: None,
+            pending_evaluation_id: None,
+            active_challenge_id: None,
+            breach_latched: false,
+            escrow_funded_yocto: 0,
+            escrow_paid_yocto: 0,
+            escrow_refunded_yocto: 0,
+            escrow_pending_yocto: 0,
+            operations_funded_yocto: 0,
+            operations_authorized_spend_yocto: 0,
+            storage_deposit_yocto: 0,
+            next_evaluation_id: 1,
+            challenge_count: 0,
+            pending_transfer_count: 0,
+        };
+
+        let storage_before = env::storage_usage();
+        self.commitments.insert(id, commitment.clone());
+        self.commitments.flush();
+        if let Some(service_policy) = &service_policy {
+            write_service_policy(id, service_policy);
+        }
+        let storage_bytes = env::storage_usage()
+            .checked_sub(storage_before)
+            .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
+        let required_storage_bond = storage_cost(storage_bytes);
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached >= required_storage_bond,
+            format!("attach at least {required_storage_bond} yoctoNEAR for storage")
+        );
+
+        commitment.storage_deposit_yocto = required_storage_bond;
+        self.commitments.insert(id, commitment);
+        self.commitments.flush();
+        self.next_commitment_id = id;
+        refund_excess(creator.clone(), attached, required_storage_bond);
+        emit_event(
+            "commitment_created",
+            json!({
+                "commitment_id": id.to_string(),
+                "creator": creator,
+                "policy_version": policy_version,
+                "policy_hash": encode_hex(&policy_hash),
+            }),
+        );
+        U64(id)
+    }
+
     fn load_commitment(&self, commitment_id: CommitmentId) -> Commitment {
         self.commitments
             .get(&commitment_id)
@@ -1512,6 +2510,7 @@ impl Contract {
         if governing_record.status != EvaluationStatus::Accepted
             || governing_record.verdict != Some(Verdict::Compliant)
             || governing_record.evidence_hash != observation.evidence_hash
+            || governing_record.policy_hash != commitment.policy_hash
         {
             return Err("latest compliant evaluation is not eligible");
         }
@@ -1583,6 +2582,7 @@ impl Contract {
             .cloned()
             .unwrap_or_else(|| env::panic_str("evaluation record not found"));
         record.status = status;
+        record.observed_at_ns = request.observed_at_ns;
         record.request_transaction_hash = request.request_transaction_hash;
         record.verdict = verdict;
         record.reason_codes = reason_codes.clone();
@@ -1738,6 +2738,293 @@ fn read_challenge_completion_timestamp(challenge_id: u64) -> Option<u64> {
     let bytes: [u8; 8] = value.as_slice().try_into().ok()?;
     let timestamp = u64::from_le_bytes(bytes);
     (timestamp > 0).then_some(timestamp)
+}
+
+fn service_policy_storage_key(commitment_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SERVICE_POLICY_STORAGE_PREFIX.len() + 8);
+    key.extend_from_slice(SERVICE_POLICY_STORAGE_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key
+}
+
+fn service_summary_storage_key(commitment_id: u64, evaluation_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SERVICE_SUMMARY_STORAGE_PREFIX.len() + 16);
+    key.extend_from_slice(SERVICE_SUMMARY_STORAGE_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key.extend_from_slice(&evaluation_id.to_le_bytes());
+    key
+}
+
+fn service_amendment_storage_key(commitment_id: u64, amendment_id: &str) -> Vec<u8> {
+    let mut key =
+        Vec::with_capacity(SERVICE_AMENDMENT_STORAGE_PREFIX.len() + 8 + amendment_id.len());
+    key.extend_from_slice(SERVICE_AMENDMENT_STORAGE_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key.extend_from_slice(amendment_id.as_bytes());
+    key
+}
+
+fn service_amendment_latest_storage_key(commitment_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SERVICE_AMENDMENT_LATEST_PREFIX.len() + 8);
+    key.extend_from_slice(SERVICE_AMENDMENT_LATEST_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key
+}
+
+fn write_service_amendment(amendment: &ServicePolicyAmendmentView) {
+    let bytes = near_sdk::serde_json::to_vec(amendment)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize service policy amendment"));
+    env::storage_write(
+        &service_amendment_storage_key(amendment.commitment_id.0, &amendment.amendment_id),
+        &bytes,
+    );
+}
+
+fn read_service_amendment(
+    commitment_id: u64,
+    amendment_id: &str,
+) -> Option<ServicePolicyAmendmentView> {
+    if !is_lower_hex_32(amendment_id) {
+        return None;
+    }
+    let bytes = env::storage_read(&service_amendment_storage_key(commitment_id, amendment_id))?;
+    near_sdk::serde_json::from_slice(&bytes).ok()
+}
+
+fn write_latest_service_amendment_id(commitment_id: u64, amendment_id: &str) {
+    env::storage_write(
+        &service_amendment_latest_storage_key(commitment_id),
+        amendment_id.as_bytes(),
+    );
+}
+
+fn read_latest_service_amendment_id(commitment_id: u64) -> Option<String> {
+    let bytes = env::storage_read(&service_amendment_latest_storage_key(commitment_id))?;
+    String::from_utf8(bytes)
+        .ok()
+        .filter(|value| is_lower_hex_32(value))
+}
+
+fn service_policy_health_start_storage_key(commitment_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SERVICE_POLICY_HEALTH_START_PREFIX.len() + 8);
+    key.extend_from_slice(SERVICE_POLICY_HEALTH_START_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key
+}
+
+fn write_service_policy_health_start(commitment_id: u64, timestamp_ns: u64) {
+    env::storage_write(
+        &service_policy_health_start_storage_key(commitment_id),
+        &timestamp_ns.to_le_bytes(),
+    );
+}
+
+fn read_service_policy_health_start(commitment_id: u64) -> Option<u64> {
+    let bytes = env::storage_read(&service_policy_health_start_storage_key(commitment_id))?;
+    let encoded: [u8; 8] = bytes.try_into().ok()?;
+    Some(u64::from_le_bytes(encoded))
+}
+
+fn authority_grant_storage_key(commitment_id: u64, grant_id: &str) -> Vec<u8> {
+    let grant_id = decode_32_byte_hex(grant_id).unwrap_or_else(|| {
+        env::panic_str("authority grant ID must be 32-byte lowercase hexadecimal")
+    });
+    let mut key = Vec::with_capacity(AUTHORITY_GRANT_PREFIX.len() + 8 + grant_id.len());
+    key.extend_from_slice(AUTHORITY_GRANT_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key.extend_from_slice(&grant_id);
+    key
+}
+
+fn authority_grant_latest_storage_key(commitment_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(AUTHORITY_GRANT_LATEST_PREFIX.len() + 8);
+    key.extend_from_slice(AUTHORITY_GRANT_LATEST_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key
+}
+
+fn write_latest_authority_grant_id(commitment_id: u64, grant_id: &str) {
+    env::storage_write(
+        &authority_grant_latest_storage_key(commitment_id),
+        grant_id.as_bytes(),
+    );
+}
+
+fn read_latest_authority_grant_id(commitment_id: u64) -> Option<String> {
+    let bytes = env::storage_read(&authority_grant_latest_storage_key(commitment_id))?;
+    String::from_utf8(bytes)
+        .ok()
+        .filter(|value| is_lower_hex_32(value))
+}
+
+fn write_authority_grant(commitment_id: u64, grant_id: &str, grant: &AuthorityGrantState) {
+    let bytes = near_sdk::borsh::to_vec(grant)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize authority grant"));
+    env::storage_write(
+        &authority_grant_storage_key(commitment_id, grant_id),
+        &bytes,
+    );
+}
+
+fn read_authority_grant(commitment_id: u64, grant_id: &str) -> Option<AuthorityGrantState> {
+    if !is_lower_hex_32(grant_id) {
+        return None;
+    }
+    let bytes = env::storage_read(&authority_grant_storage_key(commitment_id, grant_id))?;
+    near_sdk::borsh::from_slice(&bytes).ok()
+}
+
+fn write_service_policy(commitment_id: u64, policy: &ServiceAvailabilityPolicy) {
+    let bytes = near_sdk::serde_json::to_vec(policy)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize service availability policy"));
+    env::storage_write(&service_policy_storage_key(commitment_id), &bytes);
+}
+
+fn read_service_policy(commitment_id: u64) -> Option<ServiceAvailabilityPolicy> {
+    let bytes = env::storage_read(&service_policy_storage_key(commitment_id))?;
+    near_sdk::serde_json::from_slice(&bytes).ok()
+}
+
+fn write_service_summary(
+    commitment_id: u64,
+    evaluation_id: u64,
+    summary: &ServiceAvailabilityEvaluationSummary,
+) {
+    let bytes = near_sdk::serde_json::to_vec(summary)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize service evaluation summary"));
+    env::storage_write(
+        &service_summary_storage_key(commitment_id, evaluation_id),
+        &bytes,
+    );
+}
+
+fn reserve_service_summary(commitment_id: u64, evaluation_id: u64, configured: u8, required: u8) {
+    let placeholder = ServiceAvailabilityEvaluationSummary {
+        source_counts: ServiceAvailabilitySourceCounts {
+            configured,
+            valid: u8::MAX,
+            up: u8::MAX,
+            down: u8::MAX,
+            abstained: u8::MAX,
+            required,
+        },
+        corroboration_bps: 10_000,
+    };
+    write_service_summary(commitment_id, evaluation_id, &placeholder);
+}
+
+fn read_service_summary(
+    commitment_id: u64,
+    evaluation_id: u64,
+) -> Option<ServiceAvailabilityEvaluationSummary> {
+    let bytes = env::storage_read(&service_summary_storage_key(commitment_id, evaluation_id))?;
+    near_sdk::serde_json::from_slice(&bytes).ok()
+}
+
+fn service_availability_policy_digest(
+    policy: &CommitmentPolicy,
+    service_policy: &ServiceAvailabilityPolicy,
+) -> [u8; 32] {
+    let policy_bytes = near_sdk::borsh::to_vec(policy)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize commitment policy"));
+    let source_bytes = near_sdk::serde_json::to_vec(service_policy)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize service availability policy"));
+    let mut digest_input = b"LCP_COMMITMENT_POLICY_V3\0".to_vec();
+    digest_input.extend_from_slice(&(policy_bytes.len() as u32).to_le_bytes());
+    digest_input.extend_from_slice(&policy_bytes);
+    digest_input.extend_from_slice(&(source_bytes.len() as u32).to_le_bytes());
+    digest_input.extend_from_slice(&source_bytes);
+    env::sha256_array(&digest_input)
+}
+
+fn service_source_policy_hash(policy: &ServiceAvailabilityPolicy) -> String {
+    let bytes = near_sdk::serde_json::to_vec(policy)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize service availability policy"));
+    encode_hex(&env::sha256_array(&bytes))
+}
+
+fn validate_service_availability_policy(policy: &ServiceAvailabilityPolicy) {
+    require!(
+        policy.schema == "lcp.service_availability.policy.v1",
+        "unsupported service availability policy schema"
+    );
+    require!(
+        is_lower_hex_32(&policy.target_id),
+        "service target fingerprint must be 64 lowercase hexadecimal characters"
+    );
+    require!(
+        parse_decimal_u64(&policy.max_source_lag_ns)
+            .map(|lag| lag > 0)
+            .unwrap_or(false),
+        "maximum source lag must be a positive canonical decimal u64"
+    );
+    require!(
+        (100..=599).contains(&policy.expected_status_min)
+            && policy.expected_status_min <= policy.expected_status_max
+            && policy.expected_status_max <= 599
+            && policy.max_latency_ms > 0,
+        "service response status or latency rule is invalid"
+    );
+    let source_count = policy.sources.len();
+    require!(
+        (2..=8).contains(&source_count),
+        "service source roster must contain between 2 and 8 operators"
+    );
+    require!(
+        policy.minimum_agreeing_sources > 0
+            && usize::from(policy.minimum_agreeing_sources) <= source_count
+            && usize::from(policy.minimum_agreeing_sources) * 2 > source_count,
+        "minimum agreeing source count must be a strict majority"
+    );
+    require!(
+        policy.minimum_corroboration_bps <= 10_000,
+        "minimum corroboration must be between 0 and 10000 basis points"
+    );
+    let mut prior_source: Option<&str> = None;
+    for (index, source) in policy.sources.iter().enumerate() {
+        require!(
+            valid_service_identifier(&source.source_id)
+                && valid_service_identifier(&source.operator_id),
+            "source and operator IDs must use lowercase letters, digits, dot, underscore, or hyphen"
+        );
+        require!(
+            prior_source
+                .map(|prior| prior < source.source_id.as_str())
+                .unwrap_or(true),
+            "service sources must be sorted by unique source ID"
+        );
+        require!(
+            !policy.sources[..index]
+                .iter()
+                .any(|prior| prior.operator_id == source.operator_id),
+            "each source must name a distinct operator"
+        );
+        require!(
+            !policy.sources[..index]
+                .iter()
+                .any(|prior| prior.public_key_hex == source.public_key_hex),
+            "each source must use a distinct Ed25519 key"
+        );
+        require!(
+            is_lower_hex_32(&source.public_key_hex),
+            "source public keys must be 32-byte lowercase hexadecimal"
+        );
+        prior_source = Some(&source.source_id);
+    }
+}
+
+fn valid_service_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
+}
+
+fn is_lower_hex_32(value: &str) -> bool {
+    decode_32_byte_hex(value)
+        .map(|decoded| encode_hex(&decoded) == value)
+        .unwrap_or(false)
 }
 
 fn parse_canonical_heartbeat(evidence: &SignedHeartbeatEvidence) -> HeartbeatPayload {
@@ -1907,7 +3194,12 @@ fn validate_verdict_output(
     output: &EvaluationVerdictOutput,
     now_ns: u64,
 ) -> Option<&'static str> {
-    if output.schema != EVALUATION_VERDICT_SCHEMA {
+    let expected_schema = if request.policy_version == 3 {
+        SERVICE_AVAILABILITY_VERDICT_SCHEMA
+    } else {
+        EVALUATION_VERDICT_SCHEMA
+    };
+    if output.schema != expected_schema {
         return Some("MALFORMED_VERDICT");
     }
     if output.commitment_id != request.commitment_id.to_string()
@@ -1916,9 +3208,63 @@ fn validate_verdict_output(
         || output.policy_hash != encode_hex(&request.policy_hash)
         || output.input_hash != encode_hex(&request.input_hash)
         || output.evidence_hash != encode_hex(&request.evidence_hash)
-        || output.observed_at_ns != request.observed_at_ns.to_string()
+        || (request.policy_version != 3
+            && output.observed_at_ns != request.observed_at_ns.to_string())
     {
         return Some("VERDICT_BINDING_MISMATCH");
+    }
+    if request.policy_version == 3 {
+        if output.contract_id.as_deref() != Some(env::current_account_id().as_str()) {
+            return Some("VERDICT_BINDING_MISMATCH");
+        }
+        let Some(policy) = read_service_policy(request.commitment_id) else {
+            return Some("SERVICE_POLICY_MISSING");
+        };
+        if output.source_policy_hash.as_deref()
+            != Some(service_source_policy_hash(&policy).as_str())
+        {
+            return Some("SOURCE_POLICY_MISMATCH");
+        }
+        let (Some(counts), Some(corroboration_bps)) =
+            (output.source_counts.as_ref(), output.corroboration_bps)
+        else {
+            return Some("MISSING_SOURCE_SUMMARY");
+        };
+        if corroboration_bps > 10_000
+            || counts.configured as usize != policy.sources.len()
+            || counts.required != policy.minimum_agreeing_sources
+            || counts.up > counts.configured
+            || counts.down > counts.configured
+            || counts.abstained > counts.configured
+            || counts.valid > counts.configured
+            || u16::from(counts.up) + u16::from(counts.down) + u16::from(counts.abstained)
+                != u16::from(counts.valid)
+        {
+            return Some("INVALID_SOURCE_SUMMARY");
+        }
+        let expected_bps =
+            (u32::from(counts.up.max(counts.down)) * 10_000 / u32::from(counts.configured)) as u16;
+        if corroboration_bps != expected_bps {
+            return Some("INVALID_SOURCE_SUMMARY");
+        }
+        let quorum_met = corroboration_bps >= policy.minimum_corroboration_bps;
+        let expected_verdict = match (
+            counts.up >= counts.required && quorum_met,
+            counts.down >= counts.required && quorum_met,
+        ) {
+            (true, false) => Verdict::Compliant,
+            (false, true) => Verdict::NonCompliant,
+            _ => Verdict::Inconclusive,
+        };
+        if output.verdict != expected_verdict {
+            return Some("SOURCE_SUMMARY_VERDICT_MISMATCH");
+        }
+    } else if output.source_counts.is_some()
+        || output.corroboration_bps.is_some()
+        || output.source_policy_hash.is_some()
+        || output.contract_id.is_some()
+    {
+        return Some("UNEXPECTED_SOURCE_SUMMARY");
     }
     if output.reason_codes.len() > MAX_REASON_CODES
         || output.reason_codes.iter().any(|code| {
@@ -1934,7 +3280,33 @@ fn validate_verdict_output(
     let Some(observed_at_ns) = parse_decimal_u64(&output.observed_at_ns) else {
         return Some("INVALID_OBSERVATION_TIMESTAMP");
     };
-    if observed_at_ns > now_ns
+    if request.policy_version == 3 {
+        let Some(policy) = read_service_policy(request.commitment_id) else {
+            return Some("SERVICE_POLICY_MISSING");
+        };
+        let Some(max_source_lag_ns) = parse_decimal_u64(&policy.max_source_lag_ns) else {
+            return Some("INVALID_SERVICE_POLICY");
+        };
+        let inconclusive = output.verdict == Verdict::Inconclusive;
+        if observed_at_ns > request.requested_at_ns
+            || (inconclusive && observed_at_ns != request.requested_at_ns)
+            || (!inconclusive
+                && request.requested_at_ns.saturating_sub(observed_at_ns) > max_source_lag_ns)
+            || observed_at_ns > now_ns
+            || now_ns.saturating_sub(observed_at_ns) > commitment.policy.temporal.max_source_lag_ns
+            || observed_at_ns
+                .checked_add(commitment.policy.temporal.evidence_ttl_ns)
+                .map(|expires_at| now_ns >= expires_at)
+                .unwrap_or(true)
+            || (!inconclusive
+                && commitment
+                    .last_observed_at_ns
+                    .map(|last_observed_at_ns| observed_at_ns <= last_observed_at_ns)
+                    .unwrap_or(false))
+        {
+            return Some("STALE_OR_INVALID_OBSERVATION");
+        }
+    } else if observed_at_ns > now_ns
         || now_ns - observed_at_ns > commitment.policy.temporal.max_source_lag_ns
         || request
             .observed_at_ns
@@ -2132,12 +3504,15 @@ fn validate_commitment_policy(policy: &CommitmentPolicy) {
 }
 
 fn health_of(commitment: &Commitment, now_ns: u64) -> Health {
-    effective_health(
-        &commitment.temporal_snapshot(),
-        &commitment.policy.temporal,
-        now_ns,
-    )
-    .unwrap_or_else(|error| env::panic_str(&format!("invalid commitment temporal state: {error}")))
+    let mut snapshot = commitment.temporal_snapshot();
+    if commitment.policy.version == 3 {
+        if let Some(health_start_ns) = read_service_policy_health_start(commitment.id) {
+            snapshot.activated_at_ns = Some(health_start_ns);
+        }
+    }
+    effective_health(&snapshot, &commitment.policy.temporal, now_ns).unwrap_or_else(|error| {
+        env::panic_str(&format!("invalid commitment temporal state: {error}"))
+    })
 }
 
 fn current_epoch_of(commitment: &Commitment, now_ns: u64) -> Option<u64> {
@@ -2166,6 +3541,7 @@ fn storage_cost(storage_bytes: u64) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{ProbeObservation, ProbeReportPayload, ServiceAvailabilitySource};
     #[allow(deprecated)]
     use near_sdk::test_utils::testing_env_with_promise_results;
     use near_sdk::{
@@ -2386,6 +3762,204 @@ mod tests {
         .unwrap()
     }
 
+    fn service_policy_fixture() -> ServiceAvailabilityPolicy {
+        ServiceAvailabilityPolicy {
+            schema: "lcp.service_availability.policy.v1".to_string(),
+            target_id: "a".repeat(64),
+            max_source_lag_ns: "100".to_string(),
+            expected_status_min: 200,
+            expected_status_max: 299,
+            max_latency_ms: 500,
+            minimum_agreeing_sources: 2,
+            minimum_corroboration_bps: 6_000,
+            sources: (0..3)
+                .map(|index| ServiceAvailabilitySource {
+                    source_id: format!("source-{index}"),
+                    operator_id: format!("operator-{index}"),
+                    public_key_hex: format!("{:02x}", index + 1).repeat(32),
+                })
+                .collect(),
+        }
+    }
+
+    fn service_commitment_args() -> CreateServiceAvailabilityCommitmentArgs {
+        CreateServiceAvailabilityCommitmentArgs {
+            subject: "Community service health pilot".to_string(),
+            maintainer: accounts(2),
+            arbiter: accounts(4),
+            policy: CommitmentPolicyArgs {
+                temporal: crate::models::TemporalPolicyArgs {
+                    initial_window_ns: U64(1_000),
+                    evidence_ttl_ns: U64(1_000),
+                    grace_ns: U64(1_000),
+                    max_source_lag_ns: U64(100),
+                    challenge_window_ns: U64(100),
+                    resolution_timeout_ns: U64(1_000),
+                    recovery_allowed: true,
+                },
+                evidence: crate::models::EvidencePolicyArgs {
+                    signature_scheme: Some("near_nep413".to_string()),
+                    maintainer_public_key_hex: None,
+                    maintainer_public_key: Some(format!(
+                        "ed25519:{}",
+                        bs58::encode([7; 32]).into_string()
+                    )),
+                },
+                evaluator: EvaluatorPolicyArgs {
+                    outlayer_account: "outlayer.testnet".parse().unwrap(),
+                    wasm_url: "https://example.org/service-evaluator.wasm".to_string(),
+                    wasm_sha256_hex: "b".repeat(64),
+                    build_target: "wasm32-wasip2".to_string(),
+                    max_instructions: U64(1_000_000),
+                    max_memory_mb: 64,
+                    max_execution_seconds: U64(1),
+                    request_timeout_ns: U64(1_000_000_000),
+                    execution_deposit_yocto: U128(TRANCHE_AMOUNT),
+                },
+                budget: BudgetPolicyArgs {
+                    sponsor: accounts(1),
+                    beneficiary: accounts(3),
+                    epoch_ns: U64(1_000_000),
+                    max_epochs: 3,
+                    tranche_yocto: U128(TRANCHE_AMOUNT),
+                },
+            },
+            service_availability: service_policy_fixture(),
+        }
+    }
+
+    fn active_service_commitment() -> (Contract, U64) {
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = Contract::new();
+        let id = contract.create_service_availability_commitment(service_commitment_args());
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Active;
+        commitment.activated_at_ns = Some(NOW_NS - 500);
+        commitment.escrow_funded_yocto =
+            TRANCHE_AMOUNT * u128::from(commitment.policy.budget.max_epochs);
+        let evidence_hash = [21; 32];
+        commitment.last_good = Some(GoodObservation {
+            evaluation_id: EVALUATION_ID,
+            evidence_hash,
+            observed_at_ns: NOW_NS - 50,
+            accepted_at_ns: NOW_NS - 50,
+        });
+        commitment.last_observed_at_ns = Some(NOW_NS - 50);
+        contract.commitments.insert(id.0, commitment.clone());
+        contract.evaluation_records.insert(
+            (id.0, EVALUATION_ID),
+            EvaluationRecord {
+                request_id: EVALUATION_ID,
+                commitment_id: id.0,
+                request_transaction_hash: Some([0; 32]),
+                status: EvaluationStatus::Accepted,
+                verdict: Some(Verdict::Compliant),
+                reason_codes: vec!["SOURCE_QUORUM_MET".to_string()],
+                input_hash: [22; 32],
+                evidence_hash,
+                observed_at_ns: NOW_NS - 50,
+                accepted_at_ns: Some(NOW_NS - 50),
+                policy_hash: commitment.policy_hash,
+                output_hash: Some([23; 32]),
+            },
+        );
+        contract.commitments.flush();
+        contract.evaluation_records.flush();
+        (contract, id)
+    }
+
+    fn changed_service_policy() -> ServiceAvailabilityPolicy {
+        let mut policy = service_policy_fixture();
+        policy.target_id = "c".repeat(64);
+        policy.max_source_lag_ns = "100".to_string();
+        policy
+    }
+
+    fn create_authority_grant() -> (Contract, String) {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        let grant_id = "a".repeat(64);
+        testing_env!(context(accounts(1), 10_u128.pow(25)));
+        contract.create_bounded_payout_authority_grant(
+            U64(CONTRACT_ID),
+            grant_id.clone(),
+            "adapter.testnet".parse().unwrap(),
+            accounts(3),
+            U128(TRANCHE_AMOUNT),
+            U128(TRANCHE_AMOUNT),
+            U64(NOW_NS + 1_000_000_000),
+        );
+        (contract, grant_id)
+    }
+
+    fn contract_with_pending_service_evaluation() -> Contract {
+        let mut contract = contract_with_pending_evaluation();
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        let service_policy = service_policy_fixture();
+        commitment.policy.version = 3;
+        commitment.policy_hash =
+            service_availability_policy_digest(&commitment.policy, &service_policy);
+        contract.commitments.insert(CONTRACT_ID, commitment.clone());
+        write_service_policy(CONTRACT_ID, &service_policy);
+        reserve_service_summary(
+            CONTRACT_ID,
+            PENDING_EVALUATION_ID,
+            service_policy.sources.len() as u8,
+            service_policy.minimum_agreeing_sources,
+        );
+
+        let key = (CONTRACT_ID, PENDING_EVALUATION_ID);
+        let mut request = contract.evaluation_requests.get(&key).unwrap().clone();
+        request.policy_version = 3;
+        request.policy_hash = commitment.policy_hash;
+        contract.evaluation_requests.insert(key, request);
+        let mut record = contract.evaluation_records.get(&key).unwrap().clone();
+        record.policy_hash = commitment.policy_hash;
+        contract.evaluation_records.insert(key, record);
+        contract.commitments.flush();
+        contract.evaluation_requests.flush();
+        contract.evaluation_records.flush();
+        contract
+    }
+
+    fn callback_service_verdict(
+        contract: &Contract,
+        verdict: &str,
+        observed_at_ns: u64,
+        up: u8,
+        down: u8,
+        abstained: u8,
+        corroboration_bps: u16,
+    ) -> Vec<u8> {
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        let service_policy = service_policy_fixture();
+        near_sdk::serde_json::to_vec(&json!({
+            "schema": SERVICE_AVAILABILITY_VERDICT_SCHEMA,
+            "request_transaction_hash": bs58::encode([14; 32]).into_string(),
+            "contract_id": accounts(0).to_string(),
+            "commitment_id": CONTRACT_ID.to_string(),
+            "evaluation_id": PENDING_EVALUATION_ID.to_string(),
+            "policy_version": 3,
+            "policy_hash": encode_hex(&commitment.policy_hash),
+            "source_policy_hash": service_source_policy_hash(&service_policy),
+            "input_hash": encode_hex(&PENDING_EVALUATION_INPUT_HASH),
+            "evidence_hash": encode_hex(&PENDING_EVALUATION_EVIDENCE_HASH),
+            "observed_at_ns": observed_at_ns.to_string(),
+            "verdict": verdict,
+            "reason_codes": ["SOURCE_QUORUM_NOT_MET"],
+            "source_counts": {
+                "configured": 3,
+                "valid": up + down + abstained,
+                "up": up,
+                "down": down,
+                "abstained": abstained,
+                "required": 2,
+            },
+            "corroboration_bps": corroboration_bps,
+        }))
+        .unwrap()
+    }
+
     fn add_open_challenge(contract: &mut Contract) {
         let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
         commitment.active_challenge_id = Some(TRANSFER_ID);
@@ -2477,6 +4051,289 @@ mod tests {
             read_challenge_completion_timestamp(challenge_id),
             Some(NOW_NS)
         );
+    }
+
+    #[test]
+    fn service_availability_commitment_keeps_v3_policy_in_a_sidecar() {
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = Contract::new();
+        let args = service_commitment_args();
+        let expected_source_policy = args.service_availability.clone();
+        let id = contract.create_service_availability_commitment(args);
+
+        let commitment = contract.commitments.get(&id.0).unwrap();
+        assert_eq!(commitment.policy.version, 3);
+        assert_eq!(
+            commitment.policy_hash,
+            service_availability_policy_digest(&commitment.policy, &expected_source_policy)
+        );
+        assert!(commitment.storage_deposit_yocto > 0);
+        assert_eq!(
+            contract
+                .get_service_availability_policy(id)
+                .unwrap()
+                .target_id,
+            expected_source_policy.target_id
+        );
+        assert_eq!(contract.get_policy(id).unwrap().version, 3);
+        assert!(env::storage_has_key(&service_policy_storage_key(id.0)));
+
+        assert_eq!(
+            near_sdk::borsh::to_vec(&Verdict::Compliant).unwrap(),
+            vec![0]
+        );
+        assert_eq!(
+            near_sdk::borsh::to_vec(&Verdict::NonCompliant).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            near_sdk::borsh::to_vec(&Verdict::Inconclusive).unwrap(),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn service_policy_amendment_requires_each_party_and_resets_evidence_clock() {
+        let (mut contract, id) = active_service_commitment();
+        let original_hash = contract.commitments.get(&id.0).unwrap().policy_hash;
+        let effective_at_ns = NOW_NS + 100;
+        let expires_at_ns = effective_at_ns + 10_000;
+        let amendment_id = "d".repeat(64);
+
+        testing_env!(context(accounts(1), 10_u128.pow(25)));
+        contract.propose_service_policy_amendment(
+            id,
+            changed_service_policy(),
+            U64(effective_at_ns),
+            U64(expires_at_ns),
+            amendment_id.clone(),
+        );
+
+        for party in [accounts(1), accounts(2), accounts(3)] {
+            testing_env!(context_at(party, 10_u128.pow(25), effective_at_ns - 1));
+            assert!(!contract.approve_service_policy_amendment(id, amendment_id.clone()));
+        }
+        testing_env!(context_at(accounts(4), 10_u128.pow(25), effective_at_ns));
+        assert!(contract.approve_service_policy_amendment(id, amendment_id.clone()));
+
+        let amendment = contract
+            .get_service_policy_amendment(id, amendment_id)
+            .unwrap();
+        let commitment = contract.commitments.get(&id.0).unwrap();
+        assert_eq!(amendment.status, PolicyAmendmentStatus::Activated);
+        assert_eq!(amendment.activated_at_ns, Some(U64(effective_at_ns)));
+        assert_eq!(
+            commitment.policy_hash,
+            decode_32_byte_hex(&amendment.new_policy_hash).unwrap()
+        );
+        assert_ne!(commitment.policy_hash, original_hash);
+        assert!(commitment.last_good.is_none());
+        assert_eq!(
+            read_service_policy_health_start(id.0),
+            Some(effective_at_ns)
+        );
+        assert_eq!(
+            health_of(commitment, effective_at_ns + 999),
+            Health::AwaitingEvidence
+        );
+        assert_eq!(
+            health_of(commitment, effective_at_ns + 1_000),
+            Health::AtRisk
+        );
+
+        let mut stale_evidence = commitment.clone();
+        stale_evidence.last_good = Some(GoodObservation {
+            evaluation_id: EVALUATION_ID,
+            evidence_hash: [21; 32],
+            observed_at_ns: NOW_NS - 50,
+            accepted_at_ns: NOW_NS - 50,
+        });
+        contract.commitments.insert(id.0, stale_evidence.clone());
+        contract.commitments.flush();
+        assert_eq!(
+            contract.claim_eligibility(&stale_evidence, effective_at_ns + 10),
+            Err("latest compliant evaluation is not eligible")
+        );
+    }
+
+    #[test]
+    fn service_policy_amendment_can_be_cancelled_or_expired_without_changing_policy() {
+        let (mut contract, id) = active_service_commitment();
+        let original_hash = contract.commitments.get(&id.0).unwrap().policy_hash;
+        let cancelled_id = "e".repeat(64);
+        testing_env!(context(accounts(1), 10_u128.pow(25)));
+        contract.propose_service_policy_amendment(
+            id,
+            changed_service_policy(),
+            U64(NOW_NS + 100),
+            U64(NOW_NS + 1_000),
+            cancelled_id.clone(),
+        );
+        contract.cancel_service_policy_amendment(id, cancelled_id.clone());
+        assert_eq!(
+            contract
+                .get_service_policy_amendment(id, cancelled_id)
+                .unwrap()
+                .status,
+            PolicyAmendmentStatus::Cancelled
+        );
+        assert_eq!(
+            contract.commitments.get(&id.0).unwrap().policy_hash,
+            original_hash
+        );
+
+        let expired_id = "f".repeat(64);
+        testing_env!(context(accounts(1), 10_u128.pow(25)));
+        contract.propose_service_policy_amendment(
+            id,
+            changed_service_policy(),
+            U64(NOW_NS + 100),
+            U64(NOW_NS + 1_000),
+            expired_id.clone(),
+        );
+        testing_env!(context_at(accounts(5), 0, NOW_NS + 1_000));
+        contract.expire_service_policy_amendment(id, expired_id.clone());
+        assert_eq!(
+            contract
+                .get_service_policy_amendment(id, expired_id)
+                .unwrap()
+                .status,
+            PolicyAmendmentStatus::Expired
+        );
+        assert_eq!(
+            contract.commitments.get(&id.0).unwrap().policy_hash,
+            original_hash
+        );
+    }
+
+    #[test]
+    fn bounded_authority_action_requires_claim_eligibility_and_consumes_grant_limits() {
+        let (mut contract, grant_id) = create_authority_grant();
+        testing_env!(context(accounts(1), 0));
+        let _ = contract.execute_authority_grant(
+            U64(CONTRACT_ID),
+            grant_id.clone(),
+            U64(1),
+            U128(TRANCHE_AMOUNT),
+        );
+        let grant = contract
+            .get_bounded_payout_authority_grant(U64(CONTRACT_ID), grant_id.clone())
+            .unwrap();
+        assert_eq!(grant.authorized_yocto, U128(TRANCHE_AMOUNT));
+        assert_eq!(grant.last_action_nonce, U64(1));
+        assert_eq!(grant.last_authorized_epoch, Some(U64(0)));
+
+        testing_env!(context(accounts(1), 0));
+        contract.revoke_authority_grant(U64(CONTRACT_ID), grant_id.clone());
+        assert!(
+            contract
+                .get_bounded_payout_authority_grant(U64(CONTRACT_ID), grant_id)
+                .unwrap()
+                .revoked
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "this authority grant already acted during the current epoch")]
+    fn bounded_authority_grant_cannot_execute_twice_in_one_epoch() {
+        let (mut contract, grant_id) = create_authority_grant();
+        testing_env!(context(accounts(1), 0));
+        let _ =
+            contract.execute_authority_grant(U64(CONTRACT_ID), grant_id.clone(), U64(1), U128(1));
+        let _ = contract.execute_authority_grant(U64(CONTRACT_ID), grant_id, U64(2), U128(1));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "authority action is not eligible: a pending evaluation prevents tranche claims"
+    )]
+    fn bounded_authority_action_is_blocked_by_pending_evaluation() {
+        let (mut contract, grant_id) = create_authority_grant();
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.pending_evaluation_id = Some(PENDING_EVALUATION_ID);
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.commitments.flush();
+        testing_env!(context(accounts(1), 0));
+        let _ = contract.execute_authority_grant(U64(CONTRACT_ID), grant_id, U64(1), U128(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "action exceeds its per-action payout limit")]
+    fn bounded_authority_action_enforces_per_action_limit() {
+        let (mut contract, grant_id) = create_authority_grant();
+        testing_env!(context(accounts(1), 0));
+        let _ = contract.execute_authority_grant(
+            U64(CONTRACT_ID),
+            grant_id,
+            U64(1),
+            U128(TRANCHE_AMOUNT + 1),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "authority grant is revoked or expired")]
+    fn revoked_authority_grant_cannot_execute() {
+        let (mut contract, grant_id) = create_authority_grant();
+        testing_env!(context(accounts(1), 0));
+        contract.revoke_authority_grant(U64(CONTRACT_ID), grant_id.clone());
+        let _ = contract.execute_authority_grant(U64(CONTRACT_ID), grant_id, U64(1), U128(1));
+    }
+
+    #[test]
+    fn service_evaluation_request_pins_reports_and_reserves_callback_summary() {
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = Contract::new();
+        let id = contract.create_service_availability_commitment(service_commitment_args());
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Active;
+        commitment.activated_at_ns = Some(NOW_NS - 10);
+        commitment.operations_funded_yocto =
+            commitment.policy.evaluator.execution_deposit_yocto * 2;
+        contract.commitments.insert(id.0, commitment.clone());
+        contract.commitments.flush();
+
+        let service_policy = contract.get_service_availability_policy(id).unwrap();
+        let report = SignedProbeReport {
+            payload: ProbeReportPayload {
+                schema: "lcp.service_availability.report.v1".to_string(),
+                contract_id: accounts(0).to_string(),
+                commitment_id: id.0.to_string(),
+                evaluation_id: "1".to_string(),
+                policy_version: 3,
+                policy_hash: encode_hex(&commitment.policy_hash),
+                source_policy_hash: service_source_policy_hash(&service_policy),
+                source_id: service_policy.sources[0].source_id.clone(),
+                operator_id: service_policy.sources[0].operator_id.clone(),
+                target_id: service_policy.target_id,
+                observed_at_ns: NOW_NS.to_string(),
+                observation: ProbeObservation::HttpResponse {
+                    status_code: 200,
+                    latency_ms: 10,
+                    tls_verified: true,
+                },
+            },
+            signature_hex: "0".repeat(128),
+        };
+        testing_env!(context_at(accounts(2), 10_u128.pow(25), NOW_NS));
+        let evaluation_id = contract.request_service_evaluation(id, vec![report]);
+        assert_eq!(evaluation_id.0, 1);
+        assert_eq!(
+            contract
+                .evaluation_requests
+                .get(&(id.0, evaluation_id.0))
+                .unwrap()
+                .policy_version,
+            3
+        );
+        assert!(env::storage_has_key(&service_summary_storage_key(
+            id.0,
+            evaluation_id.0
+        )));
+        assert!(contract
+            .get_evaluation(id, evaluation_id)
+            .unwrap()
+            .service_availability
+            .is_none());
     }
 
     #[test]
@@ -2579,6 +4436,50 @@ mod tests {
                 .pending_evaluation_id,
             Some(PENDING_EVALUATION_ID + 1)
         );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn inconclusive_service_evaluation_is_recorded_without_changing_health_clocks() {
+        let mut contract = contract_with_pending_service_evaluation();
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.negative_since_ns = Some(NOW_NS - 50);
+        commitment.breach_latched = true;
+        let previous_last_good = commitment.last_good.as_ref().unwrap().observed_at_ns;
+        let previous_last_observed = commitment.last_observed_at_ns;
+        let previous_negative_since = commitment.negative_since_ns;
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.commitments.flush();
+
+        let output = callback_service_verdict(&contract, "Inconclusive", NOW_NS, 1, 1, 0, 3_333);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(output),
+        );
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let after = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(
+            after.last_good.as_ref().unwrap().observed_at_ns,
+            previous_last_good
+        );
+        assert_eq!(after.last_observed_at_ns, previous_last_observed);
+        assert_eq!(after.negative_since_ns, previous_negative_since);
+        assert!(after.breach_latched);
+
+        let evaluation = contract
+            .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+            .expect("accepted service result should be queryable");
+        assert_eq!(evaluation.status, EvaluationStatus::Accepted);
+        assert_eq!(evaluation.verdict, Some(Verdict::Inconclusive));
+        assert_eq!(evaluation.observed_at_ns.0, NOW_NS);
+        let summary = evaluation
+            .service_availability
+            .expect("source agreement should be visible");
+        assert_eq!(summary.source_counts.configured, 3);
+        assert_eq!(summary.source_counts.up, 1);
+        assert_eq!(summary.source_counts.down, 1);
+        assert_eq!(summary.corroboration_bps, 3_333);
     }
 
     #[test]

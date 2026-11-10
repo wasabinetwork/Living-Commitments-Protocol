@@ -1,5 +1,5 @@
 [workspace]
-members = ["contracts/lcp-core", "evaluators/maintenance-heartbeat", "evaluators/service-availability"]
+members = ["contracts/lcp-core", "contracts/bounded-payout-adapter", "evaluators/maintenance-heartbeat", "evaluators/service-availability"]
 resolver = "2"
 
 [workspace.package]

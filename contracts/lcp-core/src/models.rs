@@ -14,6 +14,8 @@ pub type TransferId = u64;
 
 pub const EVALUATION_REQUEST_SCHEMA: &str = "lcp.evaluation.request.v1";
 pub const EVALUATION_VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v2";
+pub const SERVICE_AVAILABILITY_REQUEST_SCHEMA: &str = "lcp.service_availability.request.v1";
+pub const SERVICE_AVAILABILITY_VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v3";
 pub const HEARTBEAT_SCHEMA: &str = "lcp.heartbeat.v1";
 pub const HEARTBEAT_EVIDENCE_TYPE: &str = "signed_maintenance_heartbeat";
 
@@ -74,6 +76,7 @@ pub struct GoodObservation {
 pub enum Verdict {
     Compliant,
     NonCompliant,
+    Inconclusive,
 }
 
 #[derive(
@@ -306,6 +309,178 @@ pub struct EvaluationVerdictOutput {
     pub observed_at_ns: String,
     pub verdict: Verdict,
     pub reason_codes: Vec<String>,
+    #[serde(default)]
+    pub contract_id: Option<String>,
+    #[serde(default)]
+    pub source_policy_hash: Option<String>,
+    #[serde(default)]
+    pub source_counts: Option<ServiceAvailabilitySourceCounts>,
+    #[serde(default)]
+    pub corroboration_bps: Option<u16>,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, Deserialize, Serialize)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct ServiceAvailabilityPolicy {
+    pub schema: String,
+    pub target_id: String,
+    pub max_source_lag_ns: String,
+    pub expected_status_min: u16,
+    pub expected_status_max: u16,
+    pub max_latency_ms: u32,
+    pub minimum_agreeing_sources: u8,
+    pub minimum_corroboration_bps: u16,
+    pub sources: Vec<ServiceAvailabilitySource>,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, Deserialize, Serialize)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct ServiceAvailabilitySource {
+    pub source_id: String,
+    pub operator_id: String,
+    pub public_key_hex: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde", rename_all = "snake_case")]
+pub enum PolicyAmendmentStatus {
+    Proposed,
+    Activated,
+    Expired,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct ServicePolicyAmendmentView {
+    pub schema: String,
+    pub amendment_id: String,
+    pub commitment_id: U64,
+    pub proposed_by: AccountId,
+    pub old_policy_hash: String,
+    pub new_policy_hash: String,
+    pub new_policy: ServiceAvailabilityPolicy,
+    pub proposed_at_ns: U64,
+    pub effective_at_ns: U64,
+    pub activated_at_ns: Option<U64>,
+    pub expires_at_ns: U64,
+    pub required_approvers: Vec<AccountId>,
+    pub approved_by: Vec<AccountId>,
+    pub status: PolicyAmendmentStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct BoundedPayoutAuthorityGrantView {
+    pub schema: String,
+    pub commitment_id: U64,
+    pub grant_id: String,
+    pub granting_account: AccountId,
+    pub adapter_account: AccountId,
+    pub resource_account: AccountId,
+    pub capability: String,
+    pub per_action_limit_yocto: U128,
+    pub cumulative_limit_yocto: U128,
+    pub authorized_yocto: U128,
+    pub expires_at_ns: U64,
+    pub last_action_nonce: U64,
+    pub last_authorized_epoch: Option<U64>,
+    pub revoked: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct CreateServiceAvailabilityCommitmentArgs {
+    pub subject: String,
+    pub maintainer: AccountId,
+    pub arbiter: AccountId,
+    pub policy: CommitmentPolicyArgs,
+    pub service_availability: ServiceAvailabilityPolicy,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct SignedProbeReport {
+    pub payload: ProbeReportPayload,
+    pub signature_hex: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct ProbeReportPayload {
+    pub schema: String,
+    pub contract_id: String,
+    pub commitment_id: String,
+    pub evaluation_id: String,
+    pub policy_version: u32,
+    pub policy_hash: String,
+    pub source_policy_hash: String,
+    pub source_id: String,
+    pub operator_id: String,
+    pub target_id: String,
+    pub observed_at_ns: String,
+    pub observation: ProbeObservation,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(
+    crate = "near_sdk::serde",
+    tag = "kind",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum ProbeObservation {
+    HttpResponse {
+        status_code: u16,
+        latency_ms: u32,
+        tls_verified: bool,
+    },
+    Timeout {
+        elapsed_ms: u32,
+    },
+    TlsError,
+    SourceError {
+        code: String,
+    },
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, Deserialize, Serialize)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct ServiceAvailabilitySourceCounts {
+    pub configured: u8,
+    pub valid: u8,
+    pub up: u8,
+    pub down: u8,
+    pub abstained: u8,
+    pub required: u8,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, Deserialize, Serialize)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct ServiceAvailabilityEvaluationSummary {
+    pub source_counts: ServiceAvailabilitySourceCounts,
+    pub corroboration_bps: u16,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct ServiceAvailabilityEvaluationInput<'a> {
+    pub schema: &'static str,
+    pub contract_id: String,
+    pub commitment_id: String,
+    pub evaluation_id: String,
+    pub policy_version: u32,
+    pub policy_hash: String,
+    pub evidence_hash: String,
+    pub requested_at_ns: String,
+    pub subject: &'a str,
+    pub source_policy_hash: String,
+    pub source_policy: &'a ServiceAvailabilityPolicy,
+    pub reports: &'a [SignedProbeReport],
 }
 
 #[derive(Serialize)]
@@ -323,6 +498,8 @@ pub struct EvaluationRecordView {
     pub accepted_at_ns: Option<U64>,
     pub policy_hash: String,
     pub output_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_availability: Option<ServiceAvailabilityEvaluationSummary>,
 }
 
 impl From<&EvaluationRecord> for EvaluationRecordView {
@@ -361,6 +538,7 @@ impl From<&EvaluationRecord> for EvaluationRecordView {
             } else {
                 record.output_hash.as_ref().map(|hash| encode_hex(hash))
             },
+            service_availability: None,
         }
     }
 }
@@ -610,14 +788,14 @@ impl From<&CommitmentPolicy> for CommitmentPolicyView {
             version: policy.version,
             temporal: TemporalPolicyView::from(&policy.temporal),
             evidence: EvidencePolicyView {
-                signature_scheme: if policy.version == 2 {
+                signature_scheme: if policy.version >= 2 {
                     "near_nep413".to_string()
                 } else {
                     "ed25519_raw_v1".to_string()
                 },
                 maintainer_public_key_hex: (policy.version == 1)
                     .then(|| encode_hex(&policy.evidence.maintainer_public_key)),
-                maintainer_key_fingerprint_hex: (policy.version == 2)
+                maintainer_key_fingerprint_hex: (policy.version >= 2)
                     .then(|| encode_hex(&policy.evidence.maintainer_public_key)),
             },
             evaluator: EvaluatorPolicyView {

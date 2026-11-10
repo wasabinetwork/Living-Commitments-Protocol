@@ -2,16 +2,20 @@
 
 import {
   buildHeartbeatSigningPayload,
+  createRandomNonceHex,
   createNep413HeartbeatEvidence,
   LcpClient,
   NearJsonRpcTransport,
   nearPublicKeyFingerprintHex,
+  validateServiceAvailabilityPolicyInput,
 } from "@lcp/sdk";
 import type {
+  BoundedPayoutAuthorityGrantView,
   ChallengeView,
   ClaimEligibilityView,
   CommitmentSummaryView,
   CreateCommitmentArgs,
+  CreateServiceAvailabilityCommitmentArgs,
   HeartbeatSigningInput,
   CommitmentPolicyView,
   CommitmentView,
@@ -23,8 +27,13 @@ import type {
   NearSignedMessage,
   LcpEvent,
   SignedHeartbeatEvidence,
+  SignedProbeReport,
+  ServiceAvailabilityPolicyInput,
+  ServicePolicyAmendmentView,
   TrancheView,
 } from "@lcp/sdk";
+import { ReviewerAccessPanel } from "./reviewer-access-panel";
+import { AuthorityAdapterCard, ServicePolicyAmendmentCard } from "./governance-panels";
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 
@@ -61,6 +70,10 @@ interface NearConnectorPort {
 interface CommitmentData {
   commitment: CommitmentView;
   policy: CommitmentPolicyView | null;
+  serviceAvailabilityPolicy: ServiceAvailabilityPolicyInput | null;
+  servicePolicyAmendment: ServicePolicyAmendmentView | null;
+  latestAuthorityGrant: BoundedPayoutAuthorityGrantView | null;
+  governanceMethodsAvailable: boolean;
   chainTimeNs: string | null;
   chainTimeCapturedAtMs: number;
   evaluation: EvaluationRecordView | null;
@@ -200,7 +213,12 @@ export function Dashboard() {
       for (let id = latestEvaluationId; id >= firstEvaluationId && id > 0n; id -= 1n) {
         evaluationIds.push(id.toString());
       }
-      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche] = await Promise.all([
+      const amendmentViewPromise = policy?.version === 3
+        ? client.getLatestServicePolicyAmendment(normalizedId).then((value) => ({ value, available: true }), () => ({ value: null, available: false }))
+        : Promise.resolve({ value: null, available: true });
+      const authorityViewPromise = client.getLatestBoundedPayoutAuthorityGrant(normalizedId)
+        .then((value) => ({ value, available: true }), () => ({ value: null, available: false }));
+      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche, serviceAvailabilityPolicy, amendmentView, authorityView] = await Promise.all([
         Promise.all(evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)))
           .then((records) => records.filter((record): record is EvaluationRecordView => record !== null)),
         Promise.all(evaluationIds.map((evaluationId) => client.getChallengeForEvaluation(normalizedId, evaluationId)))
@@ -212,13 +230,18 @@ export function Dashboard() {
           ? client.getChallenge(commitment.active_challenge_id)
           : Promise.resolve(null),
         epoch ? client.getTranche(normalizedId, epoch) : Promise.resolve(null),
+        policy?.version === 3 ? client.getServiceAvailabilityPolicy(normalizedId) : Promise.resolve(null),
+        amendmentViewPromise,
+        authorityViewPromise,
       ]);
+      const servicePolicyAmendment = amendmentView.value;
+      const latestAuthorityGrant = authorityView.value;
       const allChallengeHistory = [...challengeHistory];
       if (activeChallenge && !allChallengeHistory.some((challenge) => challenge.id === activeChallenge.id)) {
         allChallengeHistory.push(activeChallenge);
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
-      setData({ commitment, policy, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      setData({ commitment, policy, serviceAvailabilityPolicy, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
       setData(null);
@@ -227,6 +250,19 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function connectedWalletClient(): LcpClient {
+    const connector = connectorRef.current;
+    if (!connector || !accountId) throw new Error("Connect the NEAR account authorized for this action.");
+    return new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+      rpcUrl: RPC_URL,
+      sendTransaction: createWalletSender(connector),
+    }));
+  }
+
+  function readClient(): LcpClient {
+    return new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
   }
 
   async function connectWallet() {
@@ -311,7 +347,10 @@ export function Dashboard() {
     };
   }
 
-  async function createCommitment(args: CreateCommitmentArgs, storageDeposit: string) {
+  async function createCommitment(
+    args: CreateCommitmentArgs | CreateServiceAvailabilityCommitmentArgs,
+    storageDeposit: string,
+  ) {
     if (!CONTRACT_ID) {
       setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local before creating a commitment.");
       return;
@@ -330,10 +369,11 @@ export function Dashboard() {
         rpcUrl: RPC_URL,
         sendTransaction: createWalletSender(connector),
       });
-      const newId = await new LcpClient(CONTRACT_ID, transport).createCommitment(args, {
-        attachedDepositYocto: storageDeposit,
-        gas: "150000000000000",
-      });
+      const client = new LcpClient(CONTRACT_ID, transport);
+      const options = { attachedDepositYocto: storageDeposit, gas: "150000000000000" };
+      const newId = "service_availability" in args
+        ? await client.createServiceAvailabilityCommitment(args, options)
+        : await client.createCommitment(args, options);
       const id = String(newId);
       setCommitmentId(id);
       const loaded = await loadCommitment(id);
@@ -436,6 +476,41 @@ export function Dashboard() {
         : `Evaluation request #${evaluationId} returned successfully. Reload commitment #${data.commitment.id} to verify its state.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The evaluation request failed.");
+    } finally {
+      setRequestingEvaluation(false);
+    }
+  }
+
+  async function submitServiceEvaluation(reports: SignedProbeReport[], storageDeposit: string) {
+    if (!data) return;
+    const connector = connectorRef.current;
+    if (!connector || !accountId) {
+      setError("Connect the maintainer or sponsor wallet before requesting an evaluation.");
+      return;
+    }
+    if (!data.policy || (accountId !== data.commitment.maintainer && accountId !== data.policy.budget.sponsor)) {
+      setError(`Only ${data.commitment.maintainer} or ${data.policy?.budget.sponsor ?? "the configured sponsor"} can request evaluation.`);
+      return;
+    }
+
+    setRequestingEvaluation(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      const evaluationId = await client.requestServiceEvaluation(data.commitment.id, reports, {
+        attachedDepositYocto: storageDeposit,
+        gas: "180000000000000",
+      });
+      const loaded = await loadCommitment(data.commitment.id);
+      setActionMessage(loaded
+        ? `Evaluation #${evaluationId} requested from ${reports.length} signed source report${reports.length === 1 ? "" : "s"}.`
+        : `Evaluation request #${evaluationId} returned successfully. Reload commitment #${data.commitment.id} to verify its state.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The service availability evaluation request failed.");
     } finally {
       setRequestingEvaluation(false);
     }
@@ -873,18 +948,30 @@ export function Dashboard() {
                 onFund={submitSetupAction}
               />
             )}
-            {data.commitment.lifecycle === "Active" && data.policy && (
-              <EvidenceSubmissionCard
-                key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
-                data={data}
-                accountId={accountId}
-                busy={requestingEvaluation || expiringEvaluation}
-                pendingTimeoutNs={data.evaluationTimeoutNs}
-                onExpire={expirePendingEvaluation}
-                onSubmit={submitEvaluation}
-                onSignMessage={signWalletMessage}
-              />
-            )}
+            {data.commitment.lifecycle === "Active" && data.policy && (data.policy.version === 3
+              ? (
+                <ServiceAvailabilityEvidenceCard
+                  key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+                  data={data}
+                  accountId={accountId}
+                  busy={requestingEvaluation || expiringEvaluation}
+                  pendingTimeoutNs={data.evaluationTimeoutNs}
+                  onExpire={expirePendingEvaluation}
+                  onSubmit={submitServiceEvaluation}
+                />
+              )
+              : (
+                <EvidenceSubmissionCard
+                  key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+                  data={data}
+                  accountId={accountId}
+                  busy={requestingEvaluation || expiringEvaluation}
+                  pendingTimeoutNs={data.evaluationTimeoutNs}
+                  onExpire={expirePendingEvaluation}
+                  onSubmit={submitEvaluation}
+                  onSignMessage={signWalletMessage}
+                />
+              ))}
             {data.commitment.lifecycle === "Active" && data.policy && (
               <ChallengeControlsCard
                 data={data}
@@ -957,13 +1044,29 @@ export function Dashboard() {
                       <Fact label="RECOVERY" value={data.policy.temporal.recovery_allowed ? "Allowed by policy" : "Breach remains latched"} />
                       <Fact label="EVALUATOR" value={data.policy.evaluator.outlayer_account} mono />
                       <Fact
-                        label={data.policy.version === 2 ? "MAINTAINER KEY FINGERPRINT" : "MAINTAINER KEY"}
-                        value={data.policy.version === 2
+                        label={data.policy.version >= 2 ? "MAINTAINER KEY FINGERPRINT" : "MAINTAINER KEY"}
+                        value={data.policy.version >= 2
                           ? data.policy.evidence.maintainer_key_fingerprint_hex ?? "Unavailable"
                           : data.policy.evidence.maintainer_public_key_hex ?? "Unavailable"}
                         mono
                       />
                     </div>
+                    {data.policy.version === 3 && data.serviceAvailabilityPolicy && (
+                      <div className="service-policy-details">
+                        <p className="eyebrow">INDEPENDENT SERVICE SOURCES</p>
+                        <div className="policy-lines">
+                          <Fact label="TARGET FINGERPRINT" value={data.serviceAvailabilityPolicy.target_id} mono />
+                          <Fact label="EXPECTED HTTP" value={`${data.serviceAvailabilityPolicy.expected_status_min}–${data.serviceAvailabilityPolicy.expected_status_max}`} />
+                          <Fact label="LATENCY LIMIT" value={`${data.serviceAvailabilityPolicy.max_latency_ms} ms`} />
+                          <Fact label="REQUIRED AGREEMENT" value={`${data.serviceAvailabilityPolicy.minimum_agreeing_sources} of ${data.serviceAvailabilityPolicy.sources.length} · ${data.serviceAvailabilityPolicy.minimum_corroboration_bps} bps`} />
+                        </div>
+                        <ul className="service-source-list">
+                          {data.serviceAvailabilityPolicy.sources.map((source) => (
+                            <li key={source.source_id}><strong>{source.source_id}</strong><span>{source.operator_id}</span><code>{source.public_key_hex}</code></li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     <div className="digest-row"><span>POLICY DIGEST</span><code>{data.commitment.policy_hash}</code></div>
                     <div className="digest-row"><span>WASM SHA-256</span><code>{data.policy.evaluator.wasm_sha256_hex}</code></div>
                   </>
@@ -987,6 +1090,14 @@ export function Dashboard() {
                     </div>
                     <div className="digest-row"><span>OBSERVED</span><code>{formatDate(data.evaluation.observed_at_ns)}</code></div>
                     <div className="digest-row"><span>EVIDENCE HASH</span><code>{data.evaluation.evidence_hash}</code></div>
+                    {data.evaluation.service_availability && (
+                      <div className="service-agreement-panel" aria-label="Service source agreement">
+                        <div><span>VALID REPORTS</span><strong>{data.evaluation.service_availability.source_counts.valid} / {data.evaluation.service_availability.source_counts.configured}</strong></div>
+                        <div><span>UP / DOWN / ABSTAIN</span><strong>{data.evaluation.service_availability.source_counts.up} / {data.evaluation.service_availability.source_counts.down} / {data.evaluation.service_availability.source_counts.abstained}</strong></div>
+                        <div><span>AGREEMENT COVERAGE</span><strong>{(data.evaluation.service_availability.corroboration_bps / 100).toFixed(2)}%</strong></div>
+                        <p>Coverage describes agreement among configured sources. It is not a probability that the service is truthful.</p>
+                      </div>
+                    )}
                     <div className="digest-row"><span>INPUT HASH</span><code>{data.evaluation.input_hash}</code></div>
                     {data.evaluation.output_hash && <div className="digest-row"><span>OUTPUT HASH</span><code>{data.evaluation.output_hash}</code></div>}
                     <EvaluationProofReference record={data.evaluation} wasmHash={data.policy?.evaluator.wasm_sha256_hex ?? null} />
@@ -1011,6 +1122,88 @@ export function Dashboard() {
                 ) : <p className="empty-copy">No evaluation has been recorded on chain yet.</p>}
               </section>
             </div>
+
+            {data.evaluation && (
+              <ReviewerAccessPanel
+                key={`${data.commitment.id}:${data.evaluation.evaluation_id}:${accountId ?? "disconnected"}`}
+                accountId={accountId}
+                contractId={CONTRACT_ID}
+                commitmentId={data.commitment.id}
+                maintainerAccount={data.commitment.maintainer}
+                chainTimeNs={data.chainTimeNs}
+                evaluation={data.evaluation}
+                onSignMessage={signWalletMessage}
+              />
+            )}
+            {data.policy?.version === 3 && data.serviceAvailabilityPolicy && (
+              <ServicePolicyAmendmentCard
+                accountId={accountId}
+                commitment={data.commitment}
+                commitmentPolicy={data.policy}
+                policy={data.serviceAvailabilityPolicy}
+                amendment={data.servicePolicyAmendment}
+                chainTimeNs={data.chainTimeNs}
+                contractSupported={data.governanceMethodsAvailable}
+                onRefresh={() => loadCommitment(data.commitment.id)}
+                onPropose={(policy, effectiveAtNs, expiresAtNs, nonceHex) => connectedWalletClient().proposeServicePolicyAmendment(
+                  data.commitment.id,
+                  policy,
+                  effectiveAtNs,
+                  expiresAtNs,
+                  nonceHex,
+                  { attachedDepositYocto: parseNearToYocto("0.05"), gas: "180000000000000" },
+                )}
+                onApprove={(amendmentId) => connectedWalletClient().approveServicePolicyAmendment(
+                  data.commitment.id,
+                  amendmentId,
+                  { attachedDepositYocto: parseNearToYocto("0.01"), gas: "150000000000000" },
+                )}
+                onActivate={(amendmentId) => connectedWalletClient().activateServicePolicyAmendment(
+                  data.commitment.id,
+                  amendmentId,
+                  { attachedDepositYocto: parseNearToYocto("0.05"), gas: "180000000000000" },
+                )}
+                onExpire={(amendmentId) => connectedWalletClient().expireServicePolicyAmendment(data.commitment.id, amendmentId)}
+                onCancel={(amendmentId) => connectedWalletClient().cancelServicePolicyAmendment(data.commitment.id, amendmentId)}
+              />
+            )}
+            {data.policy && (
+              <AuthorityAdapterCard
+                accountId={accountId}
+                commitment={data.commitment}
+                contractId={CONTRACT_ID}
+                policy={data.policy}
+                latestGrant={data.latestAuthorityGrant}
+                eligibility={data.eligibility}
+                contractSupported={data.governanceMethodsAvailable}
+                chainTimeNs={data.chainTimeNs}
+                onRefresh={() => loadCommitment(data.commitment.id)}
+                onLoadGrant={(grantId) => readClient().getBoundedPayoutAuthorityGrant(data.commitment.id, grantId)}
+                onLoadAdapterStatus={(adapterAccount) => readClient().getBoundedPayoutAdapterPoolStatus(adapterAccount)}
+                onWithdrawAdapterPool={(adapterAccount, recipient, amountNear) => connectedWalletClient().withdrawBoundedPayoutAdapterPool(
+                  adapterAccount,
+                  recipient,
+                  parseNearToYocto(amountNear),
+                )}
+                onCreateGrant={(grantId, adapter, resource, perAction, cumulative, expiresAtNs) => connectedWalletClient().createBoundedPayoutAuthorityGrant(
+                  data.commitment.id,
+                  grantId,
+                  adapter,
+                  resource,
+                  parseNearToYocto(perAction),
+                  parseNearToYocto(cumulative),
+                  expiresAtNs,
+                  { attachedDepositYocto: parseNearToYocto("0.05"), gas: "180000000000000" },
+                )}
+                onRevokeGrant={(grantId) => connectedWalletClient().revokeAuthorityGrant(data.commitment.id, grantId)}
+                onExecuteGrant={(grantId, nonce, amount) => connectedWalletClient().executeAuthorityGrant(
+                  data.commitment.id,
+                  grantId,
+                  nonce,
+                  parseNearToYocto(amount),
+                )}
+              />
+            )}
 
             <div className="bottom-grid">
               <section className="content-card consequence-card">
@@ -1110,9 +1303,10 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
   const actions: Array<{
     atNs: string;
     order: number;
-    kind: "evaluation" | "challenge-open" | "challenge-upheld" | "challenge-invalidated";
+    kind: "policy-amended" | "evaluation" | "challenge-open" | "challenge-upheld" | "challenge-invalidated";
     record?: EvaluationRecordView;
     challenge?: ChallengeView;
+    amendment?: ServicePolicyAmendmentView;
   }> = [];
 
   for (const record of sortedEvaluations) {
@@ -1133,6 +1327,15 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
       challenge,
     });
   }
+  const activeAmendment = data.servicePolicyAmendment;
+  if (activeAmendment?.status === "activated" && activeAmendment.activated_at_ns) {
+    actions.push({
+      atNs: activeAmendment.activated_at_ns,
+      order: -1,
+      kind: "policy-amended",
+      amendment: activeAmendment,
+    });
+  }
   actions.sort((left, right) => {
     const leftNs = BigInt(left.atNs);
     const rightNs = BigInt(right.atNs);
@@ -1145,7 +1348,7 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
   let breachLatched = false;
   let stateIsKnown = historyIsComplete || sortedEvaluations.length === 0;
   let cursorNs = BigInt(commitment.activated_at_ns);
-  const cursorActivationNs = BigInt(commitment.activated_at_ns);
+  let cursorActivationNs = BigInt(commitment.activated_at_ns);
 
   function healthAt(atNs: bigint): "AwaitingEvidence" | "Healthy" | "AtRisk" | "Breached" {
     if (breachLatched) return "Breached";
@@ -1189,7 +1392,18 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
   for (const action of actions) {
     const atNs = BigInt(action.atNs);
     addDerivedTransitions(atNs);
-    if (action.kind === "challenge-open" && action.challenge) {
+    if (action.kind === "policy-amended" && action.amendment) {
+      lastGoodObservedNs = null;
+      lastGoodEvaluationId = null;
+      cursorActivationNs = atNs;
+      stateIsKnown = true;
+      points.push({
+        label: "Source policy amended · evidence clock restarted",
+        detail: `Amendment ${action.amendment.amendment_id} took effect. New compliant evidence must satisfy policy ${action.amendment.new_policy_hash.slice(0, 12)}…`,
+        atNs: action.atNs,
+        source: "recorded",
+      });
+    } else if (action.kind === "challenge-open" && action.challenge) {
       points.push({
         label: "Challenge opened · claim paused",
         detail: `Challenge #${action.challenge.id} is recorded against evaluation #${action.challenge.evaluation_id}.`,
@@ -1240,13 +1454,20 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
           atNs: action.atNs,
           source: "recorded",
         });
-      } else {
+      } else if (record.verdict === "NonCompliant") {
         if (negativeSinceNs === null) negativeSinceNs = atNs;
         stateIsKnown = true;
         const after = healthAt(atNs);
         points.push({
           label: `${after} · noncompliant evaluation accepted`,
           detail: `Evaluation #${record.evaluation_id} started or continued a negative health period.`,
+          atNs: action.atNs,
+          source: "recorded",
+        });
+      } else {
+        points.push({
+          label: "Inconclusive · source quorum not met",
+          detail: `Evaluation #${record.evaluation_id} did not change health clocks or claim eligibility.`,
           atNs: action.atNs,
           source: "recorded",
         });
@@ -1352,7 +1573,7 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
         <p className="empty-copy">Activation time is not available for this commitment.</p>
       ) : (
         <>
-          <p className="timeline-explainer">Recent health transitions come from accepted evaluations and challenge outcomes. Deadlines are derived from recorded timestamps and the immutable policy; finalized NEAR time shows the next active deadline.</p>
+          <p className="timeline-explainer">Recent health transitions come from accepted evaluations, challenge outcomes, and policy amendments. Amendments restart the initial evidence clock; deadlines are derived from recorded timestamps and the active policy.</p>
           <ol className="timeline-list">
             {points.map((point, index) => (
               <li className={`timeline-item ${index === nextPointIndex ? "timeline-item-next" : ""}`} key={`${point.label}-${point.atNs}`}>
@@ -1684,6 +1905,136 @@ function NextTrancheMetric({ data }: { data: CommitmentData }) {
       icon="↗"
     />
   );
+}
+
+function ServiceAvailabilityEvidenceCard({
+  data,
+  accountId,
+  busy,
+  pendingTimeoutNs,
+  onExpire,
+  onSubmit,
+}: {
+  data: CommitmentData;
+  accountId: string | null;
+  busy: boolean;
+  pendingTimeoutNs: string | null;
+  onExpire: () => Promise<void>;
+  onSubmit: (reports: SignedProbeReport[], storageDeposit: string) => Promise<void>;
+}) {
+  const { commitment, policy, serviceAvailabilityPolicy } = data;
+  const [reportsJson, setReportsJson] = useState("");
+  const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_EVALUATION_STORAGE_DEPOSIT);
+  const [formError, setFormError] = useState<string | null>(null);
+  const canRequest = Boolean(accountId && policy && (
+    accountId === commitment.maintainer || accountId === policy.budget.sponsor
+  ));
+  const blocked = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    try {
+      if (!serviceAvailabilityPolicy) throw new Error("The pinned service source policy is unavailable.");
+      if (blocked) throw new Error("Resolve the pending evaluation or active challenge before requesting another evaluation.");
+      const parsed: unknown = JSON.parse(reportsJson);
+      const candidates: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+      if (candidates.length === 0 || candidates.length > serviceAvailabilityPolicy.sources.length) {
+        throw new Error(`Paste between one and ${serviceAvailabilityPolicy.sources.length} signed reports.`);
+      }
+      const policyHash = await sha256TextHex(JSON.stringify(serviceAvailabilityPolicy));
+      const seenSources = new Set<string>();
+      const reports = candidates.map((candidate): SignedProbeReport => {
+        if (!candidate || typeof candidate !== "object" || !("payload" in candidate) || !("signature_hex" in candidate)) {
+          throw new Error("Every report must contain a payload and signature_hex field.");
+        }
+        const report = candidate as SignedProbeReport;
+        const payload = report.payload;
+        const source = serviceAvailabilityPolicy.sources.find((item) => item.source_id === payload?.source_id);
+        if (!source || seenSources.has(payload.source_id)) {
+          throw new Error("Each report must come from a different source pinned by this policy.");
+        }
+        seenSources.add(payload.source_id);
+        if (payload.schema !== "lcp.service_availability.report.v1"
+            || payload.contract_id !== CONTRACT_ID
+            || payload.commitment_id !== commitment.id
+            || payload.evaluation_id !== commitment.next_evaluation_id
+            || payload.policy_version !== 3
+            || payload.policy_hash !== commitment.policy_hash
+            || payload.source_policy_hash !== policyHash
+            || payload.operator_id !== source.operator_id
+            || payload.target_id !== serviceAvailabilityPolicy.target_id
+            || !/^(0|[1-9][0-9]*)$/.test(payload.observed_at_ns)
+            || !/^[0-9a-f]{128}$/.test(report.signature_hex)) {
+          throw new Error(`Report ${payload.source_id} is stale or does not match this commitment and pinned policy.`);
+        }
+        return report;
+      });
+      if (JSON.stringify(reports).length > 32_768) throw new Error("The signed report bundle exceeds the 32 KiB evaluator limit.");
+      const deposit = parseNearToYocto(storageDepositNear);
+      if (BigInt(deposit) === 0n) throw new Error("Request storage deposit must be greater than zero.");
+      await onSubmit(reports, deposit);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "Check the signed probe reports and try again.");
+    }
+  }
+
+  return (
+    <section className="content-card evidence-submission">
+      <div className="card-heading">
+        <div><p className="eyebrow">ACTIVE · MULTI-SOURCE EVIDENCE</p><h3>Submit signed service probes</h3></div>
+        <span className="card-index">NEXT · {commitment.next_evaluation_id}</span>
+      </div>
+      <p className="evidence-intro">
+        Each operator generates and signs a report for this evaluation. Paste the reports as a JSON array, or paste one report object. The browser checks their commitment, policy, source, timestamp, and signature format before the wallet submits them.
+      </p>
+      {serviceAvailabilityPolicy ? (
+        <div className="service-agreement-panel">
+          <div><span>QUORUM</span><strong>{serviceAvailabilityPolicy.minimum_agreeing_sources} of {serviceAvailabilityPolicy.sources.length}</strong></div>
+          <div><span>MINIMUM COVERAGE</span><strong>{(serviceAvailabilityPolicy.minimum_corroboration_bps / 100).toFixed(2)}%</strong></div>
+          <div><span>MAX REPORT AGE</span><strong>{formatDuration(serviceAvailabilityPolicy.max_source_lag_ns)}</strong></div>
+          <p>The HTTP endpoint and its salt are not stored in this policy. Report JSON is included in the public NEAR transaction.</p>
+        </div>
+      ) : <p className="form-wallet-hint">The pinned v3 source policy could not be loaded.</p>}
+      {commitment.pending_evaluation_id && (
+        <div className="pending-evaluation">
+          <p className="form-wallet-hint">Evaluation #{commitment.pending_evaluation_id} is pending{pendingTimeoutNs ? ` until ${formatDate(pendingTimeoutNs)}` : ""}.</p>
+          <button className="challenge-expire-button" type="button" onClick={() => void onExpire()} disabled={!accountId || busy || !pendingTimeoutNs}>
+            {busy ? "Expiring evaluation…" : "Expire after timeout"}
+          </button>
+          <small>Any connected wallet can expire the request after its deadline if the evaluator callback has not completed.</small>
+        </div>
+      )}
+      {commitment.active_challenge_id && <p className="form-wallet-hint">Resolve challenge #{commitment.active_challenge_id} before requesting another evaluation.</p>}
+      {!canRequest && !commitment.pending_evaluation_id && <p className="form-wallet-hint">Connect the commitment maintainer or configured sponsor wallet to submit reports.</p>}
+      <form className="service-report-form" onSubmit={(event) => void handleSubmit(event)}>
+        <FormField label="Signed probe reports · JSON array" wide>
+          <textarea
+            className="mono-input service-report-json"
+            value={reportsJson}
+            onChange={(event) => setReportsJson(event.target.value)}
+            placeholder={'[\n  {"payload": { ... }, "signature_hex": "..."},\n  {"payload": { ... }, "signature_hex": "..."}\n]'}
+            rows={8}
+            spellCheck={false}
+            disabled={busy || blocked}
+            required
+          />
+          <small>Use the probe reports produced by each configured operator for evaluation #{commitment.next_evaluation_id}. Do not include private endpoint URLs, salts, credentials, or response bodies.</small>
+        </FormField>
+        <FormField label="Request storage deposit · NEAR">
+          <input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} disabled={busy} />
+          <small>The contract reserves callback storage and refunds any excess.</small>
+        </FormField>
+        {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
+        <div className="creation-submit-row"><p>The evaluator verifies each signature and applies the pinned quorum. Inconclusive reports do not refresh the commitment’s health clock.</p><button className="lookup-button" type="submit" disabled={busy || !canRequest || blocked || !serviceAvailabilityPolicy}>{busy ? <><span className="spinner" />Requesting evaluation</> : <>Request service evaluation <span aria-hidden="true">↗</span></>}</button></div>
+      </form>
+    </section>
+  );
+}
+
+async function sha256TextHex(text: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function EvidenceSubmissionCard({
@@ -2298,7 +2649,7 @@ function CreateCommitmentForm({
   connectedAccountId: string | null;
   contractConfigured: boolean;
   busy: boolean;
-  onCreate: (args: CreateCommitmentArgs, storageDeposit: string) => Promise<void>;
+  onCreate: (args: CreateCommitmentArgs | CreateServiceAvailabilityCommitmentArgs, storageDeposit: string) => Promise<void>;
   onPinMaintainerKey: (accountId: string) => Promise<{ accountId: string; publicKey: NearEd25519PublicKey; fingerprint: string }>;
 }) {
   const [hydrated, setHydrated] = useState(false);
@@ -2329,6 +2680,8 @@ function CreateCommitmentForm({
     storageDepositNear: DEFAULT_STORAGE_DEPOSIT,
   });
   const [selectedTemplateId, setSelectedTemplateId] = useState(POLICY_TEMPLATES[0].id);
+  const [evidenceMode, setEvidenceMode] = useState<"heartbeat" | "service_availability">("heartbeat");
+  const [servicePolicyJson, setServicePolicyJson] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [pinnedKeyAccountId, setPinnedKeyAccountId] = useState<string | null>(null);
   const [keyFingerprint, setKeyFingerprint] = useState<string | null>(null);
@@ -2371,9 +2724,19 @@ function CreateCommitmentForm({
     try {
       const intendedAccountId = fields.maintainer.trim() || connectedAccountId || "";
       if (!pinnedKeyAccountId || pinnedKeyAccountId !== intendedAccountId) {
-        throw new Error("Pin the connected maintainer wallet key before creating this v2 commitment.");
+        throw new Error("Pin the connected maintainer wallet key before creating this commitment.");
       }
-      const args = buildCreateCommitmentArgs(fields, connectedAccountId);
+      const baseArgs = buildCreateCommitmentArgs(fields, connectedAccountId);
+      const args = evidenceMode === "service_availability"
+        ? {
+          ...baseArgs,
+          service_availability: parseServiceAvailabilityPolicy(
+            servicePolicyJson,
+            secondsToNanoseconds(fields.maxSourceLagSeconds, "Maximum source lag"),
+            secondsToNanoseconds(fields.evidenceTtlSeconds, "Evidence freshness TTL"),
+          ),
+        }
+        : baseArgs;
       const storageDeposit = parseNearToYocto(fields.storageDepositNear);
       if (BigInt(storageDeposit) === 0n) throw new Error("Storage deposit must be greater than zero.");
       await onCreate(args, storageDeposit);
@@ -2408,7 +2771,31 @@ function CreateCommitmentForm({
           </select>
         </FormField>
       </div>
-      <p className="form-wallet-hint policy-template-note">{selectedTemplate?.description} Selecting a template changes only the subject and time/budget defaults; account roles, wallet key, and evaluator artifact stay as entered. Every value remains editable before creation. The community-service profile is illustrative: the current evaluator checks the signed heartbeat and digest format, not service quality.</p>
+      <p className="form-wallet-hint policy-template-note">{selectedTemplate?.description} Selecting a template changes only the subject and time/budget defaults; account roles, wallet key, and evaluator artifact stay as entered. Every value remains editable before creation.</p>
+      <div className="form-grid">
+        <FormField label="Evidence model" wide>
+          <select value={evidenceMode} onChange={(event) => setEvidenceMode(event.target.value as "heartbeat" | "service_availability")}>
+            <option value="heartbeat">Maintainer-signed heartbeat · v2</option>
+            <option value="service_availability">Independent service probes · v3</option>
+          </select>
+        </FormField>
+      </div>
+      {evidenceMode === "service_availability" && (
+        <div className="form-grid">
+          <FormField label="Pinned service source policy · JSON" wide>
+            <textarea
+              className="mono-input service-report-json"
+              value={servicePolicyJson}
+              onChange={(event) => setServicePolicyJson(event.target.value)}
+              placeholder={'{\n  "schema": "lcp.service_availability.policy.v1",\n  "target_id": "64 lowercase hex characters",\n  "max_source_lag_ns": "30000000000",\n  "expected_status_min": 200,\n  "expected_status_max": 299,\n  "max_latency_ms": 1500,\n  "minimum_agreeing_sources": 2,\n  "minimum_corroboration_bps": 6000,\n  "sources": [{ "source_id": "operator-a", "operator_id": "operator-a.near", "public_key_hex": "64 lowercase hex characters" }]\n}'}
+              rows={11}
+              spellCheck={false}
+              required
+            />
+            <small>Use a sorted roster of 2–8 distinct operators and keys. Generate target_id with the service-availability probe tool; the endpoint URL and salt stay with the operators. The temporal “Max source lag” must be at least as long as this policy’s report age limit.</small>
+          </FormField>
+        </div>
+      )}
       <div className="creation-section-heading"><span>01</span><div><strong>People &amp; promise</strong><small>Who commits, funds, arbitrates, and receives support.</small></div></div>
       <div className="form-grid">
         <FormField label="Commitment subject" wide><input maxLength={128} value={fields.subject} onChange={(event) => update("subject", event.target.value)} placeholder="e.g. Maintain the community API" required /></FormField>
@@ -2430,7 +2817,7 @@ function CreateCommitmentForm({
           {keyFingerprint && <small className="form-wallet-hint">Pinned key fingerprint · <code>{keyFingerprint}</code> · signed by {pinnedKeyAccountId}</small>}
           {!connectedAccountId && <small className="form-wallet-hint">Connect the maintainer’s NEAR wallet first. The key is read from a NEP-413 wallet signature.</small>}
         </FormField>
-        <FormField label="Evaluator WASM HTTPS URL" wide><input value={fields.wasmUrl} onChange={(event) => update("wasmUrl", event.target.value)} placeholder="https://…/maintenance-heartbeat.wasm" required /></FormField>
+        <FormField label="Evaluator WASM HTTPS URL" wide><input value={fields.wasmUrl} onChange={(event) => update("wasmUrl", event.target.value)} placeholder={evidenceMode === "service_availability" ? "https://…/service-availability-evaluator.wasm" : "https://…/maintenance-heartbeat.wasm"} required /></FormField>
         <FormField label="Evaluator WASM SHA-256 · 64 lowercase hex" wide><input className="mono-input" value={fields.wasmSha256} onChange={(event) => update("wasmSha256", event.target.value)} placeholder="Digest of the exact uploaded WASM file" required /></FormField>
       </div>
 
@@ -2464,13 +2851,32 @@ function CreateCommitmentForm({
       {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
       {!connectedAccountId && <p className="form-wallet-hint">Connect a testnet wallet to create the draft. Your wallet account becomes the on-chain creator.</p>}
       {!contractConfigured && <p className="form-wallet-hint">Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local before creating.</p>}
-      <div className="creation-submit-row"><p>Storage bond excess is refunded. The evaluator URL and digest should refer to the same uploaded WASM artifact.</p><button className="lookup-button" type="submit" disabled={!hydrated || busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Create draft <span aria-hidden="true">↗</span></>}</button></div>
+      <div className="creation-submit-row"><p>Storage bond excess is refunded. The evaluator URL and digest should refer to the same uploaded WASM artifact. Source roster and quorum become immutable with this policy.</p><button className="lookup-button" type="submit" disabled={!hydrated || busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Create draft <span aria-hidden="true">↗</span></>}</button></div>
     </form>
   );
 }
 
 function FormField({ label, wide = false, children }: { label: string; wide?: boolean; children: ReactNode }) {
   return <label className={`form-field ${wide ? "form-field-wide" : ""}`}><span>{label}</span>{children}</label>;
+}
+
+function parseServiceAvailabilityPolicy(
+  text: string,
+  temporalMaxSourceLagNs: string,
+  evidenceTtlNs: string,
+): ServiceAvailabilityPolicyInput {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("Service source policy must be valid JSON.");
+  }
+  validateServiceAvailabilityPolicyInput(value);
+  if (BigInt(value.max_source_lag_ns) > BigInt(temporalMaxSourceLagNs)
+      || BigInt(value.max_source_lag_ns) > BigInt(evidenceTtlNs)) {
+    throw new Error("Service source-age limit cannot exceed the commitment's maximum source lag or evidence TTL.");
+  }
+  return value;
 }
 
 function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: string | null): CreateCommitmentArgs {
