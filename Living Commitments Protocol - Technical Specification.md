@@ -523,7 +523,7 @@ The implementation must separately account for:
 - Commitment escrow.
 - Evaluation execution expenses.
 
-A fixed demo storage bond is acceptable only if its amount is derived from measured storage usage and bounded record counts.
+A fixed commitment storage bond is acceptable only if its amount is derived from measured storage usage and bounded record counts.
 
 The initial implementation measures storage growth when creating and activating a commitment, requires the corresponding storage deposit, records that amount separately from escrow and evaluation funding, and refunds any excess attached deposit. Later state transitions that grow storage must follow the same accounting rule. Storage deposits are not available for budget claims.
 
@@ -932,7 +932,7 @@ This proves that a designated maintainer submitted a properly bound statement.
 
 It does not independently prove service uptime.
 
-The demo must describe this as a controlled evidence source.
+The LCP Console must describe this as a controlled evidence source.
 
 ## 8.3 Evaluator determinism
 
@@ -1321,7 +1321,7 @@ living-commitments/
 │   │   └── src/
 │   └── schemas/
 ├── apps/
-│   └── demo/
+│   └── console/
 ├── tests/
 │   ├── integration/
 │   └── e2e/
@@ -1353,7 +1353,7 @@ Typed calls, views, and event parsing.
 
 Canonical JSON definitions shared across contract tooling, evaluator, and frontend.
 
-**`demo`**
+**`console`**
 
 A thin interface around protocol functions.
 
@@ -1361,7 +1361,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (2026-11-09):** Milestones A through F have working implementations for temporal state, OutLayer request/callback/timeout, bounded evaluation history, challenge resolution, health-gated claims, transfer reconciliation, closure/refunds, wallet journeys, and the demo. The SDK provides typed contract calls and finalized NEAR JSON-RPC reads with an injected wallet sender. The dashboard shows recent health transitions and policy-derived deadlines; its OutLayer panel reports public-record availability and hash bindings while leaving quote verification to OutLayer's Verify report or standalone tool. The optional challenge completion timestamp uses a reserved raw-storage slot and does not change persisted contract state layout. The NEP-413-capable contract is deployed as `bK4nSCpE52DF4b2AbNunaEMy2FCfRDbsgwjZAVaWfDR`; prior commitment state was preserved. Testnet evidence covers a PROVEN OutLayer evaluation, evaluator failure modes, breach/recovery, failed-transfer retry, arbiter outcomes, payout/refund, and pagination. Deterministic tests and reproduction instructions are documented in `TESTING.md`; key browser journeys were manually verified in Firefox. Repository publication remains required for PRD requirement LCP-017; live status and receipts are in `TESTNET-E2E-STATUS.md`.
+**Repository status (2026-11-09):** Milestones A through F have working implementations for temporal state, OutLayer request/callback/timeout, bounded evaluation history, challenge resolution, health-gated claims, transfer reconciliation, closure/refunds, wallet journeys, and the LCP Console. The SDK provides typed contract calls and finalized NEAR JSON-RPC reads with an injected wallet sender. The dashboard shows recent health transitions and policy-derived deadlines; its OutLayer panel reports public-record availability and hash bindings while leaving quote verification to OutLayer's Verify report or standalone tool. The optional challenge completion timestamp uses a reserved raw-storage slot and does not change persisted contract state layout. The NEP-413-capable contract is deployed as `bK4nSCpE52DF4b2AbNunaEMy2FCfRDbsgwjZAVaWfDR`; prior commitment state was preserved. Testnet evidence covers a PROVEN OutLayer evaluation, evaluator failure modes, breach/recovery, failed-transfer retry, arbiter outcomes, payout/refund, and pagination. Deterministic tests and reproduction instructions are documented in `TESTING.md`; key browser journeys were manually verified in Firefox. Repository publication remains required for PRD requirement LCP-017; live status and receipts are in `TESTNET-E2E-STATUS.md`.
 
 ## Milestone A — Pure engine
 
@@ -1427,7 +1427,7 @@ Implement:
 
 **Definition of done:** A commitment breaches, blocks payment, recovers, and permits a future payment.
 
-## Milestone F — Public demo
+## Milestone F — Public LCP Console
 
 Implement:
 
@@ -1440,7 +1440,7 @@ Implement:
 
 **Definition of done:** The complete lifecycle is reproducible without CLI intervention.
 
-The user's Firefox validation covered the lifecycle across multiple fixtures: commitment `24` for NEP-413 creation/evaluation/recovery/closure/refund, an isolated fixture for failed-transfer retry, and commitment `19` for successful payout plus closure/refund. The demo preview's wallet connection, NEAR reads, and OutLayer report lookup also passed. Commitment `24` had no claimable tranche because its funded epochs ended; commitment `19` demonstrates payout.
+The user's Firefox validation covered the lifecycle across multiple fixtures: commitment `24` for NEP-413 creation/evaluation/recovery/closure/refund, an isolated fixture for failed-transfer retry, and commitment `19` for successful payout plus closure/refund. The Console preview's wallet connection, NEAR reads, and OutLayer report lookup also passed. Commitment `24` had no claimable tranche because its funded epochs ended; commitment `19` demonstrates payout.
 
 ---
 
@@ -1520,11 +1520,11 @@ Evidence expiry, breached-claim rejection, fresh-evidence recovery, challenge ti
 
 **Task 011 — Improve commitment discovery — CONTRACT DEPLOYED; RPC AND BROWSER PAGINATION VERIFIED**
 
-The contract exposes a capped newest-first listing by sequential commitment ID; the SDK wraps it and the demo provides ten-record pages with an exclusive cursor. Testnet RPC confirmed descending/exclusive pagination, and Firefox checks confirmed the older-page control across all 21 records.
+The contract exposes a capped newest-first listing by sequential commitment ID; the SDK wraps it and the Console provides ten-record pages with an exclusive cursor. Testnet RPC confirmed descending/exclusive pagination, and Firefox checks confirmed the older-page control across all 21 records.
 
-**Task 012 — Finish the public demo journey — COMPLETE; REPOSITORY PUBLICATION PENDING**
+**Task 012 — Finish the public LCP Console journey — COMPLETE; REPOSITORY PUBLICATION PENDING**
 
-The app reconstructs recent historical health transitions, shows policy-derived deadlines and countdowns, and reports OutLayer public-record availability and digest bindings. Firefox checks verified the historical timeline, wallet connect/disconnect, older-page control, create/fund/activate/evaluate/recover/close/refund flow, payout, and failed-transfer retry across the documented fixtures. The app does not claim to verify the TEE quote; OutLayer's report and standalone verifier remain the verification path. `DEMO-WALKTHROUGH.md` and `TESTING.md` document reproduction. Repository publication remains required before the PRD's public-documentation gate is formally satisfied.
+The app reconstructs recent historical health transitions, shows policy-derived deadlines and countdowns, and reports OutLayer public-record availability and digest bindings. Firefox checks verified the historical timeline, wallet connect/disconnect, older-page control, create/fund/activate/evaluate/recover/close/refund flow, payout, and failed-transfer retry across the documented fixtures. The app does not claim to verify the TEE quote; OutLayer's report and standalone verifier remain the verification path. `CONSOLE-GUIDE.md` and `TESTING.md` document reproduction. Repository publication remains required before the PRD's public-documentation gate is formally satisfied.
 
 ---
 

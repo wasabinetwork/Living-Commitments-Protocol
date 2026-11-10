@@ -1,0 +1,41 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4.129.0/config-schema.json",
+  "name": "lcp-event-indexer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-09",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+      "persist": true
+    }
+  },
+  "limits": {
+    "cpu_ms": 30000,
+    "subrequests": 1000
+  },
+  "triggers": {
+    "crons": ["*/1 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lcp-event-indexer",
+      "database_id": "6725b913-4c7d-4f47-b79a-7bb8f82bf3ee",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "NETWORK": "testnet",
+    "CONTRACT_ID": "livingcommitmentsprotocol.testnet",
+    "SOURCE_BASE_URL": "https://testnet.neardata.xyz",
+    "START_BLOCK_HEIGHT": "276808247",
+    "MAX_BLOCKS_PER_RUN": "20",
+    "MAX_BLOCK_BYTES": "16777216",
+    "SOURCE_REQUEST_INTERVAL_MS": "1000",
+    "ALLOWED_ORIGINS": "http://localhost:3000,https://preview.lcp-preview.pages.dev,https://lcp.gama.works"
+  }
+}

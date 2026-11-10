@@ -3,11 +3,14 @@
   "private": true,
   "workspaces": [
     "packages/sdk",
-    "apps/demo"
+    "apps/console",
+    "services/event-indexer"
   ],
   "scripts": {
     "build:sdk": "npm run build --workspace=@lcp/sdk",
-    "dev": "npm run dev --workspace=@lcp/demo",
-    "build": "npm run build --workspace=@lcp/demo"
+    "dev": "npm run dev --workspace=@lcp/console",
+    "dev:indexer": "npm run dev --workspace=@lcp/event-indexer",
+    "build:indexer": "npm run check --workspace=@lcp/event-indexer",
+    "build": "npm run build --workspace=@lcp/console"
   }
 }

@@ -70,7 +70,7 @@ At least one verification cycle must use a real OutLayer TEE evaluator, with an 
 
 At least one consequence must be enforced by a NEAR smart contract using real testnet funds or a real contract-gated capability.
 
-The implementation must remain independently usable without the demonstration frontend.
+The implementation must remain independently usable without the web application.
 
 ---
 
@@ -514,7 +514,7 @@ Suggested inputs:
 
 The evaluator checks the specified conditions and returns a structured compliance verdict.
 
-The demo may use a controlled evidence source for reproducibility, but it must clearly identify that source as a demonstration fixture rather than independent proof of real-world service quality.
+The application may use a controlled evidence source for reproducibility, but it must clearly identify that source as a demonstration fixture rather than independent proof of real-world service quality.
 
 ---
 
@@ -712,7 +712,7 @@ No unilateral policy replacement is permitted in the MVP.
 | LCP-013 | Protect escrow | Duplicate and unauthorized transfers are rejected |
 | LCP-014 | Expose protocol state | Read methods return policy, evidence, effective status, and history references |
 | LCP-015 | Emit audit events | Important transitions are externally inspectable |
-| LCP-016 | Provide demo application | Full lifecycle can be demonstrated without manual contract calls |
+| LCP-016 | Provide user-facing application | Full lifecycle can be demonstrated without manual contract calls |
 | LCP-017 | Provide tests and documentation | Critical invariants and reproduction instructions are public |
 
 ## 11.2 P1 — If core is stable early
@@ -995,13 +995,13 @@ No production financial custody should be recommended before independent review.
 
 ---
 
-# 16. Demonstration Specification
+# 16. LCP Console Walkthrough Specification
 
-## 16.1 Demo title
+## 16.1 Console title
 
 **The Promise That Expires — and Can Recover**
 
-## 16.2 Demo narrative
+## 16.2 Walkthrough narrative
 
 A community agrees to fund ongoing maintenance of a software service.
 
@@ -1060,7 +1060,7 @@ Attempt to claim the next budget tranche.
 
 The contract rejects the action.
 
-This is the defining moment of the demo.
+This is the defining moment of the walkthrough.
 
 **Scene 6 — Recover**
 
@@ -1099,7 +1099,7 @@ If implemented in the stable release, show a valid challenge freezing a conseque
 
 If challenge handling is incomplete, the project must not claim full dispute support. The relevant release requirement must be marked incomplete.
 
-## 16.5 Demo timing
+## 16.5 Walkthrough timing
 
 Use deliberately short freshness and grace parameters on testnet.
 
@@ -1235,7 +1235,7 @@ Deliver:
 * Wallet integration.
 * Evidence and status timeline.
 
-**Gate:** The full breach-and-recovery demonstration works.
+**Gate:** The full breach-and-recovery walkthrough works.
 
 ## November 13 — Hardening and recording
 
@@ -1248,8 +1248,8 @@ Deliver:
 * Public README.
 * Contract and evaluator addresses.
 * Attestation verification instructions.
-* End-to-end demonstration.
-* Recorded demo.
+* End-to-end walkthrough.
+* Recorded walkthrough.
 * Submission draft.
 
 **Gate:** A fresh developer can reproduce the core flow from documentation.
@@ -1262,7 +1262,7 @@ Deliver:
 
 * Final testnet deployment verification.
 * Public repository verification.
-* Demo publication.
+* LCP Console publication.
 * Track selection.
 * Submission links.
 * Final human review.
@@ -1330,8 +1330,8 @@ The hackathon release succeeds when:
 * Recovery restores eligibility according to policy.
 * An unauthorized or stale evaluation cannot change the commitment.
 * Double settlement is rejected.
-* The contract, evaluator, and demo are publicly reproducible.
-* The demo shows the difference between ongoing verification and one-time milestone approval.
+* The contract, evaluator, and LCP Console are publicly reproducible.
+* The LCP Console shows the difference between ongoing verification and one-time milestone approval.
 
 ## 20.1 Stretch acceptance
 
@@ -1468,10 +1468,10 @@ These must be resolved before or during the first implementation session.
 | TEE result mistaken for truth | High | Explicit provenance and trust-boundary documentation |
 | Evidence source unavailable | High | Reproducible signed fixture and conservative failure behavior |
 | Challenge deadlock | High | Finite timeout and predefined fallback |
-| Product confused with milestone escrow | High | Demo evidence expiration, breach, and recovery |
+| Product confused with milestone escrow | High | LCP Console evidence expiration, breach, and recovery |
 | Overly broad consequence framework | High | One working adapter first |
 | Feature expansion consumes deadline | High | P0 gates and explicit cut order |
-| Demo requires too much waiting | Medium | Short testnet policy periods and edited recording |
+| Walkthrough requires too much waiting | Medium | Short testnet policy periods and edited recording |
 | Policy upgrades introduce authority bypass | High | No unilateral policy mutation |
 
 ---

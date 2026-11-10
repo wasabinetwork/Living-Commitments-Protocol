@@ -2,18 +2,40 @@
 
 ## In progress
 
-- [x] **Cloudflare Pages preview:** deployed the static demo to https://preview.lcp-preview.pages.dev; Firefox checks confirmed wallet connection, NEAR reads, and OutLayer report lookup work.
-- [ ] **Production demo domain:** attach `lcp.gama.works` when the demo is finalized. The `lcp-preview` Direct Upload project is intentionally separate from any future Git-integrated production project.
+- [x] **Cloudflare Pages preview:** deployed the LCP Console to https://preview.lcp-preview.pages.dev; Firefox checks confirmed wallet connection, NEAR reads, and OutLayer report lookup work. The new /health endpoint returned HTTP 200 JSON on the preview deployment.
+- [ ] **Production domain:** attach `lcp.gama.works` when the LCP Console is finalized. The static `/health` JSON route is prepared in the build; it will be reachable at the production domain after deployment. The `lcp-preview` Direct Upload project is intentionally separate from any future Git-integrated production project.
 
 ## P0 public-readiness checklist
 
 - [x] Add contract callback, refund, claim-gating, timestamp, recovery-policy, temporal, and evaluator CLI regression coverage; `cargo test --workspace` currently runs 37 tests.
-- [x] Add reproducible Rust/WASM build instructions, test coverage map, and manual testnet/browser steps in `TESTING.md` and `DEMO-WALKTHROUGH.md`.
+- [x] Add reproducible Rust/WASM build instructions, test coverage map, and manual testnet/browser steps in `TESTING.md` and `CONSOLE-GUIDE.md`.
 - [x] Reconcile testnet lifecycle and Firefox results in `TESTNET-E2E-STATUS.md` and the technical specification.
 - [x] Apply Apache-2.0 to project-authored material and explicitly exclude the upstream `NEAR-HACKATHON-SKILL.md` snapshot.
 - [ ] Publish the repository. This makes PRD requirement LCP-017's tests and reproduction instructions publicly accessible; until then it is prepared but not formally closed.
 
 The production Git-integrated Pages project and `lcp.gama.works` domain are separate deployment tasks, not P0 protocol acceptance criteria.
+
+## P1 roadmap
+
+- [x] Add reusable, editable starter policy templates for the LCP Console; Firefox verified both presets, edits, preserved role/artifact fields, and light/dark notes on 2026-11-09. Templates prefill subject and policy values only; the community-service example is illustrative and does not imply proof of service quality.
+- [x] Record the staged evidence, privacy, amendment, and authority architecture in [P1-ARCHITECTURE.md](P1-ARCHITECTURE.md).
+- [x] Define evidence confidence as visible provenance, freshness, and source agreement rather than a probability of truth.
+- [x] Add the signed-probe offline pilot kit and manually exercise compliant and corroboration-threshold outcomes with locally generated reports; this validates serialization and aggregation only, not operator independence or a live commitment.
+- [ ] Run the community-service availability pilot with at least two independent operators; the signed-probe tool, canonical request assembler, evaluator prototype, and offline runbook exist, but no independent live pilot or contract integration has been completed.
+- [x] Implement a Cloudflare Worker that indexes finalized LCP events in D1, exposes paginated read-only history, and optionally displays that history in the LCP Console; contract reads remain authoritative.
+- [x] Create the testnet D1 database and deploy the Worker at `https://lcp-event-indexer.wasabinetwork.workers.dev` with a once-per-minute Cron Trigger.
+- [x] Verify preview-origin CORS preflight against the deployed Worker.
+- [x] Add a D1 lease to prevent overlapping Cron runs; three consecutive 20-block scheduled runs completed without FastNear rate-limit errors.
+- [x] Confirm the LCP Console archive card in Firefox reports the indexer's catching-up status and explains that older events may not be available yet.
+- [ ] Continue the historical backfill to the current head and verify multi-page commitment event paging once enough history is indexed.
+- [x] Draft the private reviewer request, maintainer consent, encrypted artifact, scoped-access, and revocation model; validate per-commitment OutLayer secret permissions before implementation.
+- [ ] Integrate a v3 source roster and multiple independent evidence sources while preserving v1/v2 commitments.
+- [ ] Integrate configurable quorum and corroboration thresholds on-chain; the standalone evaluator exercises these rules off-chain only.
+- [ ] Expose source agreement coverage in commitment views and the LCP Console without presenting it as a probability of truth.
+- [ ] Add consent-based policy amendments that preserve prior policy digests and record affected-party approvals.
+- [ ] Add a contract-gated authority consequence adapter that operates only for accounts that explicitly grant it authority.
+
+For the indexer, use a finalized NEAR block feed and persist each block's LCP events with its cursor atomically; the LCP Console must continue reading health and settlement from the contract. The [FastNear NEAR Data Server](https://github.com/fastnear/neardata-server) provides finalized blocks and receipt outcomes without requiring a custom node. The [NEAR indexer client](https://github.com/near/near-indexer-client) remains an alternative when operating a dedicated nearcore node; public RPC endpoints do not expose its indexer method. NEAR's developer guide lists QueryAPI as deprecated. Keep the community-service pilot limited to public endpoint signals; do not pass confidential artifacts into multi-source evaluation until the reviewer privacy boundary is implemented. Leave on-chain policy and consequence authority unchanged until versioning and consent models are specified.
 
 ## Complete
 
@@ -24,7 +46,7 @@ The production Git-integrated Pages project and `lcp.gama.works` domain are sepa
 - [x] Raise the evaluation storage-deposit default to `0.05 NEAR` after the first `0.01 NEAR` request trapped on storage underpayment; the retry succeeded, and contract excess is refunded.
 - [x] Add an active-commitment operations funding control for the configured sponsor; the contract already permits operations top-ups before closure, and fresh evaluations can be necessary for recovery.
 - [x] **Live temporal boundaries:** commitment `21` transitioned from `AwaitingEvidence` to `AtRisk` at 00:21:58 AST and from `AtRisk` to `Breached` at 01:21:59 AST in finalized samples. The monitor removed its own cron entry after breach; exact timestamp boundaries are also covered by deterministic tests.
-- [x] Implement NEP-413 wallet evidence across the contract, evaluator, SDK, and demo while preserving v1 evidence behavior; build checks passed.
+- [x] Implement NEP-413 wallet evidence across the contract, evaluator, SDK, and LCP Console while preserving v1 evidence behavior; build checks passed.
 - [x] Deploy the v2-capable contract to testnet and verify the new code hash plus existing commitment state. [Deployment transaction](https://testnet.nearblocks.io/txns/HPhtBQgHYgCzJBobDxx3MiGkCzP9WnW6v6MGpKWzeTjc)
 - [x] Submit the v2 evaluator artifact to testnet FastFS and record its returned transaction and URL; FastFS currently returns 404.
 - [x] Publish a testnet-only R2 mirror of the v2 evaluator, then fetch it publicly and verify the exact byte count and SHA-256.
@@ -47,18 +69,18 @@ The production Git-integrated Pages project and `lcp.gama.works` domain are sepa
 - [x] Inspect commitment `21`'s health clock in the browser; its `AwaitingEvidence` state and displayed initial/grace deadlines matched the pre-deadline monitor state.
 - [x] Prepare a browser walkthrough for verified testnet fixtures and wallet-driven journeys.
 - [x] Install a bounded, once-per-minute cron monitor for commitment `21`; record finalized health samples in `/private/tmp/lcp-temporal-monitor-21.jsonl` and remove only its own entries after breach/closure or the 03:00 AST cutoff.
-- [x] Add a visible wallet disconnect action to the demo header.
+- [x] Add a visible wallet disconnect action to the LCP Console header.
 - [x] Confirm wallet disconnect succeeds in Firefox.
 - [x] Verify the older-page control with 21 records in Firefox.
-- [x] Confirm Meteor connects the demo to NEAR testnet after explicitly configuring the connector network.
+- [x] Confirm Meteor connects the LCP Console to NEAR testnet after explicitly configuring the connector network.
 - [x] Confirm testnet pagination pages as IDs `21–12`, `11–2`, and `1`.
 - [x] Deploy bounded newest-first commitment discovery; confirm exclusive cursor pagination through testnet RPC.
 - [x] Verify the recent-commitment list renders in Brave against the deployed testnet contract.
 - [x] Select a recent commitment in Brave and verify its detail panel loads contract state and available actions.
 - [x] Bind the SDK JSON-RPC `fetch` implementation to `globalThis` so browser views execute correctly.
 
-## Deferred product decision: private evidence access
+## Deferred implementation: private evidence access
 
-- Do not expose maintainer email/Telegram details or create a public upload inbox. Keep evidence private by default; any future sharing should require a reviewer wallet request and explicit maintainer approval, with scoped temporary access and no public contact data.
-- The current browser hashes a local file but does not upload it. The public digest is only a maintainer-signed commitment; the evaluator checks signature, binding, and digest format, not the artifact's contents. Reviewers need the original file to independently verify it.
-- Before production, choose between intentionally public artifacts and private encrypted storage. Review hash correlation/dictionary risks and version any salted or encrypted commitment format before implementation.
+- Keep email and chat handles out of the Console and do not create a public upload inbox. The proposed reviewer-request, maintainer-consent, encrypted-storage, and scoped-access model is in [P1-ARCHITECTURE.md](P1-ARCHITECTURE.md).
+- Current v1/v2 evaluation arguments and signed payloads are public on NEAR; only the selected artifact file stays in the browser. The current digest does not prove artifact contents or provide private sharing.
+- Before implementation, verify the per-commitment OutLayer secret grant and retrieval path, add salted commitments for private artifacts, and preserve v1/v2 behavior. Revocation can stop future access but cannot erase copies already received.

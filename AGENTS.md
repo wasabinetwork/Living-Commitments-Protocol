@@ -2,11 +2,11 @@
 
 ## Project Structure & Module Organization
 
-The product requirements document (`Living_Commitments_Protocol_[LCP]-PRD.md`), engineering baseline (`Living Commitments Protocol - Technical Specification.md`), and NEAR hackathon instructions (`NEAR-HACKATHON-SKILL.md`) live at the root. The NEAR contract is in `contracts/lcp-core`; the OutLayer WASI evaluator is in `evaluators/maintenance-heartbeat`; the TypeScript client and NEAR JSON-RPC view transport are in `packages/sdk`; the Next.js testnet explorer is in `apps/demo`. Shared JSON schemas belong in `packages/schemas`.
+The product requirements document (`Living_Commitments_Protocol_[LCP]-PRD.md`), engineering baseline (`Living Commitments Protocol - Technical Specification.md`), and NEAR hackathon instructions (`NEAR-HACKATHON-SKILL.md`) live at the root. The NEAR contract is in `contracts/lcp-core`; the OutLayer WASI evaluator is in `evaluators/maintenance-heartbeat`; the TypeScript client and NEAR JSON-RPC view transport are in `packages/sdk`; the Next.js LCP Console is in `apps/console`; the Cloudflare D1 event indexer is in `services/event-indexer`.
 
 ## Build, Test, and Development Commands
 
-Build the Rust workspace with `cargo build -p lcp-core -p maintenance-heartbeat`. Build the evaluator WASM with `cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release`. Install the JavaScript workspaces with `npm install`, then build the SDK with `npm --prefix packages/sdk run build`. Run the demo with `npm run dev --workspace=@lcp/demo` after configuring `apps/demo/.env.local` from `.env.example`. Run contract unit tests with `cargo test -p lcp-core`; keep examples reproducible against NEAR testnet.
+Build the Rust workspace with `cargo build -p lcp-core -p maintenance-heartbeat`. Build the evaluator WASM with `cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release`. Install JavaScript workspaces with `npm install`, then build the SDK with `npm --prefix packages/sdk run build`. Run the LCP Console with `npm run dev --workspace=@lcp/console` after configuring `apps/console/.env.local` from `.env.example`. Run the indexer locally with `npm run dev:indexer`; apply D1 migrations with Wrangler. Run contract unit tests with `cargo test -p lcp-core`; keep examples reproducible against NEAR testnet.
 
 ## Coding Style & Naming Conventions
 

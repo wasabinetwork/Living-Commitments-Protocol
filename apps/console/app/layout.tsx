@@ -17,8 +17,8 @@ const themeBootstrap = `
 `;
 
 export const metadata: Metadata = {
-  title: "LCP — Living Commitments",
-  description: "Inspect on-chain commitments, evidence, and recurring budget eligibility.",
+  title: "Living Commitments Protocol | Console",
+  description: "Create and inspect on-chain commitments, review evidence, and manage recurring budget eligibility.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

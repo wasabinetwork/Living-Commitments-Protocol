@@ -1,6 +1,6 @@
 # Tests and Reproduction
 
-This guide covers deterministic Rust checks, reproducible WASM builds, and the testnet demo. Automated checks use synthetic test keys and need no wallet credentials or NEAR funds. Live wallet actions must stay on NEAR testnet.
+This guide covers deterministic Rust checks, reproducible WASM builds, and the testnet LCP Console. Automated checks use synthetic test keys and need no wallet credentials or NEAR funds. Live wallet actions must stay on NEAR testnet.
 
 ## Requirements
 
@@ -24,24 +24,24 @@ The workspace suite currently has 37 tests: 31 contract/temporal tests and 6 eva
 
 The evaluator rebuild should be 323,213 bytes with SHA-256 `17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97`. This is the artifact pinned by the testnet fixture; see [testnet status](TESTNET-E2E-STATUS.md) for its source revision and publication details.
 
-## Run the demo locally
+## Run the LCP Console locally
 
 ```sh
 npm ci
-cp apps/demo/.env.example apps/demo/.env.local
+cp apps/console/.env.example apps/console/.env.local
 ```
 
 Set `NEXT_PUBLIC_LCP_CONTRACT_ID` to the deployed testnet contract, then run:
 
 ```sh
-npm run build --workspace=@lcp/demo
-npm run dev --workspace=@lcp/demo
+npm run build --workspace=@lcp/console
+npm run dev --workspace=@lcp/console
 ```
 
-Open `http://localhost:3000`. The demo uses finalized testnet reads and the explicitly configured testnet wallet connector. `.env.local` and `.env.testnet` are local-only; never publish credentials or private keys. The app hashes a chosen evidence file in the browser and does not upload it.
+Open `http://localhost:3000`. The LCP Console uses finalized testnet reads and the explicitly configured testnet wallet connector. `.env.local` and `.env.testnet` are local-only; never publish credentials or private keys. The app hashes a chosen evidence file in the browser and does not upload it.
 
 ## Manual testnet reproduction
 
-Follow [DEMO-WALKTHROUGH.md](DEMO-WALKTHROUGH.md) for wallet-driven creation, funding, activation, NEP-413 evidence signing, evaluation, challenges, claims/retries, closure, and refunds. Existing examples and transaction receipts are listed in [TESTNET-E2E-STATUS.md](TESTNET-E2E-STATUS.md). Refresh every health snapshot before acting: deadlines continue to advance and old fixture states can change. The live preview at <https://preview.lcp-preview.pages.dev> was manually checked in Firefox for wallet connection, NEAR reads, and OutLayer report lookup.
+Follow [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) for wallet-driven creation, funding, activation, NEP-413 evidence signing, evaluation, challenges, claims/retries, closure, and refunds. Existing examples and transaction receipts are listed in [TESTNET-E2E-STATUS.md](TESTNET-E2E-STATUS.md). Refresh every health snapshot before acting: deadlines continue to advance and old fixture states can change. The live Console preview at <https://preview.lcp-preview.pages.dev> was manually checked in Firefox for wallet connection, NEAR reads, and OutLayer report lookup.
 
 Frontend browser checks are manual rather than an automated DOM/E2E suite. A wallet, testnet funds, and an available evaluator artifact are needed for live transactions; they are not needed for the automated workspace tests. OutLayer attestation hash matching in the app is not TEE quote verification: use the linked OutLayer **Verify** report or the standalone verifier. The evaluator checks the signed statement and digest format; it does not prove the evidence file reflects real-world truth.

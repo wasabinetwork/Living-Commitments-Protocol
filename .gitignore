@@ -1,9 +1,11 @@
 .DS_Store
 .env
 .env.*
+services/event-indexer/.dev.vars*
 !.env.example
 !.env.testnet.example
 .near-credentials/
+**/.wrangler/
 submission-payload*.json
 target/
 node_modules/

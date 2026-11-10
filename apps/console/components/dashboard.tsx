@@ -21,6 +21,7 @@ import type {
   NearTransactionSender,
   NearEd25519PublicKey,
   NearSignedMessage,
+  LcpEvent,
   SignedHeartbeatEvidence,
   TrancheView,
 } from "@lcp/sdk";
@@ -80,6 +81,7 @@ type ClosureAction = "close" | "refund";
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
 const NEAR_NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK_ID?.trim() === "mainnet" ? "mainnet" : "testnet";
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
+const EVENT_INDEXER_URL = process.env.NEXT_PUBLIC_LCP_EVENT_INDEXER_URL?.trim().replace(/\/+$/, "") ?? "";
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
 const DEFAULT_EVALUATION_STORAGE_DEPOSIT = "0.05";
 const MAX_EVIDENCE_ARTIFACT_BYTES = 25 * 1024 * 1024;
@@ -134,7 +136,7 @@ export function Dashboard() {
 
   async function loadCommitmentPage(beforeId: string | null, append: boolean) {
     if (!CONTRACT_ID) {
-      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local to browse commitments.");
+      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local to browse commitments.");
       return;
     }
     setLoadingCommitments(true);
@@ -156,7 +158,7 @@ export function Dashboard() {
   async function loadCommitment(id = commitmentId): Promise<boolean> {
     const normalizedId = id.trim();
     if (!CONTRACT_ID) {
-      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local to connect this demo to a deployed contract.");
+      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local to connect the LCP Console to a deployed contract.");
       return false;
     }
     if (!/^(0|[1-9][0-9]*)$/.test(normalizedId)) {
@@ -311,7 +313,7 @@ export function Dashboard() {
 
   async function createCommitment(args: CreateCommitmentArgs, storageDeposit: string) {
     if (!CONTRACT_ID) {
-      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local before creating a commitment.");
+      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local before creating a commitment.");
       return;
     }
     const connector = connectorRef.current;
@@ -918,6 +920,12 @@ export function Dashboard() {
             </section>
 
             <HealthTimeline data={data} busy={loading} onRefresh={() => void loadCommitment(data.commitment.id)} />
+            {EVENT_INDEXER_URL && (
+              <IndexedEventHistory
+                key={data.commitment.id}
+                commitmentId={data.commitment.id}
+              />
+            )}
 
             <div className="metrics-grid">
               <MetricCard
@@ -1375,6 +1383,212 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
   );
 }
 
+interface IndexedEventRecord {
+  id: string;
+  block_height: string;
+  block_timestamp_ns: string;
+  transaction_hash: string | null;
+  event: LcpEvent;
+}
+
+interface IndexedEventPage {
+  events: IndexedEventRecord[];
+  next_before_id: string | null;
+}
+
+interface EventIndexerHealth {
+  status: "not_initialized" | "degraded" | "catching_up" | "ready";
+  last_processed_height: number | null;
+  lag_blocks: number | null;
+  last_error_code: string | null;
+}
+
+function parseIndexedLcpEvent(value: unknown): LcpEvent | null {
+  if (!isRecord(value) || value.standard !== "lcp" || typeof value.version !== "string"
+    || typeof value.event !== "string" || !Array.isArray(value.data)) return null;
+  const data: Record<string, unknown>[] = [];
+  for (const item of value.data) {
+    if (!isRecord(item)) return null;
+    data.push(item);
+  }
+  return { standard: "lcp", version: value.version, event: value.event, data };
+}
+
+function parseIndexedEventPage(value: unknown): IndexedEventPage | null {
+  if (!isRecord(value) || !Array.isArray(value.events)) return null;
+  if (value.network !== NEAR_NETWORK_ID || value.contract_id !== CONTRACT_ID) return null;
+  const nextBeforeId = value.next_before_id;
+  if (nextBeforeId !== null && (typeof nextBeforeId !== "string" || !/^[1-9][0-9]*$/.test(nextBeforeId))) return null;
+
+  const events: IndexedEventRecord[] = [];
+  for (const candidate of value.events) {
+    if (!isRecord(candidate)) return null;
+    const event = parseIndexedLcpEvent(candidate.event);
+    if (!event) return null;
+    if (typeof candidate.id !== "string" || !/^[1-9][0-9]*$/.test(candidate.id)
+      || typeof candidate.block_height !== "string" || !/^[1-9][0-9]*$/.test(candidate.block_height)
+      || typeof candidate.block_timestamp_ns !== "string" || !/^[0-9]+$/.test(candidate.block_timestamp_ns)
+      || (candidate.transaction_hash !== null && typeof candidate.transaction_hash !== "string")) return null;
+    events.push({
+      id: candidate.id,
+      block_height: candidate.block_height,
+      block_timestamp_ns: candidate.block_timestamp_ns,
+      transaction_hash: candidate.transaction_hash,
+      event,
+    });
+  }
+  return { events, next_before_id: nextBeforeId };
+}
+
+function parseEventIndexerHealth(value: unknown): EventIndexerHealth | null {
+  if (!isRecord(value) || value.network !== NEAR_NETWORK_ID || value.contract_id !== CONTRACT_ID) return null;
+  const status = value.status;
+  if (status !== "not_initialized" && status !== "degraded" && status !== "catching_up" && status !== "ready") return null;
+  const lastHeight = value.last_processed_height;
+  const lagBlocks = value.lag_blocks;
+  if (lastHeight !== null && (!Number.isSafeInteger(lastHeight) || Number(lastHeight) < 0)) return null;
+  if (lagBlocks !== null && (!Number.isSafeInteger(lagBlocks) || Number(lagBlocks) < 0)) return null;
+  return {
+    status,
+    last_processed_height: lastHeight as number | null,
+    lag_blocks: lagBlocks as number | null,
+    last_error_code: typeof value.last_error_code === "string" ? value.last_error_code : null,
+  };
+}
+
+async function fetchIndexerJson(url: string, signal: AbortSignal): Promise<unknown> {
+  const response = await fetch(url, { signal, cache: "no-store" });
+  if (!response.ok) throw new Error(`Event indexer returned HTTP ${response.status}.`);
+  return response.json() as Promise<unknown>;
+}
+
+function eventIndexerStatusLabel(health: EventIndexerHealth): string {
+  if (health.status === "ready") return "UP TO DATE";
+  if (health.status === "degraded") return "INDEXER DEGRADED";
+  if (health.status === "not_initialized") return "INITIALIZING";
+  return health.lag_blocks === null ? "CATCHING UP" : `CATCHING UP · ${health.lag_blocks.toLocaleString()} BLOCKS`;
+}
+
+function IndexedEventHistory({ commitmentId }: { commitmentId: string }) {
+  const [health, setHealth] = useState<EventIndexerHealth | null>(null);
+  const [events, setEvents] = useState<IndexedEventRecord[]>([]);
+  const [nextBeforeId, setNextBeforeId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
+    setHealth(null);
+    setEvents([]);
+    setNextBeforeId(null);
+    setError(null);
+    setLoading(true);
+
+    async function loadInitialPage() {
+      try {
+        const eventsUrl = new URL(`${EVENT_INDEXER_URL}/v1/events`);
+        eventsUrl.searchParams.set("commitment_id", commitmentId);
+        eventsUrl.searchParams.set("limit", "20");
+        const [rawHealth, rawPage] = await Promise.all([
+          fetchIndexerJson(`${EVENT_INDEXER_URL}/health`, controller.signal),
+          fetchIndexerJson(eventsUrl.toString(), controller.signal),
+        ]);
+        const parsedHealth = parseEventIndexerHealth(rawHealth);
+        const parsedPage = parseIndexedEventPage(rawPage);
+        if (!parsedHealth || !parsedPage || !isRecord(rawPage) || rawPage.commitment_id !== commitmentId) {
+          throw new Error("The event indexer returned data for a different network, contract, or commitment.");
+        }
+        setHealth(parsedHealth);
+        setEvents(parsedPage.events);
+        setNextBeforeId(parsedPage.next_before_id);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        setError(cause instanceof Error ? cause.message : "The event indexer could not be reached.");
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+
+    void loadInitialPage();
+    return () => controller.abort();
+  }, [commitmentId]);
+
+  async function loadOlderEvents() {
+    if (!nextBeforeId || loadingOlder || !requestControllerRef.current) return;
+    const controller = requestControllerRef.current;
+    setLoadingOlder(true);
+    setError(null);
+    try {
+      const eventsUrl = new URL(`${EVENT_INDEXER_URL}/v1/events`);
+      eventsUrl.searchParams.set("commitment_id", commitmentId);
+      eventsUrl.searchParams.set("limit", "20");
+      eventsUrl.searchParams.set("before_id", nextBeforeId);
+      const rawPage = await fetchIndexerJson(eventsUrl.toString(), controller.signal);
+      const parsedPage = parseIndexedEventPage(rawPage);
+      if (!parsedPage || !isRecord(rawPage) || rawPage.commitment_id !== commitmentId) {
+        throw new Error("The event indexer returned an invalid history page.");
+      }
+      setEvents((current) => [...current, ...parsedPage.events]);
+      setNextBeforeId(parsedPage.next_before_id);
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Older indexed events could not be loaded.");
+    } finally {
+      if (!controller.signal.aborted) setLoadingOlder(false);
+    }
+  }
+
+  return (
+    <section className="content-card indexed-history" aria-labelledby="indexed-history-title">
+      <div className="card-heading">
+        <div><p className="eyebrow">PUBLIC ARCHIVE · {health ? eventIndexerStatusLabel(health) : "FINALIZED LCP EVENTS"}</p><h3 id="indexed-history-title">Indexed event history</h3></div>
+        <span className="card-index">INDEX</span>
+      </div>
+      <p className="indexed-history-explainer">A paginated archive of LCP events from finalized NEAR blocks. Health, eligibility, and settlement continue to come directly from the contract.</p>
+      {health?.last_processed_height !== null && health?.last_processed_height !== undefined && (
+        <p className="indexed-history-status">Last indexed block {health.last_processed_height.toLocaleString()}{health.lag_blocks !== null ? ` · ${health.lag_blocks.toLocaleString()} blocks behind` : ""}</p>
+      )}
+      {health?.last_error_code && <p className="indexed-history-error">Indexer reports {health.last_error_code}.</p>}
+      {error && <p className="indexed-history-error" role="status">{error}</p>}
+      {loading ? <p className="empty-copy">Loading finalized event history…</p> : events.length === 0 ? (
+        <p className="empty-copy">No indexed events are available for this commitment yet. The indexer may still be catching up.</p>
+      ) : (
+        <ol className="indexed-event-list">
+          {events.map((item) => {
+            const eventData = item.event.data[0] ?? {};
+            const eventLabel = item.event.event.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+            return (
+              <li className="indexed-event" key={item.id}>
+                <div className="indexed-event-heading">
+                  <strong>{eventLabel}</strong>
+                  <span>BLOCK {item.block_height}</span>
+                </div>
+                <time>{formatDate(item.block_timestamp_ns)}</time>
+                {item.transaction_hash && (
+                  <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${item.transaction_hash}`} target="_blank" rel="noreferrer">
+                    NEAR transaction ↗
+                  </a>
+                )}
+                <details>
+                  <summary>Public event data</summary>
+                  <pre>{JSON.stringify(eventData, null, 2)}</pre>
+                </details>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {nextBeforeId && (
+        <button className="browser-more-button indexed-history-more" type="button" onClick={() => void loadOlderEvents()} disabled={loadingOlder}>
+          {loadingOlder ? "Loading older events…" : "Load older events"}
+        </button>
+      )}
+    </section>
+  );
+}
+
 function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: string; detail: ReactNode; icon: string }) {
   return (
     <section className="metric-card">
@@ -1679,7 +1893,7 @@ function EvidenceSubmissionCard({
         <div><p className="eyebrow">ACTIVE · HEARTBEAT EVIDENCE</p><h3>Submit a signed observation</h3></div>
         <span className="card-index">NEXT · {commitment.next_evaluation_id}</span>
       </div>
-      <p className="evidence-intro">The demo builds a commitment-bound message using finalized NEAR block time. {policy?.version === 2 ? "Your connected NEAR wallet signs it with NEP-413; the private key stays in the wallet." : "This older policy uses the original raw Ed25519 format and cannot use NEP-413 wallet signing."} Submit it within the policy’s {formatDuration(policy?.temporal.max_source_lag_ns ?? "0")} source-lag window; regenerate it if it gets stale.</p>
+      <p className="evidence-intro">This form prepares a commitment-bound message using finalized NEAR block time. {policy?.version === 2 ? "Your connected NEAR wallet signs it with NEP-413; the private key stays in the wallet." : "This older policy uses the original raw Ed25519 format and cannot use NEP-413 wallet signing."} Submit it within the policy’s {formatDuration(policy?.temporal.max_source_lag_ns ?? "0")} source-lag window; regenerate it if it gets stale.</p>
       {commitment.pending_evaluation_id && (
         <div className="pending-evaluation">
           <p className="form-wallet-hint">Evaluation #{commitment.pending_evaluation_id} is pending{pendingTimeoutNs ? ` until ${formatDate(pendingTimeoutNs)}` : ""}.</p>
@@ -2015,6 +2229,65 @@ interface CreationFields {
   storageDepositNear: string;
 }
 
+type PolicyTemplateValues = Pick<
+  CreationFields,
+  | "subject"
+  | "initialWindowSeconds"
+  | "evidenceTtlSeconds"
+  | "graceSeconds"
+  | "maxSourceLagSeconds"
+  | "challengeWindowSeconds"
+  | "resolutionTimeoutSeconds"
+  | "recoveryAllowed"
+  | "epochSeconds"
+  | "maxEpochs"
+  | "trancheNear"
+>;
+
+const POLICY_TEMPLATES: ReadonlyArray<{
+  id: string;
+  name: string;
+  description: string;
+  values: PolicyTemplateValues;
+}> = [
+  {
+    id: "open-source-maintenance",
+    name: "Open-source infrastructure maintenance · testnet",
+    description: "Short windows for the recurring service-maintenance walkthrough.",
+    values: {
+      subject: "Open-source service maintenance",
+      initialWindowSeconds: "60",
+      evidenceTtlSeconds: "240",
+      graceSeconds: "120",
+      maxSourceLagSeconds: "30",
+      challengeWindowSeconds: "60",
+      resolutionTimeoutSeconds: "120",
+      recoveryAllowed: true,
+      epochSeconds: "300",
+      maxEpochs: "3",
+      trancheNear: "0.01",
+    },
+  },
+  {
+    id: "community-service-continuity",
+    name: "Community service continuity · illustrative",
+    description: "Longer windows for recurring public-goods operations, such as community water access.",
+    values: {
+      subject: "Maintain the community water access service",
+      initialWindowSeconds: "604800",
+      evidenceTtlSeconds: "604800",
+      graceSeconds: "172800",
+      maxSourceLagSeconds: "86400",
+      challengeWindowSeconds: "43200",
+      resolutionTimeoutSeconds: "172800",
+      recoveryAllowed: true,
+      epochSeconds: "2592000",
+      maxEpochs: "12",
+      trancheNear: "0.01",
+    },
+  },
+];
+
 function CreateCommitmentForm({
   connectedAccountId,
   contractConfigured,
@@ -2055,6 +2328,7 @@ function CreateCommitmentForm({
     requestTimeoutSeconds: "30",
     storageDepositNear: DEFAULT_STORAGE_DEPOSIT,
   });
+  const [selectedTemplateId, setSelectedTemplateId] = useState(POLICY_TEMPLATES[0].id);
   const [formError, setFormError] = useState<string | null>(null);
   const [pinnedKeyAccountId, setPinnedKeyAccountId] = useState<string | null>(null);
   const [keyFingerprint, setKeyFingerprint] = useState<string | null>(null);
@@ -2110,6 +2384,15 @@ function CreateCommitmentForm({
 
   const escrowPreview = previewEscrow(fields.maxEpochs, fields.trancheNear);
   const account = (value: string) => value || connectedAccountId || "";
+  const selectedTemplate = POLICY_TEMPLATES.find((template) => template.id === selectedTemplateId);
+
+  function applyPolicyTemplate(templateId: string) {
+    const template = POLICY_TEMPLATES.find((candidate) => candidate.id === templateId);
+    if (!template) return;
+    setSelectedTemplateId(template.id);
+    setFields((current) => ({ ...current, ...template.values }));
+    setFormError(null);
+  }
 
   useEffect(() => {
     setHydrated(true);
@@ -2117,7 +2400,15 @@ function CreateCommitmentForm({
 
   return (
     <form className="creation-form" onSubmit={(event) => void handleSubmit(event)}>
-      <div className="creation-intro"><p>Creation stores an immutable policy and makes a Draft. Funding and activation are separate transactions below.</p><span>TESTNET ONLY · NO SAMPLE POLICY</span></div>
+      <div className="creation-intro"><p>Creation stores an immutable policy and makes a Draft. Funding and activation are separate transactions below.</p><span>EDITABLE STARTER TEMPLATES</span></div>
+      <div className="form-grid">
+        <FormField label="Starter policy template" wide>
+          <select value={selectedTemplateId} onChange={(event) => applyPolicyTemplate(event.target.value)}>
+            {POLICY_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+          </select>
+        </FormField>
+      </div>
+      <p className="form-wallet-hint policy-template-note">{selectedTemplate?.description} Selecting a template changes only the subject and time/budget defaults; account roles, wallet key, and evaluator artifact stay as entered. Every value remains editable before creation. The community-service profile is illustrative: the current evaluator checks the signed heartbeat and digest format, not service quality.</p>
       <div className="creation-section-heading"><span>01</span><div><strong>People &amp; promise</strong><small>Who commits, funds, arbitrates, and receives support.</small></div></div>
       <div className="form-grid">
         <FormField label="Commitment subject" wide><input maxLength={128} value={fields.subject} onChange={(event) => update("subject", event.target.value)} placeholder="e.g. Maintain the community API" required /></FormField>
@@ -2172,7 +2463,7 @@ function CreateCommitmentForm({
       <div className="creation-summary"><span>FULL ESCROW TARGET</span><strong>{escrowPreview} NEAR</strong><small>Calculated from max epochs × tranche size; fund this separately after creation.</small></div>
       {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
       {!connectedAccountId && <p className="form-wallet-hint">Connect a testnet wallet to create the draft. Your wallet account becomes the on-chain creator.</p>}
-      {!contractConfigured && <p className="form-wallet-hint">Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/demo/.env.local before creating.</p>}
+      {!contractConfigured && <p className="form-wallet-hint">Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local before creating.</p>}
       <div className="creation-submit-row"><p>Storage bond excess is refunded. The evaluator URL and digest should refer to the same uploaded WASM artifact.</p><button className="lookup-button" type="submit" disabled={!hydrated || busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Create draft <span aria-hidden="true">↗</span></>}</button></div>
     </form>
   );
