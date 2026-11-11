@@ -29,7 +29,7 @@ shasum -a 256 target/wasm32-wasip2/release/maintenance-heartbeat.wasm
 
 The Rust workspace tests cover exact temporal boundaries, lifecycle and overflow handling, source timestamps, recovery policy, challenges, claim eligibility, callback binding/replay, failed-transfer reconciliation, v3 source aggregation, consent amendments, and authority adapter limits and settlement. `npm test` runs SDK encryption/signature tests, reviewer Worker/API tests, and the service-probe Node tests. `npm run check` for each Worker type-checks its bindings and performs a Wrangler dry run. The Console production build catches Next.js and TypeScript integration errors.
 
-**Verified on 2026-11-10:** formatting and all listed checks passed. The Rust workspace ran 56 tests; `npm test` ran 22 tests. Rust contract/evaluator WASM builds, both Worker dry runs, reviewer type generation, and the Console production build also passed.
+**Verified on 2026-11-11:** `cargo fmt --all -- --check`, the Rust workspace (67 tests), and `npm test` (24 tests) passed. Contract and evaluator WASM builds, the Console production build, and `git diff --check` also passed. The transaction-authenticated contract and evaluator are deployed to testnet; the separate-device wallet pilot remains pending.
 
 For the private reviewer Worker, apply all local D1 migrations before starting Wrangler:
 
@@ -39,7 +39,7 @@ npx wrangler d1 migrations apply lcp-reviewer-access --local --config services/r
 
 Do not run live testnet transactions until the automated checks pass. Reviewer D1/R2 provisioning and deployment, amendment/adapter deployment, and the independent signed-operator pilot are separate integration gates; see [P1 architecture](P1-ARCHITECTURE.md).
 
-The evaluator rebuild should be 323,213 bytes with SHA-256 `17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97`. This is the artifact pinned by the testnet fixture; see [testnet status](TESTNET-E2E-STATUS.md) for its source revision and publication details.
+The legacy-signature evaluator pinned by existing testnet commitments is 323,213 bytes with SHA-256 `17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97`. The prior NEP-413 inbox evaluator is 408,367 bytes with SHA-256 `eec7211dec72b0066e649564edb9d8943ef69236e6a6e62cb47de23abe2363c6`. New source-policy v2 commitments use the transaction-authenticated evaluator: 410,392 bytes, SHA-256 `908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611`, published at <https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm>. Existing commitments retain their originally pinned URL and digest.
 
 ## Run the LCP Console locally
 
@@ -59,6 +59,6 @@ Open `http://localhost:3000`. The LCP Console uses finalized testnet reads and t
 
 ## Manual testnet reproduction
 
-Follow [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) for wallet-driven creation, funding, activation, NEP-413 evidence signing, evaluation, challenges, claims/retries, closure, refunds, and the staged P1 workflows. Existing examples and transaction receipts are listed in [TESTNET-E2E-STATUS.md](TESTNET-E2E-STATUS.md). Refresh every health snapshot before acting: deadlines continue to advance and old fixture states can change. The live Console preview at <https://preview.lcp-preview.pages.dev> was manually checked in Firefox for wallet connection, NEAR reads, and OutLayer report lookup.
+Follow [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) for wallet-driven creation, funding, activation, NEP-413 evidence signing, evaluation, challenges, claims/retries, closure, refunds, and the staged P1 workflows. Existing examples and transaction receipts are listed in [TESTNET-E2E-STATUS.md](TESTNET-E2E-STATUS.md). Refresh every health snapshot before acting: deadlines continue to advance and old fixture states can change. The live Console preview at <https://preview.lcp-preview.pages.dev> was deployed with the new transaction-authenticated operator flow and wallet-session restoration; the separate-device Firefox journey is pending.
 
 Frontend browser checks are manual rather than an automated DOM/E2E suite. A wallet, testnet funds, and an available evaluator artifact are needed for live transactions; they are not needed for the automated workspace tests. OutLayer attestation hash matching in the app is not TEE quote verification: use the linked OutLayer **Verify** report or the standalone verifier. The evaluator checks the signed statement and digest format; it does not prove the evidence file reflects real-world truth.

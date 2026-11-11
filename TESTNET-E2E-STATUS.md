@@ -1,6 +1,6 @@
 # NEAR Testnet E2E Status
 
-**Last reconciled:** 2026-11-10
+**Last reconciled:** 2026-11-11
 **Repository base revision:** `332f647`
 **Testnet evaluator source revision:** `57165a5`
 **Network:** NEAR testnet
@@ -26,6 +26,49 @@
 - Contract update transaction: [95xbUuYR7Do7mvLTaykB6v97Tra29Pz7Ge7gcjatknvE](https://testnet.nearblocks.io/txns/95xbUuYR7Do7mvLTaykB6v97Tra29Pz7Ge7gcjatknvE) upgraded `livingcommitmentsprotocol.testnet` from code hash `bK4nSCpE52DF4b2AbNunaEMy2FCfRDbsgwjZAVaWfDR` to `4JGf12vUcHKQnUPG3tuCudfPJKfurPBKnfqMhGiiiXm7`. The contract WASM is 743,349 bytes; the estimated code-storage cost was 7.43349 NEAR.
 - Service evaluator SHA-256: `da867cdca199f0c663e848a33cc0962bdeb84ca98553c45b5e11583ee6aee627`. It is hosted at <https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/da867cdca199f0c663e848a33cc0962bdeb84ca98553c45b5e11583ee6aee627.wasm>; a public GET returned HTTP 200 with `Content-Type: application/wasm` and 381,920 bytes; the downloaded bytes have the same SHA-256 as the local artifact.
 - Finalized post-upgrade reads confirm the new code hash and preserve commitments `8`, `9`, `19`, and `21` plus the legacy challenge. The `get_service_availability_policy` view is callable and returned `null` for nonexistent commitment `0` at finalized block `277019011`. The v3 signed-report lifecycle and callback outcomes still need a pilot.
+
+### NEP-413 source-policy v1 inbox deployment (2026-11-10 baseline)
+
+- On 2026-11-10, the inbox-enabled LCP contract was upgraded on testnet. A finalized code read returned hash `8WQsNjGgUX6ucMu1LeYrqudNbU4TfYqmSGoHEnEw58QS` for the 935,263-byte WASM. Post-upgrade view calls succeeded for `get_service_report_inbox` and `get_service_report_refund_balance`; the inbox for commitment `26` was empty, as expected. Finalized reads preserved commitments `8`, `9`, `19`, `21`, `22`, `24`, `25`, and `26`.
+- The wallet-signed service evaluator is 408,367 bytes with SHA-256 `eec7211dec72b0066e649564edb9d8943ef69236e6a6e62cb47de23abe2363c6`. It is published at <https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/service-availability/eec7211dec72b0066e649564edb9d8943ef69236e6a6e62cb47de23abe2363c6.wasm>; a fetched copy matched the byte count and digest. This historical artifact remains available to commitments pinned to it; new source-policy v2 commitments use the transaction-authenticated evaluator listed in the 2026-11-11 deployment below.
+- The updated Console was deployed to the `lcp-preview` Cloudflare Pages project at <https://preview.lcp-preview.pages.dev> (latest deployment <https://80e5d347.lcp-preview.pages.dev>). The `/health` route returned `{"status":"ok","service":"lcp-console","scope":"static-edge"}` after the latest deployment. This is a static reachability response, not a commitment health oracle.
+- The contract upgrade and artifact publication are verified. The fresh commitment and two-operator Firefox journey passed on commitment `27`, including public inbox review, evaluation, storage refund withdrawal, and report replacement. Replay rejection and expiry reclaim remain for a later validation pass.
+
+### Transaction-authenticated source-policy v2 deployment (2026-11-11)
+
+- Contract upgrade transaction: [Gz1iwoeaVc7YhQsWuQcV2ZE6QBtv8SJhxKMrh3ZqmfkC](https://testnet.nearblocks.io/txns/Gz1iwoeaVc7YhQsWuQcV2ZE6QBtv8SJhxKMrh3ZqmfkC). Finalized contract code hash: `FR3TS4oyqGRtHxjo8y7jLRi13ruWwJ3Cs9gdcKgT3mvG` (938,518-byte WASM), replacing `8WQsNjGgUX6ucMu1LeYrqudNbU4TfYqmSGoHEnEw58QS`. The deployment preflight checked the signer permission, existing code hash, transaction size, and projected storage reserve.
+- The transaction-authenticated service evaluator is 410,392 bytes, SHA-256 `908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611`, at <https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm>. The remote R2 object was downloaded and its SHA-256 matched the local build.
+- The Console is deployed to the `lcp-preview` Pages project on the `preview` branch: <https://28f86b41.lcp-preview.pages.dev>, with alias <https://preview.lcp-preview.pages.dev>. The page returns HTTP 200; `/health` returns `{"status":"ok","service":"lcp-console","scope":"static-edge"}`. This endpoint is static reachability information, not a commitment health oracle.
+- Finalized reads succeeded for commitments `8`, `9`, `19`, `21`, `22`, `24`, `25`, and `26`; the existing commitment policies and evaluator versions remain in place. Commitment `26`'s inbox is empty and its older timed-out evaluation remains a separate legacy case.
+- Commitment `27` was created with the corrected 0.05 NEAR draft bond, funded with 0.03 NEAR escrow and 0.01 NEAR evaluator operations, and activated. Finalized read at block `277172228` shows policy version 3, `AwaitingEvidence`, next evaluation `1`, and the v2 source policy. The service inbox for evaluation `1` was empty at block `277172305`. The recorded commitment storage bond is 0.01271 NEAR.
+- The separate-device Firefox submission and evaluation succeeded. Evaluation `#1` passed with 2/2 valid UP reports and 100% corroboration. Evaluation `#2` exercised replacement: Operator A replaced the first report and withdrew its storage refund ([replacement submission](https://testnet.nearblocks.io/txns/8ZCTL16rJ7ckiVFGK1rHT5yxZPj52sESx6K5sRAtRQR1), [refund withdrawal](https://testnet.nearblocks.io/txns/8EKiyqtcFPezstiLvcskSZCHbYiZzRenK8JLcbsrtq9M)); Operator B then submitted and the sponsor requested evaluation.
+
+### Service-policy draft storage bond correction (2026-11-11)
+
+- The first draft transaction, [5QsRm9jKGKKyLj6kjh6Bd4Kz5cRSWWNGp7V62dmugLsb](https://testnet.nearblocks.io/txns/5QsRm9jKGKKyLj6kjh6Bd4Kz5cRSWWNGp7V62dmugLsb), called `create_service_availability_commitment` with the correct v2 policy but attached the old 0.01 NEAR storage default. A local reproduction using the transaction's policy and two operator accounts calculated a minimum of 0.01263 NEAR, so the contract trapped before committing state.
+- A finalized `get_commitment(27)` query at block `277171058` returned `null`; no draft was created. The failed call charged gas, while its attached deposit was not committed.
+- The Console now uses a fixed 0.05 NEAR draft storage bond for service-policy creation; the contract retains the measured requirement and refunds unused deposit. The field explains this behavior. The correction was deployed at <https://8fa4ca2f.lcp-preview.pages.dev>; the latest wording update is deployed at <https://28f86b41.lcp-preview.pages.dev> and the stable preview alias. Contract tests verify that 0.01 fails and 0.05 covers the reproduced policy. Commitment `27` was successfully created with the corrected bond.
+
+### Commitment 27 evaluation 1 (2026-11-11)
+
+- Evaluation `1` was requested from the two v2 inbox reports. Finalized read at block `277174020` shows `Accepted / Compliant`, reason `UPTIME_QUORUM_MET`, 2 valid reports, 2 UP, 0 DOWN, 0 abstained, and 10,000 basis points of corroboration. The request transaction hash recorded by the contract is `cbaebea50c2fbda925f5b75d0dfe2925b81c8b0773167db118df970f076286d6`; evidence hash: `fe3b6526fdfe44efae9c74e343d8c6507cc360ec5e69e5e4c027171602ac3359`.
+- Finalized commitment read at block `277174091` shows `Active`, `Healthy`, no pending evaluation, and next evaluation `2`.
+- Evaluation consumption credited report-storage refunds: `0.0124 NEAR` for `wasabinetwork.testnet` and `0.01233 NEAR` for `lcptester.testnet`. Both were successfully withdrawn: [Operator A](https://testnet.nearblocks.io/txns/4KAVAenYecVfCp8dY6qD88SqycfxZ1yHKNWqBHer7T4g) and [Operator B](https://testnet.nearblocks.io/txns/EFKYG4xTGopeFQ5ztCJaBSxj7kvADapinw393uQXEFEy). Finalized refund-balance views for both accounts are zero.
+- The two-operator submission, quorum, and initial refund paths passed. Evaluation `#2` then verified report replacement and its refund withdrawal; wallet restoration after refresh also passed. Replay rejection, expiry reclaim, and explicit-disconnect persistence remain pending.
+- The Console's request notice now describes these as NEAR wallet-authenticated reports for schema v2; older schema v1 still uses signed reports. The updated wording is deployed at <https://28f86b41.lcp-preview.pages.dev>.
+
+### Commitment 27 evaluation 2 and report replacement (2026-11-11)
+
+- Finalized `get_latest_evaluation(27)` at block `277177419` reports evaluation `2` as `Accepted / Compliant`, reason `UPTIME_QUORUM_MET`: 2 configured and valid reports, both UP, none DOWN or abstained, and 10,000 basis points of corroboration. The request transaction hash recorded by the contract is `f88f94a59cc4cb9948eff7711e6f9e850a930e5c42679022488d87a7469eb456`; evidence hash: `61be5358dfc3934202c00f845bbc4d626ee0ed25125c612d8011f0f886b3362a`.
+- A finalized `get_commitment(27)` read at block `277177378` shows `Active`, `Healthy`, no pending evaluation, and next evaluation `3`. The connected wallet remained connected after a page refresh, as confirmed in Firefox.
+- Report replacement, Operator A's refund withdrawal, Operator B's separate-device submission, and the sponsor's evaluation request all completed. Firefox also confirmed both connected-wallet restoration and that explicit disconnect remains disconnected after refresh. Local contract tests for exact replay rejection and expiry reclaim pass. Those two behaviors remain unverified on testnet; the regular Console probe generates a fresh payload each time, so exact replay requires a controlled repeat of the same report payload.
+
+### Distributed operator authorization and wallet-session redesign
+
+- The deployed v2 source-policy path removes operator public-key pinning. The creator lists distinct NEAR accounts; each operator uses their own device and submits the report through a wallet transaction. The contract checks the transaction predecessor against policy, stores the submitting account, and only allows v2 evaluation from inbox state. The evaluator verifies the contract-derived submitter. Legacy source-policy v1 and existing NEP-413 commitments remain supported.
+- The Console now restores a previously selected connector session with `NearConnector.getConnectedWallet()` on page load. A visible restoring state avoids showing a disconnected button while the persisted session is being read; manual disconnect still clears the connector session.
+- Local contract tests cover successful v2 inbox submission and evaluation scheduling, reject a mismatched submitter in the evaluator, and reject raw public-method bypass. The updated contract, evaluator, and Console are deployed; hashes and URLs are recorded above. The separate-device pilot passed on commitment `27`, including two compliant evaluations and report replacement.
+- Remaining live inbox checks are exact replay rejection and expiry reclaim. The endpoint URL and salt remain private, while report contents are public.
 
 ### NEP-413 fixture: commitment 24
 

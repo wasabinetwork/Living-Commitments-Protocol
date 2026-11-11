@@ -3,12 +3,15 @@ use std::{
     process::ExitCode,
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const REQUEST_SCHEMA: &str = "lcp.service_availability.request.v1";
+const INBOX_REQUEST_SCHEMA: &str = "lcp.service_availability.request.v2";
 const POLICY_SCHEMA: &str = "lcp.service_availability.policy.v1";
+const INBOX_POLICY_SCHEMA: &str = "lcp.service_availability.policy.v2";
 const REPORT_SCHEMA: &str = "lcp.service_availability.report.v1";
 const VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v3";
 const MAX_INPUT_BYTES: usize = 32_768;
@@ -50,14 +53,31 @@ struct SourcePolicy {
 struct SourceDefinition {
     source_id: String,
     operator_id: String,
-    public_key_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    public_key_hex: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SignedProbeReport {
     payload: ProbeReportPayload,
-    signature_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signature_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wallet_signature: Option<Nep413ProbeSignature>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    submitted_by: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Nep413ProbeSignature {
+    account_id: String,
+    public_key: String,
+    signature: String,
+    nonce_hex: String,
+    recipient: String,
+    callback_url: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -292,7 +312,15 @@ fn evaluate_input(input: &[u8], request_transaction_hash: &str) -> Result<String
 }
 
 fn validate_request(request: &EvaluationRequest) -> Result<(), &'static str> {
-    if request.schema != REQUEST_SCHEMA || request.source_policy.schema != POLICY_SCHEMA {
+    let transaction_authenticated = request.source_policy.schema == INBOX_POLICY_SCHEMA;
+    let expected_request_schema = if transaction_authenticated {
+        INBOX_REQUEST_SCHEMA
+    } else {
+        REQUEST_SCHEMA
+    };
+    if request.schema != expected_request_schema
+        || (request.source_policy.schema != POLICY_SCHEMA && !transaction_authenticated)
+    {
         return Err("unsupported request or source policy schema");
     }
     if request.policy_version != 3 {
@@ -356,14 +384,24 @@ fn validate_request(request: &EvaluationRequest) -> Result<(), &'static str> {
         {
             return Err("each source must name a distinct configured operator");
         }
-        if request.source_policy.sources[..index]
-            .iter()
-            .any(|earlier| earlier.public_key_hex == source.public_key_hex)
-        {
-            return Err("each source must use a distinct Ed25519 public key");
-        }
-        if decode_lower_hex::<32>(&source.public_key_hex).is_none() {
-            return Err("source public keys must be 32-byte lowercase hexadecimal");
+        if transaction_authenticated {
+            if source.public_key_hex.is_some() {
+                return Err("transaction-authenticated sources must not pin wallet keys");
+            }
+        } else {
+            let public_key = source
+                .public_key_hex
+                .as_deref()
+                .ok_or("legacy sources must pin an Ed25519 public key")?;
+            if request.source_policy.sources[..index]
+                .iter()
+                .any(|earlier| earlier.public_key_hex.as_deref() == Some(public_key))
+            {
+                return Err("each source must use a distinct Ed25519 public key");
+            }
+            if decode_lower_hex::<32>(public_key).is_none() {
+                return Err("source public keys must be 32-byte lowercase hexadecimal");
+            }
         }
         previous_source_id = Some(&source.source_id);
     }
@@ -376,6 +414,7 @@ fn report_is_bound_and_signed(
     source: &SourceDefinition,
     report: &SignedProbeReport,
 ) -> Result<bool, &'static str> {
+    let transaction_authenticated = request.source_policy.schema == INBOX_POLICY_SCHEMA;
     let payload = &report.payload;
     if payload.schema != REPORT_SCHEMA
         || payload.contract_id != request.contract_id
@@ -401,18 +440,112 @@ fn report_is_bound_and_signed(
         return Ok(false);
     }
 
-    let Some(key_bytes) = decode_lower_hex::<32>(&source.public_key_hex) else {
+    if transaction_authenticated {
+        return Ok(report.signature_hex.is_none()
+            && report.wallet_signature.is_none()
+            && report.submitted_by.as_deref() == Some(source.operator_id.as_str()));
+    }
+
+    if report.submitted_by.is_some() {
+        return Ok(false);
+    }
+
+    let Some(key_bytes) = source
+        .public_key_hex
+        .as_deref()
+        .and_then(decode_lower_hex::<32>)
+    else {
         return Ok(false);
     };
     let Ok(verifying_key) = VerifyingKey::from_bytes(&key_bytes) else {
         return Ok(false);
     };
-    let Some(signature_bytes) = decode_lower_hex::<64>(&report.signature_hex) else {
+    if let (Some(signature_hex), None) = (&report.signature_hex, &report.wallet_signature) {
+        let Some(signature_bytes) = decode_lower_hex::<64>(signature_hex) else {
+            return Ok(false);
+        };
+        let signature = Signature::from_bytes(&signature_bytes);
+        let message =
+            serde_json::to_vec(payload).map_err(|_| "probe report serialization failed")?;
+        return Ok(verifying_key.verify_strict(&message, &signature).is_ok());
+    }
+    let Some(envelope) = report
+        .wallet_signature
+        .as_ref()
+        .filter(|_| report.signature_hex.is_none())
+    else {
+        return Ok(false);
+    };
+    if envelope.account_id != source.operator_id
+        || envelope.recipient != request.contract_id
+        || envelope.callback_url.is_empty()
+        || envelope.callback_url.len() > 2_048
+    {
+        return Ok(false);
+    }
+    let Some(encoded_public_key) = envelope.public_key.strip_prefix("ed25519:") else {
+        return Ok(false);
+    };
+    let Ok(envelope_key_bytes) = bs58::decode(encoded_public_key).into_vec() else {
+        return Ok(false);
+    };
+    if envelope_key_bytes.as_slice() != key_bytes.as_slice()
+        || bs58::encode(&envelope_key_bytes).into_string() != encoded_public_key
+    {
+        return Ok(false);
+    }
+    let Some(nonce) = decode_lower_hex::<32>(&envelope.nonce_hex) else {
+        return Ok(false);
+    };
+    let Ok(signature_bytes) = BASE64_STANDARD.decode(&envelope.signature) else {
+        return Ok(false);
+    };
+    if BASE64_STANDARD.encode(&signature_bytes) != envelope.signature {
+        return Ok(false);
+    }
+    let Ok(signature_bytes) = <[u8; 64]>::try_from(signature_bytes.as_slice()) else {
+        return Ok(false);
+    };
+    let Some(message_hash) = nep413_message_hash(
+        &serde_json::to_string(payload).map_err(|_| "probe report serialization failed")?,
+        nonce,
+        &envelope.recipient,
+        &envelope.callback_url,
+    ) else {
         return Ok(false);
     };
     let signature = Signature::from_bytes(&signature_bytes);
-    let message = serde_json::to_vec(payload).map_err(|_| "probe report serialization failed")?;
-    Ok(verifying_key.verify_strict(&message, &signature).is_ok())
+    Ok(verifying_key
+        .verify_strict(&message_hash, &signature)
+        .is_ok())
+}
+
+fn nep413_message_hash(
+    message: &str,
+    nonce: [u8; 32],
+    recipient: &str,
+    callback_url: &str,
+) -> Option<[u8; 32]> {
+    const NEP413_TAG: u32 = (1 << 31) + 413;
+    let message_bytes = message.as_bytes();
+    let recipient_bytes = recipient.as_bytes();
+    let callback_bytes = callback_url.as_bytes();
+    let message_len = u32::try_from(message_bytes.len()).ok()?;
+    let recipient_len = u32::try_from(recipient_bytes.len()).ok()?;
+    let callback_len = u32::try_from(callback_bytes.len()).ok()?;
+    let mut payload = Vec::with_capacity(
+        4 + 4 + message_bytes.len() + 32 + 4 + recipient_bytes.len() + 1 + 4 + callback_bytes.len(),
+    );
+    payload.extend_from_slice(&NEP413_TAG.to_le_bytes());
+    payload.extend_from_slice(&message_len.to_le_bytes());
+    payload.extend_from_slice(message_bytes);
+    payload.extend_from_slice(&nonce);
+    payload.extend_from_slice(&recipient_len.to_le_bytes());
+    payload.extend_from_slice(recipient_bytes);
+    payload.push(1); // callbackUrl: Some(url)
+    payload.extend_from_slice(&callback_len.to_le_bytes());
+    payload.extend_from_slice(callback_bytes);
+    Some(Sha256::digest(payload).into())
 }
 
 fn classify_observation(
@@ -546,7 +679,7 @@ mod tests {
             .map(|(index, key)| SourceDefinition {
                 source_id: format!("source-{index}"),
                 operator_id: format!("operator-{index}"),
-                public_key_hex: lower_hex(&key.verifying_key().to_bytes()),
+                public_key_hex: Some(lower_hex(&key.verifying_key().to_bytes())),
             })
             .collect();
         let source_policy = SourcePolicy {
@@ -594,7 +727,9 @@ mod tests {
                 let signature = signing_keys[index].sign(&serde_json::to_vec(&payload).unwrap());
                 SignedProbeReport {
                     payload,
-                    signature_hex: lower_hex(&signature.to_bytes()),
+                    signature_hex: Some(lower_hex(&signature.to_bytes())),
+                    wallet_signature: None,
+                    submitted_by: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -616,10 +751,98 @@ mod tests {
         .unwrap()
     }
 
+    fn transaction_authenticated_request(submitted_by: &str) -> Vec<u8> {
+        let sources = (0..3)
+            .map(|index| SourceDefinition {
+                source_id: format!("source-{index}"),
+                operator_id: format!("operator-{index}"),
+                public_key_hex: None,
+            })
+            .collect();
+        let source_policy = SourcePolicy {
+            schema: INBOX_POLICY_SCHEMA.to_string(),
+            target_id: "a".repeat(64),
+            max_source_lag_ns: "1000".to_string(),
+            expected_status_min: 200,
+            expected_status_max: 299,
+            max_latency_ms: 500,
+            minimum_agreeing_sources: 2,
+            minimum_corroboration_bps: 6_000,
+            sources,
+        };
+        let source_policy_hash = sha256_hex(&serde_json::to_vec(&source_policy).unwrap());
+        let report = SignedProbeReport {
+            payload: ProbeReportPayload {
+                schema: REPORT_SCHEMA.to_string(),
+                contract_id: "lcp.testnet".to_string(),
+                commitment_id: "7".to_string(),
+                evaluation_id: "3".to_string(),
+                policy_version: 3,
+                policy_hash: "b".repeat(64),
+                source_policy_hash: source_policy_hash.clone(),
+                source_id: "source-0".to_string(),
+                operator_id: "operator-0".to_string(),
+                target_id: "a".repeat(64),
+                observed_at_ns: "199".to_string(),
+                observation: ProbeObservation::HttpResponse {
+                    status_code: 200,
+                    latency_ms: 40,
+                    tls_verified: true,
+                },
+            },
+            signature_hex: None,
+            wallet_signature: None,
+            submitted_by: Some(submitted_by.to_string()),
+        };
+        let reports = vec![report];
+        let evidence_hash = sha256_hex(&serde_json::to_vec(&reports).unwrap());
+        serde_json::to_vec(&EvaluationRequest {
+            schema: INBOX_REQUEST_SCHEMA.to_string(),
+            contract_id: "lcp.testnet".to_string(),
+            commitment_id: "7".to_string(),
+            evaluation_id: "3".to_string(),
+            policy_version: 3,
+            policy_hash: "b".repeat(64),
+            evidence_hash,
+            requested_at_ns: "200".to_string(),
+            subject: "Service availability test".to_string(),
+            source_policy_hash,
+            source_policy,
+            reports,
+        })
+        .unwrap()
+    }
+
     fn evaluate(up_votes: &[bool]) -> serde_json::Value {
         let transaction_hash = bs58::encode([9; 32]).into_string();
         let bytes = evaluate_input(&request_with_votes(up_votes), &transaction_hash).unwrap();
         serde_json::from_str(&bytes).unwrap()
+    }
+
+    fn request_with_wallet_signed_report() -> EvaluationRequest {
+        let mut request: EvaluationRequest =
+            serde_json::from_slice(&request_with_votes(&[true, true])).unwrap();
+        let signing_key = SigningKey::from_bytes(&[1; 32]);
+        let nonce = [7; 32];
+        let callback_url = "https://lcp.example.org";
+        let message = serde_json::to_string(&request.reports[0].payload).unwrap();
+        let message_hash =
+            nep413_message_hash(&message, nonce, &request.contract_id, callback_url).unwrap();
+        let signature = signing_key.sign(&message_hash);
+        request.reports[0].signature_hex = None;
+        request.reports[0].wallet_signature = Some(Nep413ProbeSignature {
+            account_id: "operator-0".to_string(),
+            public_key: format!(
+                "ed25519:{}",
+                bs58::encode(signing_key.verifying_key().to_bytes()).into_string()
+            ),
+            signature: BASE64_STANDARD.encode(signature.to_bytes()),
+            nonce_hex: lower_hex(&nonce),
+            recipient: request.contract_id.clone(),
+            callback_url: callback_url.to_string(),
+        });
+        request.evidence_hash = sha256_hex(&serde_json::to_vec(&request.reports).unwrap());
+        request
     }
 
     #[test]
@@ -635,6 +858,59 @@ mod tests {
         assert_eq!(output["source_counts"]["up"], 2);
         assert_eq!(output["corroboration_bps"], 6_666);
         assert_eq!(output["observed_at_ns"], "199");
+    }
+
+    #[test]
+    fn nep413_wallet_report_signature_is_verified_and_bound_to_callback() {
+        let transaction_hash = bs58::encode([9; 32]).into_string();
+        let valid_request = request_with_wallet_signed_report();
+        let valid_bytes = evaluate_input(
+            &serde_json::to_vec(&valid_request).unwrap(),
+            &transaction_hash,
+        )
+        .unwrap();
+        let valid: serde_json::Value = serde_json::from_str(&valid_bytes).unwrap();
+        assert_eq!(valid["verdict"], "Compliant");
+        assert_eq!(valid["source_counts"]["valid"], 2);
+
+        let mut changed_request = request_with_wallet_signed_report();
+        changed_request.reports[0]
+            .wallet_signature
+            .as_mut()
+            .unwrap()
+            .callback_url = "https://attacker.example.org".to_string();
+        changed_request.evidence_hash =
+            sha256_hex(&serde_json::to_vec(&changed_request.reports).unwrap());
+        let changed_bytes = evaluate_input(
+            &serde_json::to_vec(&changed_request).unwrap(),
+            &transaction_hash,
+        )
+        .unwrap();
+        let changed: serde_json::Value = serde_json::from_str(&changed_bytes).unwrap();
+        assert_eq!(changed["verdict"], "Inconclusive");
+        assert_eq!(changed["source_counts"]["valid"], 1);
+    }
+
+    #[test]
+    fn transaction_authenticated_reports_require_matching_inbox_submitter() {
+        let transaction_hash = bs58::encode([9; 32]).into_string();
+        let valid = evaluate_input(
+            &transaction_authenticated_request("operator-0"),
+            &transaction_hash,
+        )
+        .unwrap();
+        let valid: serde_json::Value = serde_json::from_str(&valid).unwrap();
+        assert_eq!(valid["source_counts"]["valid"], 1);
+        assert_eq!(valid["source_counts"]["up"], 1);
+
+        let forged = evaluate_input(
+            &transaction_authenticated_request("operator-1"),
+            &transaction_hash,
+        )
+        .unwrap();
+        let forged: serde_json::Value = serde_json::from_str(&forged).unwrap();
+        assert_eq!(forged["source_counts"]["valid"], 0);
+        assert_eq!(forged["verdict"], "Inconclusive");
     }
 
     #[test]

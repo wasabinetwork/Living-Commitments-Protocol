@@ -405,7 +405,17 @@ function probe(url, address, timeoutMs) {
       method: "GET",
       agent: false,
       headers: { "User-Agent": "lcp-service-probe/0.1", Accept: "*/*" },
-      lookup: (_hostname, _options, callback) => callback(null, address, 4),
+      lookup: (_hostname, options, callback) => {
+        if (typeof options === "function") {
+          callback = options;
+          options = undefined;
+        }
+        if (options?.all) {
+          callback(null, [{ address, family: 4 }]);
+          return;
+        }
+        callback(null, address, 4);
+      },
     }, (response) => {
       response.on("data", (chunk) => {
         receivedBytes += chunk.length;

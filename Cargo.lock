@@ -2077,6 +2077,7 @@ dependencies = [
 name = "service-availability-evaluator"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bs58 0.5.1",
  "ed25519-dalek",
  "serde",

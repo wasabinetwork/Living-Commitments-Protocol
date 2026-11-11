@@ -23,10 +23,11 @@ use crate::{
         EvaluatorPolicyArgs, EvidencePolicy, GoodObservation, HeartbeatPayload, PendingTransfer,
         PolicyAmendmentStatus, ServiceAvailabilityEvaluationInput,
         ServiceAvailabilityEvaluationSummary, ServiceAvailabilityPolicy,
-        ServiceAvailabilitySourceCounts, ServicePolicyAmendmentView, SignedHeartbeatEvidence,
-        SignedProbeReport, Tranche, TrancheStatus, TrancheView, TransferKind, Verdict,
-        EVALUATION_REQUEST_SCHEMA, EVALUATION_VERDICT_SCHEMA, HEARTBEAT_EVIDENCE_TYPE,
-        HEARTBEAT_SCHEMA, SERVICE_AVAILABILITY_REQUEST_SCHEMA, SERVICE_AVAILABILITY_VERDICT_SCHEMA,
+        ServiceAvailabilitySourceCounts, ServicePolicyAmendmentView, ServiceReportInboxView,
+        SignedHeartbeatEvidence, SignedProbeReport, Tranche, TrancheStatus, TrancheView,
+        TransferKind, Verdict, EVALUATION_REQUEST_SCHEMA, EVALUATION_VERDICT_SCHEMA,
+        HEARTBEAT_EVIDENCE_TYPE, HEARTBEAT_SCHEMA, SERVICE_AVAILABILITY_INBOX_REQUEST_SCHEMA,
+        SERVICE_AVAILABILITY_REQUEST_SCHEMA, SERVICE_AVAILABILITY_VERDICT_SCHEMA,
     },
     temporal::{validate_temporal_policy, Health, Lifecycle, TemporalPolicy},
 };
@@ -56,9 +57,15 @@ const SERVICE_SUMMARY_STORAGE_PREFIX: &[u8] = b"lcp:service-summary:v3:";
 const SERVICE_AMENDMENT_STORAGE_PREFIX: &[u8] = b"lcp:service-amendment:v1:";
 const SERVICE_AMENDMENT_LATEST_PREFIX: &[u8] = b"lcp:service-amendment-latest:v1:";
 const SERVICE_POLICY_HEALTH_START_PREFIX: &[u8] = b"lcp:service-policy-health-start:v1:";
+const SERVICE_REPORT_INBOX_PREFIX: &[u8] = b"lcp:service-report-inbox:v1:";
+const SERVICE_REPORT_REFUND_PREFIX: &[u8] = b"lcp:service-report-refund:v1:";
 const AUTHORITY_GRANT_PREFIX: &[u8] = b"lcp:authority-grant:v1:";
 const AUTHORITY_GRANT_LATEST_PREFIX: &[u8] = b"lcp:authority-grant-latest:v1:";
 const MAX_AMENDMENT_LIFETIME_NS: u64 = 30 * 24 * 60 * 60 * 1_000_000_000;
+const MAX_SERVICE_REPORT_BYTES: usize = 4_096;
+const MAX_SERVICE_REPORT_INBOX_TTL_NS: u64 = 15 * 60 * 1_000_000_000;
+const SERVICE_REPORT_REFUND_RESERVE_BYTES: u64 = 256;
+const SERVICE_REPORT_STORAGE_OVERHEAD_BYTES: u64 = 256;
 const AUTHORITY_ADAPTER_GAS_TGAS: u64 = 25;
 
 #[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
@@ -75,6 +82,16 @@ struct AuthorityGrantState {
     /// u64::MAX means that no action has been authorized yet.
     last_authorized_epoch: u64,
     revoked: bool,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Clone)]
+#[borsh(crate = "near_sdk::borsh")]
+struct ServiceReportInboxEntry {
+    submitted_by: near_sdk::AccountId,
+    submitted_at_ns: u64,
+    expires_at_ns: u64,
+    storage_deposit_yocto: u128,
+    report_json: Vec<u8>,
 }
 
 #[derive(BorshSerialize, BorshStorageKey)]
@@ -471,6 +488,22 @@ impl Contract {
         );
 
         let caller = env::predecessor_account_id();
+        if let Some(old_policy) = read_service_policy(commitment_id.0) {
+            for source in &old_policy.sources {
+                let inbox_key = service_report_inbox_storage_key(
+                    commitment_id.0,
+                    commitment.next_evaluation_id,
+                    &source.source_id,
+                );
+                if let Some(staged) = read_service_report_inbox(&inbox_key) {
+                    env::storage_remove(&inbox_key);
+                    increase_service_report_refund_credit(
+                        &staged.submitted_by,
+                        staged.storage_deposit_yocto,
+                    );
+                }
+            }
+        }
         let storage_before = env::storage_usage();
         commitment.policy_hash = decode_32_byte_hex(&amendment.new_policy_hash)
             .unwrap_or_else(|| env::panic_str("amendment policy digest is malformed"));
@@ -1135,10 +1168,438 @@ impl Contract {
     }
 
     #[payable]
+    pub fn submit_service_report(&mut self, commitment_id: U64, report: SignedProbeReport) -> U128 {
+        let caller = env::predecessor_account_id();
+        let now_ns = env::block_timestamp();
+        let report_json = near_sdk::serde_json::to_vec(&report)
+            .unwrap_or_else(|_| env::panic_str("failed to serialize service report"));
+        require!(
+            report_json.len() <= MAX_SERVICE_REPORT_BYTES,
+            "service report exceeds the 4096-byte inbox limit"
+        );
+        let commitment = self.load_commitment(commitment_id.0);
+        require!(
+            commitment.policy.version == 3,
+            "commitment does not use service availability policy v3"
+        );
+        require!(
+            commitment.lifecycle == Lifecycle::Active
+                && commitment.pending_evaluation_id.is_none()
+                && commitment.active_challenge_id.is_none(),
+            "service reports can only be staged for an active, unblocked commitment"
+        );
+        require!(
+            report.payload.schema == "lcp.service_availability.report.v1"
+                && report.payload.contract_id == env::current_account_id().as_str()
+                && report.payload.commitment_id == commitment_id.0.to_string()
+                && report.payload.evaluation_id == commitment.next_evaluation_id.to_string()
+                && report.payload.policy_version == 3
+                && report.payload.policy_hash == encode_hex(&commitment.policy_hash),
+            "report is not bound to this contract, commitment, policy, and next evaluation"
+        );
+        require!(
+            report.submitted_by.is_none(),
+            "submitted_by is set by the contract"
+        );
+
+        let service_policy = read_service_policy(commitment_id.0)
+            .unwrap_or_else(|| env::panic_str("service availability policy is missing"));
+        let source = service_policy
+            .sources
+            .iter()
+            .find(|source| source.source_id == report.payload.source_id)
+            .unwrap_or_else(|| env::panic_str("report source is not in the commitment policy"));
+        require!(
+            source.operator_id == caller.as_str()
+                && report.payload.operator_id == source.operator_id
+                && report.payload.target_id == service_policy.target_id
+                && report.payload.source_policy_hash == service_source_policy_hash(&service_policy),
+            "report source, operator, target, or source policy does not match the commitment"
+        );
+        match service_policy.schema.as_str() {
+            "lcp.service_availability.policy.v1" => {
+                require!(
+                    report.signature_hex.is_none(),
+                    "the inbox accepts NEP-413 signatures for this legacy policy"
+                );
+                let envelope = report.wallet_signature.as_ref().unwrap_or_else(|| {
+                    env::panic_str("legacy service reports require a NEP-413 wallet signature")
+                });
+                require!(
+                    envelope.account_id == caller.as_str()
+                        && envelope.recipient == env::current_account_id().as_str()
+                        && !envelope.callback_url.is_empty()
+                        && envelope.callback_url.len() <= 2_048,
+                    "NEP-413 signer, recipient, or callback URL is invalid"
+                );
+                require!(
+                    envelope.signature.len() == 88,
+                    "NEP-413 signature must be a canonical 64-byte Ed25519 signature"
+                );
+                require!(
+                    decode_32_byte_hex(&envelope.nonce_hex)
+                        .map(|nonce| encode_hex(&nonce) == envelope.nonce_hex)
+                        .unwrap_or(false),
+                    "NEP-413 nonce must be 64 lowercase hexadecimal characters"
+                );
+                let signature_bytes = BASE64_STANDARD
+                    .decode(&envelope.signature)
+                    .unwrap_or_else(|_| env::panic_str("NEP-413 signature must be base64"));
+                require!(
+                    signature_bytes.len() == 64
+                        && BASE64_STANDARD.encode(&signature_bytes) == envelope.signature,
+                    "NEP-413 signature must be a canonical 64-byte Ed25519 signature"
+                );
+                let pinned_key = source.public_key_hex.as_deref().unwrap_or_else(|| {
+                    env::panic_str("legacy source policy is missing its public key")
+                });
+                let pinned_key = decode_32_byte_hex(pinned_key)
+                    .unwrap_or_else(|| env::panic_str("policy contains an invalid source key"));
+                let wallet_key = decode_near_ed25519_public_key(&envelope.public_key)
+                    .unwrap_or_else(|| {
+                        env::panic_str("NEP-413 public key must be canonical ed25519")
+                    });
+                require!(
+                    wallet_key.as_slice() == pinned_key.as_slice(),
+                    "NEP-413 signer key does not match the source key pinned by this commitment"
+                );
+            }
+            "lcp.service_availability.policy.v2" => require!(
+                report.signature_hex.is_none() && report.wallet_signature.is_none(),
+                "this inbox uses the operator's NEAR transaction as report authorization"
+            ),
+            _ => env::panic_str("unsupported service availability policy schema"),
+        }
+        let observed_at_ns =
+            parse_decimal_u64(&report.payload.observed_at_ns).unwrap_or_else(|| {
+                env::panic_str("report observation time must be a canonical decimal u64")
+            });
+        let max_source_lag_ns = parse_decimal_u64(&service_policy.max_source_lag_ns)
+            .unwrap_or_else(|| env::panic_str("service policy source-age limit is invalid"));
+        require!(
+            observed_at_ns <= now_ns && now_ns.saturating_sub(observed_at_ns) < max_source_lag_ns,
+            "report is future-dated or too old for the source freshness policy"
+        );
+
+        let inbox_key = service_report_inbox_storage_key(
+            commitment_id.0,
+            commitment.next_evaluation_id,
+            &source.source_id,
+        );
+        let mut replacement_refund = 0;
+        if let Some(previous) = read_service_report_inbox(&inbox_key) {
+            require!(
+                previous.submitted_by == caller,
+                "only the configured operator may replace its staged report"
+            );
+            require!(
+                previous.report_json != report_json,
+                "this exact signed report is already staged"
+            );
+            env::storage_remove(&inbox_key);
+            increase_service_report_refund_credit(
+                &previous.submitted_by,
+                previous.storage_deposit_yocto,
+            );
+            replacement_refund = previous.storage_deposit_yocto;
+        }
+
+        let expires_at_ns = observed_at_ns
+            .checked_add(max_source_lag_ns)
+            .unwrap_or(u64::MAX)
+            .min(now_ns.saturating_add(MAX_SERVICE_REPORT_INBOX_TTL_NS));
+        require!(
+            expires_at_ns > now_ns,
+            "report has no remaining freshness window"
+        );
+        let storage_before = env::storage_usage();
+        let mut entry = ServiceReportInboxEntry {
+            submitted_by: caller.clone(),
+            submitted_at_ns: now_ns,
+            expires_at_ns,
+            storage_deposit_yocto: 0,
+            report_json,
+        };
+        write_service_report_inbox(&inbox_key, &entry);
+        let actual_storage_bytes = env::storage_usage()
+            .checked_sub(storage_before)
+            .unwrap_or_else(|| env::panic_str("report storage usage unexpectedly decreased"));
+        let required_storage_bytes = report_storage_bond_bytes(&inbox_key, &entry);
+        require!(
+            actual_storage_bytes.saturating_add(SERVICE_REPORT_REFUND_RESERVE_BYTES)
+                <= required_storage_bytes,
+            "report storage estimate is below the contract's storage usage"
+        );
+        let required_storage_bond = storage_cost(required_storage_bytes);
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached >= required_storage_bond,
+            format!("attach at least {required_storage_bond} yoctoNEAR for report storage")
+        );
+        entry.storage_deposit_yocto = required_storage_bond;
+        write_service_report_inbox(&inbox_key, &entry);
+        refund_excess(caller.clone(), attached, required_storage_bond);
+
+        emit_event(
+            if replacement_refund > 0 {
+                "service_report_replaced"
+            } else {
+                "service_report_submitted"
+            },
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "evaluation_id": commitment.next_evaluation_id.to_string(),
+                "source_id": source.source_id,
+                "operator_id": caller,
+                "expires_at_ns": expires_at_ns.to_string(),
+                "storage_deposit_yocto": required_storage_bond.to_string(),
+            }),
+        );
+        U128(required_storage_bond)
+    }
+
+    pub fn get_service_report_storage_deposit(
+        &self,
+        commitment_id: U64,
+        report: SignedProbeReport,
+    ) -> U128 {
+        let source_id = &report.payload.source_id;
+        require!(
+            valid_service_identifier(source_id),
+            "invalid service source ID"
+        );
+        let owner = report
+            .wallet_signature
+            .as_ref()
+            .map(|signature| signature.account_id.as_str())
+            .unwrap_or(report.payload.operator_id.as_str());
+        let key = service_report_inbox_storage_key(commitment_id.0, 1, source_id);
+        let report_json = near_sdk::serde_json::to_vec(&report)
+            .unwrap_or_else(|_| env::panic_str("failed to serialize service report"));
+        require!(
+            report_json.len() <= MAX_SERVICE_REPORT_BYTES,
+            "service report exceeds the 4096-byte inbox limit"
+        );
+        let entry = ServiceReportInboxEntry {
+            submitted_by: owner.parse().unwrap_or_else(|_| {
+                env::panic_str("report operator must be a valid NEAR account ID")
+            }),
+            submitted_at_ns: 0,
+            expires_at_ns: 0,
+            storage_deposit_yocto: 0,
+            report_json,
+        };
+        U128(storage_cost(report_storage_bond_bytes(&key, &entry)))
+    }
+
+    pub fn get_service_report_inbox(
+        &self,
+        commitment_id: U64,
+        evaluation_id: U64,
+    ) -> Vec<ServiceReportInboxView> {
+        let Some(commitment) = self.commitments.get(&commitment_id.0) else {
+            return Vec::new();
+        };
+        if commitment.policy.version != 3 {
+            return Vec::new();
+        }
+        let Some(policy) = read_service_policy(commitment_id.0) else {
+            return Vec::new();
+        };
+        let now_ns = env::block_timestamp();
+        policy
+            .sources
+            .iter()
+            .filter_map(|source| {
+                let key = service_report_inbox_storage_key(
+                    commitment_id.0,
+                    evaluation_id.0,
+                    &source.source_id,
+                );
+                let entry = read_service_report_inbox(&key)?;
+                let report = near_sdk::serde_json::from_slice(&entry.report_json).ok()?;
+                Some(ServiceReportInboxView {
+                    commitment_id,
+                    evaluation_id,
+                    source_id: source.source_id.clone(),
+                    operator_id: source.operator_id.clone(),
+                    submitted_by: entry.submitted_by,
+                    submitted_at_ns: U64(entry.submitted_at_ns),
+                    expires_at_ns: U64(entry.expires_at_ns),
+                    storage_deposit_yocto: U128(entry.storage_deposit_yocto),
+                    expired: now_ns >= entry.expires_at_ns,
+                    report,
+                })
+            })
+            .collect()
+    }
+
+    pub fn get_service_report_refund_balance(&self, account_id: near_sdk::AccountId) -> U128 {
+        U128(read_service_report_refund_credit(&account_id).unwrap_or(0))
+    }
+
+    #[payable]
+    pub fn request_service_evaluation_from_inbox(&mut self, commitment_id: U64) -> U64 {
+        let commitment = self.load_commitment(commitment_id.0);
+        require!(
+            commitment.policy.version == 3,
+            "commitment does not use service availability policy v3"
+        );
+        let policy = read_service_policy(commitment_id.0)
+            .unwrap_or_else(|| env::panic_str("service availability policy is missing"));
+        let source_policy_hash = service_source_policy_hash(&policy);
+        let now_ns = env::block_timestamp();
+        let mut reports = Vec::with_capacity(policy.sources.len());
+        for source in &policy.sources {
+            let key = service_report_inbox_storage_key(
+                commitment_id.0,
+                commitment.next_evaluation_id,
+                &source.source_id,
+            );
+            let Some(entry) = read_service_report_inbox(&key) else {
+                continue;
+            };
+            if now_ns >= entry.expires_at_ns {
+                continue;
+            }
+            let mut report: SignedProbeReport =
+                near_sdk::serde_json::from_slice(&entry.report_json)
+                    .unwrap_or_else(|_| env::panic_str("staged service report is corrupted"));
+            let source_lag_ns = parse_decimal_u64(&policy.max_source_lag_ns)
+                .unwrap_or_else(|| env::panic_str("service policy source-age limit is invalid"));
+            let report_time = parse_decimal_u64(&report.payload.observed_at_ns);
+            let Some(observed_at_ns) = report_time else {
+                continue;
+            };
+            if report.payload.schema != "lcp.service_availability.report.v1"
+                || report.payload.contract_id != env::current_account_id().as_str()
+                || report.payload.commitment_id != commitment_id.0.to_string()
+                || report.payload.evaluation_id != commitment.next_evaluation_id.to_string()
+                || report.payload.policy_version != 3
+                || report.payload.policy_hash != encode_hex(&commitment.policy_hash)
+                || report.payload.source_policy_hash != source_policy_hash
+                || report.payload.source_id != source.source_id
+                || report.payload.operator_id != source.operator_id
+                || report.payload.target_id != policy.target_id
+                || observed_at_ns > now_ns
+                || now_ns.saturating_sub(observed_at_ns) >= source_lag_ns
+            {
+                continue;
+            }
+            if policy.schema == "lcp.service_availability.policy.v2" {
+                if entry.submitted_by.as_str() != source.operator_id {
+                    continue;
+                }
+                report.submitted_by = Some(entry.submitted_by.to_string());
+            }
+            reports.push(report);
+        }
+        require!(
+            !reports.is_empty(),
+            "the report inbox has no unexpired reports for the next evaluation"
+        );
+        self.schedule_service_evaluation(commitment_id, reports, true)
+    }
+
+    pub fn reclaim_service_report(
+        &mut self,
+        commitment_id: U64,
+        evaluation_id: U64,
+        source_id: String,
+    ) -> bool {
+        require!(
+            valid_service_identifier(&source_id),
+            "invalid service source ID"
+        );
+        let commitment = self.load_commitment(commitment_id.0);
+        let key = service_report_inbox_storage_key(commitment_id.0, evaluation_id.0, &source_id);
+        let Some(entry) = read_service_report_inbox(&key) else {
+            return false;
+        };
+        require!(
+            env::block_timestamp() >= entry.expires_at_ns
+                || evaluation_id.0 < commitment.next_evaluation_id
+                || commitment.lifecycle == Lifecycle::Closed,
+            "only expired, consumed, or closed-commitment reports can be reclaimed"
+        );
+        env::storage_remove(&key);
+        increase_service_report_refund_credit(&entry.submitted_by, entry.storage_deposit_yocto);
+        emit_event(
+            "service_report_reclaimed",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "evaluation_id": evaluation_id.0.to_string(),
+                "source_id": source_id,
+                "operator_id": entry.submitted_by,
+                "storage_deposit_yocto": entry.storage_deposit_yocto.to_string(),
+            }),
+        );
+        true
+    }
+
+    pub fn withdraw_service_report_refund(&mut self) {
+        let caller = env::predecessor_account_id();
+        let amount = read_service_report_refund_credit(&caller)
+            .unwrap_or_else(|| env::panic_str("no service report storage refund is available"));
+        require!(amount > 0, "no service report storage refund is available");
+        env::storage_remove(&service_report_refund_storage_key(&caller));
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "account_id": caller,
+            "amount": U128(amount),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize service report refund callback"));
+        let _refund_promise = Promise::new(caller.clone())
+            .transfer(NearToken::from_yoctonear(amount))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_service_report_refund".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
+            ));
+        emit_event(
+            "service_report_refund_requested",
+            json!({
+                "account_id": caller,
+                "amount_yocto": amount.to_string(),
+            }),
+        );
+    }
+
+    #[private]
+    pub fn on_service_report_refund(&mut self, account_id: near_sdk::AccountId, amount: U128) {
+        let succeeded = env::promise_results_count() == 1
+            && match env::promise_result_checked(0, 0) {
+                Ok(_) | Err(PromiseError::TooLong(_)) => true,
+                Err(_) => false,
+            };
+        if succeeded {
+            emit_event(
+                "service_report_refund_sent",
+                json!({"account_id": account_id, "amount_yocto": amount.0.to_string()}),
+            );
+        } else {
+            increase_service_report_refund_credit(&account_id, amount.0);
+            emit_event(
+                "service_report_refund_failed",
+                json!({"account_id": account_id, "amount_yocto": amount.0.to_string()}),
+            );
+        }
+    }
+
+    #[payable]
     pub fn request_service_evaluation(
         &mut self,
         commitment_id: U64,
         reports: Vec<SignedProbeReport>,
+    ) -> U64 {
+        self.schedule_service_evaluation(commitment_id, reports, false)
+    }
+
+    fn schedule_service_evaluation(
+        &mut self,
+        commitment_id: U64,
+        reports: Vec<SignedProbeReport>,
+        from_inbox: bool,
     ) -> U64 {
         let caller = env::predecessor_account_id();
         let now_ns = env::block_timestamp();
@@ -1170,6 +1631,12 @@ impl Contract {
 
         let service_policy = read_service_policy(commitment_id.0)
             .unwrap_or_else(|| env::panic_str("service availability policy is missing"));
+        let transaction_authenticated =
+            service_policy.schema == "lcp.service_availability.policy.v2";
+        require!(
+            !transaction_authenticated || from_inbox,
+            "transaction-authenticated reports must be requested from the NEAR inbox"
+        );
         require!(
             !reports.is_empty() && reports.len() <= service_policy.sources.len(),
             "report bundle must contain between one and the configured source count"
@@ -1177,18 +1644,44 @@ impl Contract {
         let mut seen_sources: Vec<&str> = Vec::with_capacity(reports.len());
         for report in &reports {
             let source_id = report.payload.source_id.as_str();
-            require!(
-                service_policy
-                    .sources
-                    .iter()
-                    .any(|source| source.source_id == source_id),
-                "report source is not in the commitment policy"
-            );
+            let source = service_policy
+                .sources
+                .iter()
+                .find(|source| source.source_id == source_id)
+                .unwrap_or_else(|| env::panic_str("report source is not in the commitment policy"));
+            if transaction_authenticated {
+                require!(
+                    report.signature_hex.is_none()
+                        && report.wallet_signature.is_none()
+                        && report.submitted_by.as_deref() == Some(source.operator_id.as_str()),
+                    "inbox report submitter does not match the configured operator"
+                );
+            } else {
+                require!(
+                    report.submitted_by.is_none(),
+                    "legacy evaluation reports cannot set inbox submitter metadata"
+                );
+            }
             require!(
                 !seen_sources.contains(&source_id),
                 "an evaluation may include at most one report per source"
             );
             seen_sources.push(source_id);
+        }
+
+        for source in &service_policy.sources {
+            let inbox_key = service_report_inbox_storage_key(
+                commitment_id.0,
+                commitment.next_evaluation_id,
+                &source.source_id,
+            );
+            if let Some(staged) = read_service_report_inbox(&inbox_key) {
+                env::storage_remove(&inbox_key);
+                increase_service_report_refund_credit(
+                    &staged.submitted_by,
+                    staged.storage_deposit_yocto,
+                );
+            }
         }
 
         let operations_available = commitment
@@ -1207,7 +1700,11 @@ impl Contract {
         let evidence_hash = env::sha256_array(&evidence_bytes);
         let source_policy_hash = service_source_policy_hash(&service_policy);
         let input = ServiceAvailabilityEvaluationInput {
-            schema: SERVICE_AVAILABILITY_REQUEST_SCHEMA,
+            schema: if transaction_authenticated {
+                SERVICE_AVAILABILITY_INBOX_REQUEST_SCHEMA
+            } else {
+                SERVICE_AVAILABILITY_REQUEST_SCHEMA
+            },
             contract_id: env::current_account_id().to_string(),
             commitment_id: commitment_id.0.to_string(),
             evaluation_id: evaluation_id.to_string(),
@@ -2747,6 +3244,70 @@ fn service_policy_storage_key(commitment_id: u64) -> Vec<u8> {
     key
 }
 
+fn service_report_inbox_storage_key(
+    commitment_id: u64,
+    evaluation_id: u64,
+    source_id: &str,
+) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SERVICE_REPORT_INBOX_PREFIX.len() + 17 + source_id.len());
+    key.extend_from_slice(SERVICE_REPORT_INBOX_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key.extend_from_slice(&evaluation_id.to_le_bytes());
+    key.push(source_id.len().min(u8::MAX as usize) as u8);
+    key.extend_from_slice(source_id.as_bytes());
+    key
+}
+
+fn service_report_refund_storage_key(account_id: &near_sdk::AccountId) -> Vec<u8> {
+    let account = account_id.as_str().as_bytes();
+    let mut key = Vec::with_capacity(SERVICE_REPORT_REFUND_PREFIX.len() + account.len());
+    key.extend_from_slice(SERVICE_REPORT_REFUND_PREFIX);
+    key.extend_from_slice(account);
+    key
+}
+
+fn read_service_report_inbox(key: &[u8]) -> Option<ServiceReportInboxEntry> {
+    let bytes = env::storage_read(key)?;
+    near_sdk::borsh::from_slice(&bytes).ok()
+}
+
+fn write_service_report_inbox(key: &[u8], entry: &ServiceReportInboxEntry) {
+    let bytes = near_sdk::borsh::to_vec(entry)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize staged service report"));
+    env::storage_write(key, &bytes);
+}
+
+fn read_service_report_refund_credit(account_id: &near_sdk::AccountId) -> Option<u128> {
+    let bytes = env::storage_read(&service_report_refund_storage_key(account_id))?;
+    let encoded: [u8; 16] = bytes.as_slice().try_into().ok()?;
+    Some(u128::from_le_bytes(encoded))
+}
+
+fn increase_service_report_refund_credit(account_id: &near_sdk::AccountId, amount: u128) {
+    let current = read_service_report_refund_credit(account_id).unwrap_or(0);
+    let updated = current
+        .checked_add(amount)
+        .unwrap_or_else(|| env::panic_str("service report refund credit overflow"));
+    env::storage_write(
+        &service_report_refund_storage_key(account_id),
+        &updated.to_le_bytes(),
+    );
+}
+
+fn report_storage_bond_bytes(key: &[u8], entry: &ServiceReportInboxEntry) -> u64 {
+    let owner_len = entry.submitted_by.as_str().len();
+    let value_len = 4usize
+        .saturating_add(owner_len)
+        .saturating_add(8 + 8 + 16 + 4)
+        .saturating_add(entry.report_json.len());
+    let total = key
+        .len()
+        .saturating_add(value_len)
+        .saturating_add(SERVICE_REPORT_STORAGE_OVERHEAD_BYTES as usize)
+        .saturating_add(SERVICE_REPORT_REFUND_RESERVE_BYTES as usize);
+    u64::try_from(total).unwrap_or_else(|_| env::panic_str("service report storage size overflow"))
+}
+
 fn service_summary_storage_key(commitment_id: u64, evaluation_id: u64) -> Vec<u8> {
     let mut key = Vec::with_capacity(SERVICE_SUMMARY_STORAGE_PREFIX.len() + 16);
     key.extend_from_slice(SERVICE_SUMMARY_STORAGE_PREFIX);
@@ -2945,9 +3506,11 @@ fn service_source_policy_hash(policy: &ServiceAvailabilityPolicy) -> String {
 
 fn validate_service_availability_policy(policy: &ServiceAvailabilityPolicy) {
     require!(
-        policy.schema == "lcp.service_availability.policy.v1",
+        policy.schema == "lcp.service_availability.policy.v1"
+            || policy.schema == "lcp.service_availability.policy.v2",
         "unsupported service availability policy schema"
     );
+    let transaction_authenticated = policy.schema == "lcp.service_availability.policy.v2";
     require!(
         is_lower_hex_32(&policy.target_id),
         "service target fingerprint must be 64 lowercase hexadecimal characters"
@@ -2999,16 +3562,27 @@ fn validate_service_availability_policy(policy: &ServiceAvailabilityPolicy) {
                 .any(|prior| prior.operator_id == source.operator_id),
             "each source must name a distinct operator"
         );
-        require!(
-            !policy.sources[..index]
-                .iter()
-                .any(|prior| prior.public_key_hex == source.public_key_hex),
-            "each source must use a distinct Ed25519 key"
-        );
-        require!(
-            is_lower_hex_32(&source.public_key_hex),
-            "source public keys must be 32-byte lowercase hexadecimal"
-        );
+        if transaction_authenticated {
+            require!(
+                source.public_key_hex.is_none(),
+                "transaction-authenticated source policies must not pin wallet keys"
+            );
+        } else {
+            let public_key_hex = source
+                .public_key_hex
+                .as_deref()
+                .unwrap_or_else(|| env::panic_str("legacy source policies require a pinned key"));
+            require!(
+                !policy.sources[..index]
+                    .iter()
+                    .any(|prior| prior.public_key_hex.as_deref() == Some(public_key_hex)),
+                "each source must use a distinct Ed25519 key"
+            );
+            require!(
+                is_lower_hex_32(public_key_hex),
+                "source public keys must be 32-byte lowercase hexadecimal"
+            );
+        }
         prior_source = Some(&source.source_id);
     }
 }
@@ -3541,7 +4115,9 @@ fn storage_cost(storage_bytes: u64) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ProbeObservation, ProbeReportPayload, ServiceAvailabilitySource};
+    use crate::models::{
+        Nep413ProbeSignature, ProbeObservation, ProbeReportPayload, ServiceAvailabilitySource,
+    };
     #[allow(deprecated)]
     use near_sdk::test_utils::testing_env_with_promise_results;
     use near_sdk::{
@@ -3776,7 +4352,7 @@ mod tests {
                 .map(|index| ServiceAvailabilitySource {
                     source_id: format!("source-{index}"),
                     operator_id: format!("operator-{index}"),
-                    public_key_hex: format!("{:02x}", index + 1).repeat(32),
+                    public_key_hex: Some(format!("{:02x}", index + 1).repeat(32)),
                 })
                 .collect(),
         }
@@ -3826,6 +4402,205 @@ mod tests {
             },
             service_availability: service_policy_fixture(),
         }
+    }
+
+    fn transaction_authenticated_service_commitment_args() -> CreateServiceAvailabilityCommitmentArgs
+    {
+        let mut args = service_commitment_args();
+        args.subject = "LCP Operator Inbox QA 2026-11-11".to_string();
+        args.maintainer = "wasabinetwork.testnet".parse().unwrap();
+        args.arbiter = "wasabinetwork.testnet".parse().unwrap();
+        args.policy.temporal.initial_window_ns = U64(1_800_000_000_000);
+        args.policy.temporal.evidence_ttl_ns = U64(900_000_000_000);
+        args.policy.temporal.grace_ns = U64(120_000_000_000);
+        args.policy.temporal.max_source_lag_ns = U64(600_000_000_000);
+        args.policy.temporal.challenge_window_ns = U64(60_000_000_000);
+        args.policy.temporal.resolution_timeout_ns = U64(120_000_000_000);
+        args.policy.evaluator.wasm_url = "https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm".to_string();
+        args.policy.evaluator.wasm_sha256_hex =
+            "908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611".to_string();
+        args.policy.evaluator.max_instructions = U64(1_000_000_000);
+        args.policy.evaluator.max_execution_seconds = U64(10);
+        args.policy.evaluator.request_timeout_ns = U64(30_000_000_000);
+        args.policy.evaluator.execution_deposit_yocto = U128(10_u128.pow(22));
+        args.policy.budget.sponsor = "wasabinetwork.testnet".parse().unwrap();
+        args.policy.budget.beneficiary = "wasabinetwork.testnet".parse().unwrap();
+        args.policy.budget.epoch_ns = U64(300_000_000_000);
+        args.policy.budget.max_epochs = 3;
+        args.policy.budget.tranche_yocto = U128(10_u128.pow(22));
+        args.service_availability.schema = "lcp.service_availability.policy.v2".to_string();
+        args.service_availability.target_id =
+            "3f2c4dc31f5302b158680d5cd3d1cc8d533733ff992af0947b67efc8e7b697a5".to_string();
+        args.service_availability.max_source_lag_ns = "600000000000".to_string();
+        args.service_availability.expected_status_min = 200;
+        args.service_availability.expected_status_max = 299;
+        args.service_availability.max_latency_ms = 1_500;
+        args.service_availability.minimum_agreeing_sources = 2;
+        args.service_availability.minimum_corroboration_bps = 6_000;
+        args.service_availability.sources = vec![
+            ServiceAvailabilitySource {
+                source_id: "operator-a".to_string(),
+                operator_id: "wasabinetwork.testnet".to_string(),
+                public_key_hex: None,
+            },
+            ServiceAvailabilitySource {
+                source_id: "operator-b".to_string(),
+                operator_id: "lcptester.testnet".to_string(),
+                public_key_hex: None,
+            },
+        ];
+        args
+    }
+
+    fn report_inbox_fixture() -> (Contract, U64, Vec<AccountId>) {
+        let mut args = service_commitment_args();
+        let operators: Vec<AccountId> = [
+            "operator-a.testnet",
+            "operator-b.testnet",
+            "operator-c.testnet",
+        ]
+        .map(|account| account.parse().unwrap())
+        .to_vec();
+        for (index, source) in args.service_availability.sources.iter_mut().enumerate() {
+            source.operator_id = operators[index].to_string();
+            source.public_key_hex = Some(format!("{:02x}", index + 21).repeat(32));
+        }
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = Contract::new();
+        let id = contract.create_service_availability_commitment(args);
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Active;
+        commitment.activated_at_ns = Some(NOW_NS - 10);
+        commitment.operations_funded_yocto =
+            commitment.policy.evaluator.execution_deposit_yocto * 2;
+        contract.commitments.insert(id.0, commitment);
+        contract.commitments.flush();
+        (contract, id, operators)
+    }
+
+    fn transaction_authenticated_inbox_fixture() -> (Contract, U64, Vec<AccountId>) {
+        let mut args = service_commitment_args();
+        args.service_availability.schema = "lcp.service_availability.policy.v2".to_string();
+        let operators: Vec<AccountId> = [
+            "operator-a.testnet",
+            "operator-b.testnet",
+            "operator-c.testnet",
+        ]
+        .map(|account| account.parse().unwrap())
+        .to_vec();
+        for (index, source) in args.service_availability.sources.iter_mut().enumerate() {
+            source.operator_id = operators[index].to_string();
+            source.public_key_hex = None;
+        }
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = Contract::new();
+        let id = contract.create_service_availability_commitment(args);
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Active;
+        commitment.activated_at_ns = Some(NOW_NS - 10);
+        commitment.operations_funded_yocto =
+            commitment.policy.evaluator.execution_deposit_yocto * 2;
+        contract.commitments.insert(id.0, commitment);
+        contract.commitments.flush();
+        (contract, id, operators)
+    }
+
+    fn transaction_authenticated_probe_report(
+        contract: &Contract,
+        commitment_id: U64,
+        source_index: usize,
+        observed_at_ns: u64,
+    ) -> SignedProbeReport {
+        let commitment = contract.commitments.get(&commitment_id.0).unwrap().clone();
+        let policy = contract
+            .get_service_availability_policy(commitment_id)
+            .unwrap();
+        let source = &policy.sources[source_index];
+        SignedProbeReport {
+            payload: ProbeReportPayload {
+                schema: "lcp.service_availability.report.v1".to_string(),
+                contract_id: accounts(0).to_string(),
+                commitment_id: commitment_id.0.to_string(),
+                evaluation_id: commitment.next_evaluation_id.to_string(),
+                policy_version: 3,
+                policy_hash: encode_hex(&commitment.policy_hash),
+                source_policy_hash: service_source_policy_hash(&policy),
+                source_id: source.source_id.clone(),
+                operator_id: source.operator_id.clone(),
+                target_id: policy.target_id,
+                observed_at_ns: observed_at_ns.to_string(),
+                observation: ProbeObservation::HttpResponse {
+                    status_code: 200,
+                    latency_ms: 25,
+                    tls_verified: true,
+                },
+            },
+            signature_hex: None,
+            wallet_signature: None,
+            submitted_by: None,
+        }
+    }
+
+    fn wallet_signed_probe_report(
+        contract: &Contract,
+        commitment_id: U64,
+        source_index: usize,
+        observed_at_ns: u64,
+        nonce_byte: u8,
+    ) -> SignedProbeReport {
+        let commitment = contract.commitments.get(&commitment_id.0).unwrap().clone();
+        let policy = contract
+            .get_service_availability_policy(commitment_id)
+            .unwrap();
+        let source = &policy.sources[source_index];
+        let public_key_bytes =
+            decode_32_byte_hex(source.public_key_hex.as_deref().unwrap()).unwrap();
+        SignedProbeReport {
+            payload: ProbeReportPayload {
+                schema: "lcp.service_availability.report.v1".to_string(),
+                contract_id: accounts(0).to_string(),
+                commitment_id: commitment_id.0.to_string(),
+                evaluation_id: commitment.next_evaluation_id.to_string(),
+                policy_version: 3,
+                policy_hash: encode_hex(&commitment.policy_hash),
+                source_policy_hash: service_source_policy_hash(&policy),
+                source_id: source.source_id.clone(),
+                operator_id: source.operator_id.clone(),
+                target_id: policy.target_id,
+                observed_at_ns: observed_at_ns.to_string(),
+                observation: ProbeObservation::HttpResponse {
+                    status_code: 200,
+                    latency_ms: 25,
+                    tls_verified: true,
+                },
+            },
+            signature_hex: None,
+            wallet_signature: Some(Nep413ProbeSignature {
+                account_id: source.operator_id.clone(),
+                public_key: format!("ed25519:{}", bs58::encode(public_key_bytes).into_string()),
+                signature: BASE64_STANDARD.encode([nonce_byte; 64]),
+                nonce_hex: format!("{:02x}", nonce_byte).repeat(32),
+                recipient: accounts(0).to_string(),
+                callback_url: "https://lcp.example.org".to_string(),
+            }),
+            submitted_by: None,
+        }
+    }
+
+    fn submit_inbox_report(
+        contract: &mut Contract,
+        commitment_id: U64,
+        operator: AccountId,
+        report: SignedProbeReport,
+    ) -> u128 {
+        testing_env!(context_at(operator.clone(), 0, NOW_NS));
+        let deposit = contract
+            .get_service_report_storage_deposit(commitment_id, report.clone())
+            .0;
+        testing_env!(context_at(operator, deposit, NOW_NS));
+        contract.submit_service_report(commitment_id, report).0
     }
 
     fn active_service_commitment() -> (Contract, U64) {
@@ -4093,6 +4868,220 @@ mod tests {
     }
 
     #[test]
+    fn transaction_authenticated_service_commitment_fits_conservative_storage_deposit() {
+        let args = transaction_authenticated_service_commitment_args();
+
+        let attached = 5 * 10_u128.pow(22); // 0.05 NEAR
+        testing_env!(context("wasabinetwork.testnet".parse().unwrap(), attached));
+        let mut contract = Contract::new();
+        let id = contract.create_service_availability_commitment(args);
+        let commitment = contract.commitments.get(&id.0).unwrap();
+
+        assert!(commitment.storage_deposit_yocto > 0);
+        assert!(commitment.storage_deposit_yocto <= attached);
+    }
+
+    #[test]
+    #[should_panic(expected = "attach at least")]
+    fn transaction_authenticated_service_commitment_rejects_old_point_zero_one_storage_default() {
+        let args = transaction_authenticated_service_commitment_args();
+
+        testing_env!(context(
+            "wasabinetwork.testnet".parse().unwrap(),
+            10_u128.pow(22)
+        ));
+        let mut contract = Contract::new();
+        contract.create_service_availability_commitment(args);
+    }
+
+    #[test]
+    fn service_report_inbox_accepts_wallet_bound_report_and_refunds_replacement() {
+        let (mut contract, id, operators) = report_inbox_fixture();
+        let first = wallet_signed_probe_report(&contract, id, 0, NOW_NS - 1, 11);
+        assert!(near_sdk::serde_json::to_vec(&first).unwrap().len() < MAX_SERVICE_REPORT_BYTES);
+        let first_bond = submit_inbox_report(&mut contract, id, operators[0].clone(), first);
+        assert!(first_bond > 0);
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[0].clone())
+                .0,
+            0
+        );
+
+        let replacement = wallet_signed_probe_report(&contract, id, 0, NOW_NS - 1, 12);
+        let replacement_bond =
+            submit_inbox_report(&mut contract, id, operators[0].clone(), replacement);
+        assert!(replacement_bond > 0);
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[0].clone())
+                .0,
+            first_bond
+        );
+        let staged = contract.get_service_report_inbox(id, U64(1));
+        assert_eq!(staged.len(), 1);
+        assert_eq!(staged[0].submitted_by, operators[0]);
+        assert!(!staged[0].expired);
+        assert_eq!(
+            staged[0]
+                .report
+                .wallet_signature
+                .as_ref()
+                .unwrap()
+                .nonce_hex,
+            "0c".repeat(32)
+        );
+
+        testing_env!(context_at(operators[0].clone(), 0, NOW_NS));
+        contract.withdraw_service_report_refund();
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[0].clone())
+                .0,
+            0
+        );
+        testing_env_with_promise_results(context_at(accounts(0), 0, NOW_NS), PromiseResult::Failed);
+        contract.on_service_report_refund(operators[0].clone(), U128(first_bond));
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[0].clone())
+                .0,
+            first_bond
+        );
+        testing_env!(context_at(operators[0].clone(), 0, NOW_NS));
+        contract.withdraw_service_report_refund();
+        testing_env_with_promise_results(
+            context_at(accounts(0), 0, NOW_NS),
+            PromiseResult::Successful(Vec::new()),
+        );
+        contract.on_service_report_refund(operators[0].clone(), U128(first_bond));
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[0].clone())
+                .0,
+            0
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "this exact signed report is already staged")]
+    fn service_report_inbox_rejects_exact_replay() {
+        let (mut contract, id, operators) = report_inbox_fixture();
+        let report = wallet_signed_probe_report(&contract, id, 0, NOW_NS - 1, 11);
+        let bond = submit_inbox_report(&mut contract, id, operators[0].clone(), report.clone());
+        testing_env!(context_at(operators[0].clone(), bond, NOW_NS));
+        contract.submit_service_report(id, report);
+    }
+
+    #[test]
+    #[should_panic(expected = "service report exceeds the 4096-byte inbox limit")]
+    fn service_report_inbox_rejects_oversized_reports() {
+        let (mut contract, id, operators) = report_inbox_fixture();
+        let mut report = wallet_signed_probe_report(&contract, id, 0, NOW_NS - 1, 11);
+        report.payload.observation = ProbeObservation::SourceError {
+            code: "x".repeat(MAX_SERVICE_REPORT_BYTES),
+        };
+        submit_inbox_report(&mut contract, id, operators[0].clone(), report);
+    }
+
+    #[test]
+    fn service_report_inbox_reclaim_and_evaluation_credit_original_operators() {
+        let (mut contract, id, operators) = report_inbox_fixture();
+        let report_a = wallet_signed_probe_report(&contract, id, 0, NOW_NS - 1, 11);
+        let report_b = wallet_signed_probe_report(&contract, id, 1, NOW_NS - 1, 12);
+        let bond_a = submit_inbox_report(&mut contract, id, operators[0].clone(), report_a.clone());
+        let bond_b = submit_inbox_report(&mut contract, id, operators[1].clone(), report_b);
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let evaluation_id = contract.request_service_evaluation_from_inbox(id);
+        assert_eq!(evaluation_id, U64(1));
+        assert_eq!(
+            contract
+                .commitments
+                .get(&id.0)
+                .unwrap()
+                .pending_evaluation_id,
+            Some(1)
+        );
+        assert!(contract
+            .get_service_report_inbox(id, evaluation_id)
+            .is_empty());
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[0].clone())
+                .0,
+            bond_a
+        );
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[1].clone())
+                .0,
+            bond_b
+        );
+    }
+
+    #[test]
+    fn transaction_authenticated_inbox_binds_operator_transaction_to_evaluation() {
+        let (mut contract, id, operators) = transaction_authenticated_inbox_fixture();
+        let report = transaction_authenticated_probe_report(&contract, id, 0, NOW_NS - 1);
+        let bond = submit_inbox_report(&mut contract, id, operators[0].clone(), report);
+        let staged = contract.get_service_report_inbox(id, U64(1));
+        assert_eq!(staged.len(), 1);
+        assert_eq!(staged[0].submitted_by, operators[0]);
+        assert!(staged[0].report.submitted_by.is_none());
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        assert_eq!(contract.request_service_evaluation_from_inbox(id), U64(1));
+        assert_eq!(
+            contract
+                .commitments
+                .get(&id.0)
+                .unwrap()
+                .pending_evaluation_id,
+            Some(1)
+        );
+        assert!(contract.get_service_report_inbox(id, U64(1)).is_empty());
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[0].clone())
+                .0,
+            bond
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "transaction-authenticated reports must be requested from the NEAR inbox"
+    )]
+    fn transaction_authenticated_reports_cannot_bypass_inbox_provenance() {
+        let (mut contract, id, operators) = transaction_authenticated_inbox_fixture();
+        let mut report = transaction_authenticated_probe_report(&contract, id, 0, NOW_NS - 1);
+        report.submitted_by = Some(operators[0].to_string());
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        contract.request_service_evaluation(id, vec![report]);
+    }
+
+    #[test]
+    fn expired_service_report_can_be_reclaimed_by_any_account() {
+        let (mut contract, id, operators) = report_inbox_fixture();
+        let report_c = wallet_signed_probe_report(&contract, id, 2, NOW_NS - 1, 13);
+        let bond_c = submit_inbox_report(&mut contract, id, operators[2].clone(), report_c);
+        testing_env!(context_at(
+            "reclaimer.testnet".parse().unwrap(),
+            0,
+            NOW_NS + 99
+        ));
+        assert!(contract.reclaim_service_report(id, U64(1), "source-2".to_string()));
+        assert_eq!(
+            contract
+                .get_service_report_refund_balance(operators[2].clone())
+                .0,
+            bond_c
+        );
+        assert!(!contract.reclaim_service_report(id, U64(1), "source-2".to_string()));
+    }
+
+    #[test]
     fn service_policy_amendment_requires_each_party_and_resets_evidence_clock() {
         let (mut contract, id) = active_service_commitment();
         let original_hash = contract.commitments.get(&id.0).unwrap().policy_hash;
@@ -4312,7 +5301,9 @@ mod tests {
                     tls_verified: true,
                 },
             },
-            signature_hex: "0".repeat(128),
+            signature_hex: Some("0".repeat(128)),
+            wallet_signature: None,
+            submitted_by: None,
         };
         testing_env!(context_at(accounts(2), 10_u128.pow(25), NOW_NS));
         let evaluation_id = contract.request_service_evaluation(id, vec![report]);

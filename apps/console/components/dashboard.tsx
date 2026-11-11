@@ -25,16 +25,20 @@ import type {
   NearTransactionSender,
   NearEd25519PublicKey,
   NearSignedMessage,
+  Nep413ProbeSignature,
   LcpEvent,
   SignedHeartbeatEvidence,
   SignedProbeReport,
+  ServiceProbeReport,
   ServiceAvailabilityPolicyInput,
+  ServiceReportInboxView,
   ServicePolicyAmendmentView,
+  ServiceAvailabilitySourceInput,
   TrancheView,
 } from "@lcp/sdk";
 import { ReviewerAccessPanel } from "./reviewer-access-panel";
 import { AuthorityAdapterCard, ServicePolicyAmendmentCard } from "./governance-panels";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 
 interface WalletAction {
@@ -60,8 +64,10 @@ interface ConnectorAccountEvent {
 }
 
 interface NearConnectorPort {
+  whenManifestLoaded?: Promise<void>;
   on(event: "wallet:signIn", handler: (event: ConnectorAccountEvent) => void): unknown;
   on(event: "wallet:signOut", handler: () => void): unknown;
+  getConnectedWallet(): Promise<{ wallet: unknown; accounts: Array<{ accountId: string }> }>;
   connect(): Promise<unknown>;
   disconnect(): Promise<void>;
   wallet(): Promise<NearWalletPort>;
@@ -71,6 +77,9 @@ interface CommitmentData {
   commitment: CommitmentView;
   policy: CommitmentPolicyView | null;
   serviceAvailabilityPolicy: ServiceAvailabilityPolicyInput | null;
+  serviceReportInbox: ServiceReportInboxView[];
+  serviceReportInboxAvailable: boolean;
+  serviceReportRefundBalance: string;
   servicePolicyAmendment: ServicePolicyAmendmentView | null;
   latestAuthorityGrant: BoundedPayoutAuthorityGrantView | null;
   governanceMethodsAvailable: boolean;
@@ -96,6 +105,7 @@ const NEAR_NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK_ID?.trim() === "mai
 const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
 const EVENT_INDEXER_URL = process.env.NEXT_PUBLIC_LCP_EVENT_INDEXER_URL?.trim().replace(/\/+$/, "") ?? "";
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
+const DEFAULT_SERVICE_COMMITMENT_STORAGE_DEPOSIT = "0.05";
 const DEFAULT_EVALUATION_STORAGE_DEPOSIT = "0.05";
 const MAX_EVIDENCE_ARTIFACT_BYTES = 25 * 1024 * 1024;
 const EVALUATION_HISTORY_LIMIT = 10;
@@ -106,6 +116,7 @@ type ColorTheme = "light" | "dark";
 
 export function Dashboard() {
   const connectorRef = useRef<NearConnectorPort | null>(null);
+  const connectorInitRef = useRef<Promise<NearConnectorPort> | null>(null);
   const [theme, setTheme] = useState<ColorTheme | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
   const [commitments, setCommitments] = useState<CommitmentSummaryView[]>([]);
@@ -115,12 +126,14 @@ export function Dashboard() {
   const [loadingCommitments, setLoadingCommitments] = useState(false);
   const [data, setData] = useState<CommitmentData | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
+  const [walletRestoring, setWalletRestoring] = useState(true);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [creating, setCreating] = useState(false);
   const [requestingEvaluation, setRequestingEvaluation] = useState(false);
+  const [serviceInboxAction, setServiceInboxAction] = useState<"submit" | "refund" | "reclaim" | null>(null);
   const [expiringEvaluation, setExpiringEvaluation] = useState(false);
   const [challengeAction, setChallengeAction] = useState<ChallengeAction | null>(null);
   const [closureAction, setClosureAction] = useState<ClosureAction | null>(null);
@@ -131,9 +144,50 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
+  const ensureConnector = useCallback(async (): Promise<NearConnectorPort> => {
+    if (connectorRef.current) return connectorRef.current;
+    if (connectorInitRef.current) return connectorInitRef.current;
+
+    const initialization = (async () => {
+      const { NearConnector } = await import("@hot-labs/near-connect");
+      const connector = new NearConnector({
+        network: NEAR_NETWORK_ID,
+        features: { testnet: NEAR_NETWORK_ID === "testnet" },
+      }) as unknown as NearConnectorPort;
+      connector.on("wallet:signIn", (event) => setAccountId(event.accounts[0]?.accountId ?? null));
+      connector.on("wallet:signOut", () => setAccountId(null));
+      await connector.whenManifestLoaded?.catch(() => undefined);
+      connectorRef.current = connector;
+      return connector;
+    })();
+    connectorInitRef.current = initialization;
+    try {
+      return await initialization;
+    } catch (cause) {
+      connectorInitRef.current = null;
+      throw cause;
+    }
+  }, []);
+
   useEffect(() => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const connector = await ensureConnector();
+        const { accounts } = await connector.getConnectedWallet();
+        if (active) setAccountId(accounts[0]?.accountId ?? null);
+      } catch {
+        // A missing persisted wallet is the normal disconnected state.
+      } finally {
+        if (active) setWalletRestoring(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [ensureConnector]);
 
   function toggleTheme() {
     const currentTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -170,6 +224,7 @@ export function Dashboard() {
 
   async function loadCommitment(id = commitmentId): Promise<boolean> {
     const normalizedId = id.trim();
+    const keepCurrentData = data?.commitment.id === normalizedId;
     if (!CONTRACT_ID) {
       setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local to connect the LCP Console to a deployed contract.");
       return false;
@@ -181,7 +236,7 @@ export function Dashboard() {
 
     setCommitmentId(normalizedId);
     setLoading(true);
-    setData(null);
+    if (!keepCurrentData) setData(null);
     setError(null);
     setActionMessage(null);
     try {
@@ -218,7 +273,7 @@ export function Dashboard() {
         : Promise.resolve({ value: null, available: true });
       const authorityViewPromise = client.getLatestBoundedPayoutAuthorityGrant(normalizedId)
         .then((value) => ({ value, available: true }), () => ({ value: null, available: false }));
-      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche, serviceAvailabilityPolicy, amendmentView, authorityView] = await Promise.all([
+      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche, serviceAvailabilityPolicy, reportInboxState, serviceReportRefundBalance, amendmentView, authorityView] = await Promise.all([
         Promise.all(evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)))
           .then((records) => records.filter((record): record is EvaluationRecordView => record !== null)),
         Promise.all(evaluationIds.map((evaluationId) => client.getChallengeForEvaluation(normalizedId, evaluationId)))
@@ -231,26 +286,39 @@ export function Dashboard() {
           : Promise.resolve(null),
         epoch ? client.getTranche(normalizedId, epoch) : Promise.resolve(null),
         policy?.version === 3 ? client.getServiceAvailabilityPolicy(normalizedId) : Promise.resolve(null),
+        policy?.version === 3
+          ? client.getServiceReportInbox(normalizedId, commitment.next_evaluation_id)
+            .then((value) => ({ value, available: true as const }), () => ({ value: [], available: false as const }))
+          : Promise.resolve({ value: [], available: false as const }),
+        accountId && policy?.version === 3
+          ? client.getServiceReportRefundBalance(accountId).catch(() => "0")
+          : Promise.resolve("0"),
         amendmentViewPromise,
         authorityViewPromise,
       ]);
       const servicePolicyAmendment = amendmentView.value;
       const latestAuthorityGrant = authorityView.value;
+      const serviceReportInbox = reportInboxState.value;
       const allChallengeHistory = [...challengeHistory];
       if (activeChallenge && !allChallengeHistory.some((challenge) => challenge.id === activeChallenge.id)) {
         allChallengeHistory.push(activeChallenge);
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
-      setData({ commitment, policy, serviceAvailabilityPolicy, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, serviceReportRefundBalance, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
-      setData(null);
+      if (!keepCurrentData) setData(null);
       setError(cause instanceof Error ? cause.message : "The commitment could not be loaded.");
       return false;
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!accountId || !data?.commitment.id) return;
+    void loadCommitment(data.commitment.id);
+  }, [accountId, data?.commitment.id]);
 
   function connectedWalletClient(): LcpClient {
     const connector = connectorRef.current;
@@ -269,18 +337,11 @@ export function Dashboard() {
     setConnecting(true);
     setError(null);
     try {
-      let connector = connectorRef.current;
-      if (!connector) {
-        const { NearConnector } = await import("@hot-labs/near-connect");
-        connector = new NearConnector({
-          network: NEAR_NETWORK_ID,
-          features: { testnet: NEAR_NETWORK_ID === "testnet" },
-        }) as unknown as NearConnectorPort;
-        connector.on("wallet:signIn", (event) => setAccountId(event.accounts[0]?.accountId ?? null));
-        connector.on("wallet:signOut", () => setAccountId(null));
-        connectorRef.current = connector;
-      }
+      const connector = await ensureConnector();
+      await connector.whenManifestLoaded?.catch(() => undefined);
       await connector.connect();
+      const { accounts } = await connector.getConnectedWallet();
+      setAccountId(accounts[0]?.accountId ?? null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Wallet connection was not completed.");
     } finally {
@@ -329,7 +390,7 @@ export function Dashboard() {
     const intendedAccount = targetAccountId.trim() || accountId || "";
     if (!intendedAccount) throw new Error("Enter the maintainer account or connect that account's wallet first.");
     const nonce = crypto.getRandomValues(new Uint8Array(32));
-    const callbackUrl = window.location.href.split("#", 1)[0];
+    const callbackUrl = window.location.origin;
     const signed = await signWalletMessage(
       `Pin this NEAR key for Living Commitments Protocol maintainer ${intendedAccount}.`,
       nonce,
@@ -481,7 +542,7 @@ export function Dashboard() {
     }
   }
 
-  async function submitServiceEvaluation(reports: SignedProbeReport[], storageDeposit: string) {
+  async function submitServiceEvaluation(reports: SignedProbeReport[] | null, storageDeposit: string) {
     if (!data) return;
     const connector = connectorRef.current;
     if (!connector || !accountId) {
@@ -496,23 +557,158 @@ export function Dashboard() {
     setRequestingEvaluation(true);
     setError(null);
     setActionMessage(null);
+    const readClient = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+    try {
+      const current = await readClient.getCommitment(data.commitment.id);
+      if (!current) throw new Error(`Commitment #${data.commitment.id} could not be read from NEAR.`);
+      if (current.pending_evaluation_id) {
+        await loadCommitment(data.commitment.id);
+        setError(`Evaluation #${current.pending_evaluation_id} is already pending. Wait for its result; no new transaction was sent.`);
+        return;
+      }
+      if (current.active_challenge_id) {
+        await loadCommitment(data.commitment.id);
+        setError(`Resolve challenge #${current.active_challenge_id} before requesting another evaluation. No transaction was sent.`);
+        return;
+      }
+      const operationsAvailable = BigInt(current.operations_funded_yocto) - BigInt(current.operations_authorized_spend_yocto);
+      const executionDeposit = BigInt(data.policy.evaluator.execution_deposit_yocto);
+      if (operationsAvailable < executionDeposit) {
+        await loadCommitment(data.commitment.id);
+        setError(`Evaluator operations are exhausted. This request needs ${formatNear(executionDeposit - operationsAvailable)} NEAR; the sponsor must add funds before another evaluation.`);
+        return;
+      }
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      const evaluationId = reports
+        ? await client.requestServiceEvaluation(data.commitment.id, reports, {
+          attachedDepositYocto: storageDeposit,
+          gas: "180000000000000",
+        })
+        : await client.requestServiceEvaluationFromInbox(data.commitment.id, {
+          attachedDepositYocto: storageDeposit,
+          gas: "180000000000000",
+        });
+      const loaded = await loadCommitment(data.commitment.id);
+      const reportCount = reports?.length ?? data.serviceReportInbox.filter((item) => !item.expired).length;
+      const reportAuthentication = data.serviceAvailabilityPolicy?.schema === "lcp.service_availability.policy.v2"
+        ? "NEAR wallet-authenticated source report"
+        : "signed source report";
+      setActionMessage(loaded
+        ? `Evaluation #${evaluationId} requested from ${reportCount} ${reportAuthentication}${reportCount === 1 ? "" : "s"}.`
+        : `Evaluation request #${evaluationId} returned successfully. Reload commitment #${data.commitment.id} to verify its state.`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "The service availability evaluation request failed.";
+      let current: CommitmentView | null = null;
+      try {
+        current = await readClient.getCommitment(data.commitment.id);
+      } catch {
+        // Keep the wallet error if the follow-up state read also fails.
+      }
+      await loadCommitment(data.commitment.id);
+      if (current?.pending_evaluation_id) {
+        setError(`Evaluation #${current.pending_evaluation_id} is pending on NEAR. Do not resubmit; wait for the evaluator result or refresh its status.`);
+      } else if (current && BigInt(current.operations_funded_yocto) - BigInt(current.operations_authorized_spend_yocto) < BigInt(data.policy.evaluator.execution_deposit_yocto)) {
+        const available = BigInt(current.operations_funded_yocto) - BigInt(current.operations_authorized_spend_yocto);
+        const required = BigInt(data.policy.evaluator.execution_deposit_yocto);
+        setError(`No evaluator operations remain. The sponsor must add at least ${formatNear(required - available)} NEAR before another request.`);
+      } else if (/reject|cancel/i.test(message)) {
+        setError("The wallet request was cancelled. No evaluation was started.");
+      } else if (/WebAssembly trap|unreachable opcode/i.test(message)) {
+        setError("The contract rejected this request. Commitment state was refreshed; check the pending evaluation and operations balance before trying again.");
+      } else {
+        setError(message);
+      }
+    } finally {
+      setRequestingEvaluation(false);
+    }
+  }
+
+  async function submitServiceReport(report: ServiceProbeReport): Promise<boolean> {
+    if (!data) return false;
+    const connector = connectorRef.current;
+    if (!connector || !accountId) {
+      setError("Connect the NEAR wallet listed for this operator before submitting its report.");
+      return false;
+    }
+    const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+    const source = data.serviceAvailabilityPolicy?.sources.find((item) => item.source_id === report.payload.source_id);
+    if (!source || source.operator_id !== accountId) {
+      setError("Only the configured NEAR operator account can submit this report.");
+      return false;
+    }
+
+    setServiceInboxAction("submit");
+    setError(null);
+    setActionMessage(null);
+    try {
+      const storageDeposit = await client.getServiceReportStorageDeposit(data.commitment.id, report);
+      const walletClient = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      await walletClient.submitServiceReport(data.commitment.id, report, storageDeposit, { gas: "100000000000000" });
+      await loadCommitment(data.commitment.id);
+      setActionMessage(`Report for ${source.source_id} is now in the public NEAR inbox for evaluation #${report.payload.evaluation_id}. Its temporary storage bond will be credited back after use or expiry.`);
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The service report could not be submitted to NEAR.");
+      return false;
+    } finally {
+      setServiceInboxAction(null);
+    }
+  }
+
+  async function withdrawServiceReportRefund(): Promise<boolean> {
+    const connector = connectorRef.current;
+    if (!connector || !accountId) {
+      setError("Connect the NEAR wallet that owns the report storage refund.");
+      return false;
+    }
+    setServiceInboxAction("refund");
+    setError(null);
+    setActionMessage(null);
     try {
       const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
         rpcUrl: RPC_URL,
         sendTransaction: createWalletSender(connector),
       }));
-      const evaluationId = await client.requestServiceEvaluation(data.commitment.id, reports, {
-        attachedDepositYocto: storageDeposit,
-        gas: "180000000000000",
-      });
-      const loaded = await loadCommitment(data.commitment.id);
-      setActionMessage(loaded
-        ? `Evaluation #${evaluationId} requested from ${reports.length} signed source report${reports.length === 1 ? "" : "s"}.`
-        : `Evaluation request #${evaluationId} returned successfully. Reload commitment #${data.commitment.id} to verify its state.`);
+      await client.withdrawServiceReportRefund();
+      if (data) await loadCommitment(data.commitment.id);
+      setActionMessage("Report storage refund requested. NEAR will reconcile the transfer; refresh the commitment to check its status.");
+      return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The service availability evaluation request failed.");
+      setError(cause instanceof Error ? cause.message : "The report storage refund could not be requested.");
+      return false;
     } finally {
-      setRequestingEvaluation(false);
+      setServiceInboxAction(null);
+    }
+  }
+
+  async function reclaimServiceReport(evaluationId: string, sourceId: string): Promise<boolean> {
+    const connector = connectorRef.current;
+    if (!connector || !data) {
+      setError("Connect a NEAR wallet to reclaim expired report storage.");
+      return false;
+    }
+    setServiceInboxAction("reclaim");
+    setError(null);
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      await client.reclaimServiceReport(data.commitment.id, evaluationId, sourceId);
+      await loadCommitment(data.commitment.id);
+      setActionMessage(`Expired ${sourceId} report removed. Its storage deposit is now credited to the submitting operator.`);
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The expired report could not be reclaimed.");
+      return false;
+    } finally {
+      setServiceInboxAction(null);
     }
   }
 
@@ -532,21 +728,50 @@ export function Dashboard() {
     setError(null);
     setActionMessage(null);
     try {
-      const nowNs = BigInt(await getFinalBlockTimestampNs(RPC_URL));
-      if (nowNs < BigInt(data.evaluationTimeoutNs)) {
-        throw new Error(`This request can be expired after ${formatDate(data.evaluationTimeoutNs)}.`);
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+      const current = await client.getCommitment(data.commitment.id);
+      if (!current?.pending_evaluation_id) {
+        await loadCommitment(data.commitment.id);
+        setError("This evaluation is no longer pending. Its current result has been refreshed; no expiry transaction was sent.");
+        return;
       }
-      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+      const timeoutNs = await client.getEvaluationTimeout(data.commitment.id, current.pending_evaluation_id);
+      if (!timeoutNs) {
+        await loadCommitment(data.commitment.id);
+        setError("NEAR has no timeout recorded for this pending evaluation. Refresh its status before trying again.");
+        return;
+      }
+      const nowNs = BigInt(await getFinalBlockTimestampNs(RPC_URL));
+      if (nowNs < BigInt(timeoutNs)) {
+        setError(`Evaluation #${current.pending_evaluation_id} is still waiting for the evaluator. You can expire it after ${formatDate(timeoutNs)}.`);
+        return;
+      }
+      const walletClient = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
         rpcUrl: RPC_URL,
         sendTransaction: createWalletSender(connector),
       }));
-      await client.expireEvaluation(data.commitment.id, data.commitment.pending_evaluation_id);
+      await walletClient.expireEvaluation(data.commitment.id, current.pending_evaluation_id);
       const loaded = await loadCommitment(data.commitment.id);
       setActionMessage(loaded
-        ? `Evaluation #${data.commitment.pending_evaluation_id} expired after its timeout.`
+        ? `Evaluation #${current.pending_evaluation_id} expired after its timeout.`
         : `The evaluation expiry transaction returned successfully. Reload commitment #${data.commitment.id} to verify its state.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The pending evaluation could not be expired.");
+      const message = cause instanceof Error ? cause.message : "The pending evaluation could not be expired.";
+      let current: CommitmentView | null = null;
+      let stateVerified = false;
+      try {
+        const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+        current = await client.getCommitment(data.commitment.id);
+        stateVerified = current !== null;
+      } catch {
+        // Keep the wallet error if the follow-up state read also fails.
+      }
+      await loadCommitment(data.commitment.id);
+      setError(current?.pending_evaluation_id
+        ? `Evaluation #${current.pending_evaluation_id} is still pending. Refresh its timeout before retrying. ${message}`
+        : stateVerified
+          ? "This evaluation already finished or expired. Commitment state was refreshed; no further expiry action is needed."
+          : `${message} NEAR did not return the current evaluation state, so refresh before retrying.`);
     } finally {
       setExpiringEvaluation(false);
     }
@@ -798,9 +1023,9 @@ export function Dashboard() {
               </button>
             </>
           ) : (
-            <button className="wallet-button" type="button" onClick={() => void connectWallet()} disabled={connecting}>
+            <button className="wallet-button" type="button" onClick={() => void connectWallet()} disabled={connecting || walletRestoring}>
               <span className="wallet-icon" aria-hidden="true">◈</span>
-              {connecting ? "Connecting…" : "Connect wallet"}
+              {walletRestoring ? "Restoring wallet…" : connecting ? "Connecting…" : "Connect wallet"}
             </button>
           )}
         </div>
@@ -954,10 +1179,15 @@ export function Dashboard() {
                   key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
                   data={data}
                   accountId={accountId}
-                  busy={requestingEvaluation || expiringEvaluation}
+                  busy={requestingEvaluation || expiringEvaluation || serviceInboxAction !== null || loading}
                   pendingTimeoutNs={data.evaluationTimeoutNs}
+                  onRefresh={() => loadCommitment(data.commitment.id)}
                   onExpire={expirePendingEvaluation}
                   onSubmit={submitServiceEvaluation}
+                  onSubmitReport={submitServiceReport}
+                  onWithdrawRefund={withdrawServiceReportRefund}
+                  onReclaimReport={reclaimServiceReport}
+                  onSignMessage={signWalletMessage}
                 />
               )
               : (
@@ -1062,7 +1292,7 @@ export function Dashboard() {
                         </div>
                         <ul className="service-source-list">
                           {data.serviceAvailabilityPolicy.sources.map((source) => (
-                            <li key={source.source_id}><strong>{source.source_id}</strong><span>{source.operator_id}</span><code>{source.public_key_hex}</code></li>
+                            <li key={source.source_id}><strong>{source.source_id}</strong><span>{source.operator_id}</span><code>{source.public_key_hex ?? "NEAR transaction authorization"}</code></li>
                           ))}
                         </ul>
                       </div>
@@ -1086,8 +1316,11 @@ export function Dashboard() {
                     </div>
                     <div className="evaluation-verdict">
                       <span className="verdict-label">VERDICT</span>
-                      <strong>{data.evaluation.verdict ?? "Pending"}</strong>
+                      <strong>{evaluationVerdictLabel(data.evaluation)}</strong>
                     </div>
+                    {evaluationExplanation(data.evaluation) && (
+                      <p className="evaluation-explanation">{evaluationExplanation(data.evaluation)}</p>
+                    )}
                     <div className="digest-row"><span>OBSERVED</span><code>{formatDate(data.evaluation.observed_at_ns)}</code></div>
                     <div className="digest-row"><span>EVIDENCE HASH</span><code>{data.evaluation.evidence_hash}</code></div>
                     {data.evaluation.service_availability && (
@@ -1912,43 +2145,293 @@ function ServiceAvailabilityEvidenceCard({
   accountId,
   busy,
   pendingTimeoutNs,
+  onRefresh,
   onExpire,
   onSubmit,
+  onSubmitReport,
+  onWithdrawRefund,
+  onReclaimReport,
+  onSignMessage,
 }: {
   data: CommitmentData;
   accountId: string | null;
   busy: boolean;
   pendingTimeoutNs: string | null;
+  onRefresh: () => Promise<boolean>;
   onExpire: () => Promise<void>;
-  onSubmit: (reports: SignedProbeReport[], storageDeposit: string) => Promise<void>;
+  onSubmit: (reports: SignedProbeReport[] | null, storageDeposit: string) => Promise<void>;
+  onSubmitReport: (report: ServiceProbeReport) => Promise<boolean>;
+  onWithdrawRefund: () => Promise<boolean>;
+  onReclaimReport: (evaluationId: string, sourceId: string) => Promise<boolean>;
+  onSignMessage: (message: string, nonce: Uint8Array, recipient: string, callbackUrl: string) => Promise<NearSignedMessage>;
 }) {
   const { commitment, policy, serviceAvailabilityPolicy } = data;
+  const transactionAuthenticated = serviceAvailabilityPolicy?.schema === "lcp.service_availability.policy.v2";
+  const connectedServiceSource = serviceAvailabilityPolicy?.sources.find((source) => source.operator_id === accountId) ?? null;
   const [reportsJson, setReportsJson] = useState("");
-  const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_EVALUATION_STORAGE_DEPOSIT);
+  const [selectedReportFiles, setSelectedReportFiles] = useState<string[]>([]);
+  const [reportCount, setReportCount] = useState<number | null>(null);
+  const [signatureCheckAvailable, setSignatureCheckAvailable] = useState<boolean | null>(null);
+  const [loadingReportFiles, setLoadingReportFiles] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [browserProbeUrl, setBrowserProbeUrl] = useState("");
+  const [browserProbeSaltHex, setBrowserProbeSaltHex] = useState("");
+  const [runningBrowserProbe, setRunningBrowserProbe] = useState(false);
+  const [pendingBrowserProbePayload, setPendingBrowserProbePayload] = useState<SignedProbeReport["payload"] | null>(null);
+  const [pendingSignedProbeReport, setPendingSignedProbeReport] = useState<SignedProbeReport | null>(null);
+  const [browserProbeMessage, setBrowserProbeMessage] = useState<string | null>(null);
+  const [copiedReports, setCopiedReports] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const errorNoticeRef = useRef<HTMLDivElement>(null);
+  const [clockNowMs, setClockNowMs] = useState<number | null>(null);
   const canRequest = Boolean(accountId && policy && (
     accountId === commitment.maintainer || accountId === policy.budget.sponsor
   ));
   const blocked = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id);
+  const operationsAvailable = BigInt(commitment.operations_funded_yocto) - BigInt(commitment.operations_authorized_spend_yocto);
+  const executionDeposit = BigInt(policy?.evaluator.execution_deposit_yocto ?? "0");
+  const operationsReady = operationsAvailable >= executionDeposit;
+  const estimatedChainNowNs = data.chainTimeNs
+    ? BigInt(data.chainTimeNs) + BigInt(Math.max(0, clockNowMs === null ? 0 : clockNowMs - data.chainTimeCapturedAtMs)) * 1_000_000n
+    : null;
+  const timeoutRemainingNs = pendingTimeoutNs && estimatedChainNowNs !== null
+    ? BigInt(pendingTimeoutNs) - estimatedChainNowNs
+    : null;
+  const canExpire = timeoutRemainingNs !== null && timeoutRemainingNs <= 0n;
+
+  useEffect(() => {
+    if (!commitment.pending_evaluation_id) return;
+    setClockNowMs(Date.now());
+    const timer = window.setInterval(() => setClockNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [commitment.pending_evaluation_id]);
+
+  useEffect(() => {
+    if (formError) errorNoticeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [formError]);
+
+  async function handleReportFilesChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const files = Array.from(input.files ?? []);
+    input.value = "";
+    if (files.length === 0) return;
+
+    setFormError(null);
+    setSignatureCheckAvailable(null);
+    setPendingBrowserProbePayload(null);
+    setPendingSignedProbeReport(null);
+    setBrowserProbeMessage(null);
+    setLoadingReportFiles(true);
+    try {
+      const fileReports = await Promise.all(files.map(async (file) => {
+        const parsed: unknown = JSON.parse(await file.text());
+        return Array.isArray(parsed) ? parsed : [parsed];
+      }));
+      const candidates = fileReports.flat();
+      if (candidates.length === 0 || candidates.length > (serviceAvailabilityPolicy?.sources.length ?? 0)) {
+        throw new Error(`Choose between one and ${serviceAvailabilityPolicy?.sources.length ?? 0} signed reports.`);
+      }
+      setReportsJson(JSON.stringify(candidates, null, 2));
+      setSelectedReportFiles(files.map((file) => file.name));
+      setReportCount(candidates.length);
+    } catch (cause) {
+      setReportsJson("");
+      setSelectedReportFiles([]);
+      setReportCount(null);
+      setFormError(cause instanceof Error ? cause.message : "One of the selected files is not valid report JSON.");
+    } finally {
+      setLoadingReportFiles(false);
+    }
+  }
+
+  async function runBrowserProbe() {
+    if (!serviceAvailabilityPolicy) return;
+    setFormError(null);
+    setBrowserProbeMessage(null);
+    setPendingBrowserProbePayload(null);
+    setRunningBrowserProbe(true);
+    try {
+      if (!accountId) throw new Error("Connect the NEAR wallet for a source pinned in this commitment.");
+      const source = serviceAvailabilityPolicy.sources.find((item) => item.operator_id === accountId);
+      if (!source) throw new Error("The connected wallet is not one of the operator accounts pinned in this commitment.");
+      if (!CONTRACT_ID) throw new Error("The LCP contract is not configured.");
+
+      let target: URL;
+      try {
+        target = new URL(browserProbeUrl.trim());
+      } catch {
+        throw new Error("Enter the authorized HTTPS health endpoint.");
+      }
+      if (target.protocol !== "https:" || target.origin !== window.location.origin) {
+        throw new Error("For a safe in-app probe, open the Console on the same HTTPS origin as the health endpoint. Use an operator report from an approved probe tool for other origins.");
+      }
+      const fingerprint = await fingerprintServiceTarget(target.href, browserProbeSaltHex.trim());
+      if (fingerprint !== serviceAvailabilityPolicy.target_id) {
+        throw new Error("This endpoint and salt do not match the target fingerprint pinned by the commitment.");
+      }
+
+      const controller = new AbortController();
+      const timeoutMs = Math.max(5_000, Math.min(serviceAvailabilityPolicy.max_latency_ms + 1_000, 30_000));
+      const startedAt = performance.now();
+      let timedOut = false;
+      const timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+      let observation: SignedProbeReport["payload"]["observation"];
+      try {
+        const response = await fetch(target.href, {
+          method: "GET",
+          mode: "same-origin",
+          cache: "no-store",
+          credentials: "omit",
+          redirect: "error",
+          signal: controller.signal,
+        });
+        observation = {
+          kind: "http_response",
+          status_code: response.status,
+          latency_ms: Math.max(0, Math.round(performance.now() - startedAt)),
+          tls_verified: true,
+        };
+      } catch {
+        const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
+        observation = timedOut
+          ? { kind: "timeout", elapsed_ms: elapsedMs }
+          : { kind: "source_error", code: "browser_probe_unavailable" };
+      } finally {
+        window.clearTimeout(timeout);
+      }
+
+      const sourcePolicyHash = await sha256TextHex(JSON.stringify(serviceAvailabilityPolicy));
+      const observedAtNs = await getFinalBlockTimestampNs(RPC_URL);
+      const payload: SignedProbeReport["payload"] = {
+        schema: "lcp.service_availability.report.v1",
+        contract_id: CONTRACT_ID,
+        commitment_id: commitment.id,
+        evaluation_id: commitment.next_evaluation_id,
+        policy_version: 3,
+        policy_hash: commitment.policy_hash,
+        source_policy_hash: sourcePolicyHash,
+        source_id: source.source_id,
+        operator_id: source.operator_id,
+        target_id: serviceAvailabilityPolicy.target_id,
+        observed_at_ns: observedAtNs,
+        observation,
+      };
+      setPendingBrowserProbePayload(payload);
+      const description = observation.kind === "http_response"
+        ? `HTTP ${observation.status_code} in ${observation.latency_ms} ms`
+        : observation.kind === "timeout"
+          ? `No response within ${observation.elapsed_ms} ms`
+          : "Browser could not read the endpoint; this report will abstain rather than call it down";
+      setBrowserProbeMessage(transactionAuthenticated
+        ? `Probe captured for ${source.source_id}, evaluation #${commitment.next_evaluation_id}: ${description}. Review it, then submit from this operator wallet.`
+        : `Probe captured for ${source.source_id}, evaluation #${commitment.next_evaluation_id}: ${description}. Review the result, then sign it with the operator wallet.`);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "The in-app probe could not be completed.");
+    } finally {
+      setRunningBrowserProbe(false);
+    }
+  }
+
+  async function signBrowserProbe() {
+    if (!pendingBrowserProbePayload || !serviceAvailabilityPolicy || !accountId) return;
+    setFormError(null);
+    setRunningBrowserProbe(true);
+    try {
+      const source = serviceAvailabilityPolicy.sources.find((item) => item.operator_id === accountId);
+      if (!source || source.source_id !== pendingBrowserProbePayload.source_id) {
+        throw new Error("The connected wallet must match the operator that performed this probe.");
+      }
+      const nonce = crypto.getRandomValues(new Uint8Array(32));
+      const callbackUrl = window.location.origin;
+      const signed = await onSignMessage(JSON.stringify(pendingBrowserProbePayload), nonce, CONTRACT_ID, callbackUrl);
+      if (signed.accountId !== source.operator_id) {
+        throw new Error(`The wallet signed as ${signed.accountId}; this report requires ${source.operator_id}.`);
+      }
+      const publicKeyHex = nearPublicKeyHex(signed.publicKey);
+      if (!source.public_key_hex || publicKeyHex !== source.public_key_hex) {
+        throw new Error("The connected wallet key differs from the key pinned for this operator. Ask the commitment creator to update the source roster.");
+      }
+      const envelope: Nep413ProbeSignature = {
+        account_id: signed.accountId,
+        public_key: signed.publicKey as NearEd25519PublicKey,
+        signature: signed.signature,
+        nonce_hex: Array.from(nonce, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+        recipient: CONTRACT_ID,
+        callback_url: callbackUrl,
+      };
+      const report = canonicalizeSignedProbeReport({ payload: pendingBrowserProbePayload, wallet_signature: envelope });
+      const signatureValid = await verifySignedProbeReport(report, source);
+      if (signatureValid === false) throw new Error("The wallet signature did not verify for this report. No report was added.");
+
+      let previousReports: SignedProbeReport[] = [];
+      if (reportsJson.trim()) {
+        const parsed: unknown = JSON.parse(reportsJson);
+        const candidates = Array.isArray(parsed) ? parsed : [parsed];
+        previousReports = candidates.map((candidate) => canonicalizeSignedProbeReport(candidate));
+      }
+      const reports = [...previousReports.filter((item) => item.payload.source_id !== source.source_id), report];
+      if (reports.length > serviceAvailabilityPolicy.sources.length) throw new Error("The report bundle has more reports than configured sources.");
+      setReportsJson(JSON.stringify(reports, null, 2));
+      setSelectedReportFiles([]);
+      setReportCount(reports.length);
+      setSignatureCheckAvailable(signatureValid);
+      setCopiedReports(false);
+      setPendingSignedProbeReport(report);
+      setPendingBrowserProbePayload(null);
+      setBrowserProbeMessage(`Signed ${source.source_id} report for evaluation #${commitment.next_evaluation_id}. Submit it to the NEAR inbox to avoid sending a file to the sponsor.`);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : "The in-app probe could not be signed.");
+    } finally {
+      setRunningBrowserProbe(false);
+    }
+  }
+
+  async function submitSignedReportToInbox() {
+    if (!pendingSignedProbeReport) return;
+    const submitted = await onSubmitReport(pendingSignedProbeReport);
+    if (submitted) {
+      setPendingSignedProbeReport(null);
+      setBrowserProbeMessage(`Report from ${pendingSignedProbeReport.payload.source_id} is in the NEAR inbox. Its endpoint URL and salt are not included.`);
+    }
+  }
+
+  async function submitTransactionAuthenticatedReport() {
+    if (!pendingBrowserProbePayload) return;
+    const submitted = await onSubmitReport({ payload: pendingBrowserProbePayload });
+    if (submitted) {
+      setPendingBrowserProbePayload(null);
+      setBrowserProbeMessage(`Report from ${pendingBrowserProbePayload.source_id} is in the NEAR inbox. The operator account was authenticated by the transaction; no separate signature or file handoff was needed.`);
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loadingReportFiles || validating) return;
     setFormError(null);
+    setValidating(true);
     try {
       if (!serviceAvailabilityPolicy) throw new Error("The pinned service source policy is unavailable.");
       if (blocked) throw new Error("Resolve the pending evaluation or active challenge before requesting another evaluation.");
+      if (!operationsReady) {
+        throw new Error(`This request needs ${formatNear(executionDeposit - operationsAvailable)} NEAR in evaluator operations. The sponsor must add funds before an evaluation can run.`);
+      }
       const parsed: unknown = JSON.parse(reportsJson);
       const candidates: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
       if (candidates.length === 0 || candidates.length > serviceAvailabilityPolicy.sources.length) {
-        throw new Error(`Paste between one and ${serviceAvailabilityPolicy.sources.length} signed reports.`);
+        throw new Error(`Choose between one and ${serviceAvailabilityPolicy.sources.length} signed reports.`);
       }
+      setReportCount(candidates.length);
       const policyHash = await sha256TextHex(JSON.stringify(serviceAvailabilityPolicy));
       const seenSources = new Set<string>();
-      const reports = candidates.map((candidate): SignedProbeReport => {
-        if (!candidate || typeof candidate !== "object" || !("payload" in candidate) || !("signature_hex" in candidate)) {
-          throw new Error("Every report must contain a payload and signature_hex field.");
-        }
-        const report = candidate as SignedProbeReport;
+      const reports = candidates.map((candidate): SignedProbeReport => canonicalizeSignedProbeReport(candidate));
+      const chainNowNs = BigInt(await getFinalBlockTimestampNs(RPC_URL));
+      const maxReportAgeNs = BigInt(serviceAvailabilityPolicy.max_source_lag_ns);
+      const walletConfirmationBufferNs = 30_000_000_000n;
+      let canVerifySignatures = true;
+      for (const report of reports) {
         const payload = report.payload;
         const source = serviceAvailabilityPolicy.sources.find((item) => item.source_id === payload?.source_id);
         if (!source || seenSources.has(payload.source_id)) {
@@ -1964,72 +2447,454 @@ function ServiceAvailabilityEvidenceCard({
             || payload.source_policy_hash !== policyHash
             || payload.operator_id !== source.operator_id
             || payload.target_id !== serviceAvailabilityPolicy.target_id
-            || !/^(0|[1-9][0-9]*)$/.test(payload.observed_at_ns)
-            || !/^[0-9a-f]{128}$/.test(report.signature_hex)) {
-          throw new Error(`Report ${payload.source_id} is stale or does not match this commitment and pinned policy.`);
+            || !/^(0|[1-9][0-9]*)$/.test(payload.observed_at_ns)) {
+          throw new Error(`Report ${payload.source_id} does not match this commitment and pinned policy. Ask the operator to regenerate it for evaluation #${commitment.next_evaluation_id}.`);
         }
-        return report;
-      });
+        const observedAtNs = BigInt(payload.observed_at_ns);
+        if (observedAtNs > chainNowNs) {
+          throw new Error(`Report ${payload.source_id} is timestamped in the future relative to NEAR. Check the operator's system clock and regenerate the report.`);
+        }
+        const ageNs = chainNowNs - observedAtNs;
+        if (ageNs > maxReportAgeNs) {
+          throw new Error(`Report ${payload.source_id} is older than the ${formatDuration(serviceAvailabilityPolicy.max_source_lag_ns)} limit. Ask that operator to regenerate it.`);
+        }
+        if (ageNs + walletConfirmationBufferNs > maxReportAgeNs) {
+          throw new Error(`Report ${payload.source_id} is close to the ${formatDuration(serviceAvailabilityPolicy.max_source_lag_ns)} limit. Regenerate it before opening the wallet so it will still be fresh when NEAR processes the request.`);
+        }
+        const signatureValid = await verifySignedProbeReport(report, source);
+        if (signatureValid === false) {
+          throw new Error(`Report ${payload.source_id} has an invalid signature. Ask the operator to regenerate it; no transaction was sent.`);
+        }
+        if (signatureValid === null) canVerifySignatures = false;
+      }
+      setSignatureCheckAvailable(canVerifySignatures);
       if (JSON.stringify(reports).length > 32_768) throw new Error("The signed report bundle exceeds the 32 KiB evaluator limit.");
-      const deposit = parseNearToYocto(storageDepositNear);
-      if (BigInt(deposit) === 0n) throw new Error("Request storage deposit must be greater than zero.");
+      const deposit = parseNearToYocto(DEFAULT_EVALUATION_STORAGE_DEPOSIT);
       await onSubmit(reports, deposit);
     } catch (cause) {
       setFormError(cause instanceof Error ? cause.message : "Check the signed probe reports and try again.");
+    } finally {
+      setValidating(false);
     }
   }
+
+  const formBusy = busy || loadingReportFiles || validating;
+  const activeInboxReports = data.serviceReportInbox.filter((item) => !item.expired);
 
   return (
     <section className="content-card evidence-submission">
       <div className="card-heading">
-        <div><p className="eyebrow">ACTIVE · MULTI-SOURCE EVIDENCE</p><h3>Submit signed service probes</h3></div>
+        <div><p className="eyebrow">ACTIVE · MULTI-SOURCE EVIDENCE</p><h3>{transactionAuthenticated ? "Submit service reports" : "Submit signed service probes"}</h3></div>
         <span className="card-index">NEXT · {commitment.next_evaluation_id}</span>
       </div>
       <p className="evidence-intro">
-        Each operator generates and signs a report for this evaluation. Paste the reports as a JSON array, or paste one report object. The browser checks their commitment, policy, source, timestamp, and signature format before the wallet submits them.
+        {transactionAuthenticated
+          ? "Each operator works from their own device: connect the listed NEAR account, run the health check, and submit one wallet transaction. The sponsor can request evaluation after the reports arrive."
+          : "Operators can check a same-origin health endpoint and sign a report with their NEAR wallet. For other origins, load an approved signed report file. The Console checks freshness and policy bindings before the maintainer or sponsor submits the reports on NEAR."}
       </p>
+      {formError && <div ref={errorNoticeRef} className="notice notice-error form-notice" role="alert" tabIndex={-1}><span className="notice-icon">!</span>{formError}</div>}
       {serviceAvailabilityPolicy ? (
         <div className="service-agreement-panel">
           <div><span>QUORUM</span><strong>{serviceAvailabilityPolicy.minimum_agreeing_sources} of {serviceAvailabilityPolicy.sources.length}</strong></div>
           <div><span>MINIMUM COVERAGE</span><strong>{(serviceAvailabilityPolicy.minimum_corroboration_bps / 100).toFixed(2)}%</strong></div>
           <div><span>MAX REPORT AGE</span><strong>{formatDuration(serviceAvailabilityPolicy.max_source_lag_ns)}</strong></div>
-          <p>The HTTP endpoint and its salt are not stored in this policy. Report JSON is included in the public NEAR transaction.</p>
+        <p>{transactionAuthenticated
+          ? "The endpoint URL and salt stay off-chain. Report contents are public on NEAR, and the submitting account is authenticated by its transaction. Quorum and freshness still determine whether the evidence can support a verdict."
+          : "The endpoint URL and salt stay off-chain. Signed report contents are public on NEAR. The quorum and freshness rule still decide whether an evaluation can support a verdict."}</p>
         </div>
       ) : <p className="form-wallet-hint">The pinned v3 source policy could not be loaded.</p>}
+      {serviceAvailabilityPolicy && (
+        <section className="service-report-inbox" aria-label="NEAR service report inbox">
+          <div className="service-policy-sources-heading">
+            <div><p className="eyebrow">NEAR · PUBLIC REPORTS</p><h4>Report inbox · Evaluation #{commitment.next_evaluation_id}</h4></div>
+            <span>{activeInboxReports.length} of {serviceAvailabilityPolicy.sources.length} sources ready</span>
+          </div>
+          {!data.serviceReportInboxAvailable
+            ? <p className="empty-copy" role="status">The report inbox could not load from the connected contract or NEAR RPC. Check the wallet network and refresh; you can still use the signed-report file flow.</p>
+            : data.serviceReportInbox.length === 0
+            ? <p className="empty-copy">No operators have submitted reports for this evaluation yet.</p>
+            : <ul className="service-report-inbox-list">
+              {data.serviceReportInbox.map((item) => (
+                <li key={`${item.evaluation_id}:${item.source_id}`}>
+                  <div><strong>{item.source_id}</strong><span>{item.expired ? "Expired" : "Ready"}</span></div>
+                  <p>{serviceReportObservationLabel(item.report)}</p>
+                  <small>Submitted by {item.submitted_by} · {formatDate(item.submitted_at_ns)} · expires {formatDate(item.expires_at_ns)}</small>
+                  {item.expired && accountId && <button type="button" className="copy-payload-button" onClick={() => void onReclaimReport(item.evaluation_id, item.source_id)} disabled={busy}>Reclaim expired report</button>}
+                </li>
+              ))}
+            </ul>}
+          {data.serviceReportInboxAvailable && canRequest && activeInboxReports.length > 0 && (
+            <div className="service-inbox-request">
+              <p>{activeInboxReports.length < serviceAvailabilityPolicy.minimum_agreeing_sources
+                ? `This is below the configured quorum of ${serviceAvailabilityPolicy.minimum_agreeing_sources}; evaluation may be inconclusive.`
+                : `The inbox meets the minimum report count of ${serviceAvailabilityPolicy.minimum_agreeing_sources}.`}</p>
+              <button type="button" className="lookup-button" onClick={() => void onSubmit(null, parseNearToYocto(DEFAULT_EVALUATION_STORAGE_DEPOSIT))} disabled={busy || blocked || !operationsReady}>
+                Request evaluation from {activeInboxReports.length} inbox report{activeInboxReports.length === 1 ? "" : "s"}
+              </button>
+            </div>
+          )}
+          {data.serviceReportInboxAvailable && accountId && BigInt(data.serviceReportRefundBalance) > 0n && (
+            <div className="service-inbox-refund">
+              <p>Withdrawable report storage credit · {formatNear(data.serviceReportRefundBalance)} NEAR</p>
+              <button type="button" className="copy-payload-button" onClick={() => void onWithdrawRefund()} disabled={busy}>Withdraw storage refund</button>
+            </div>
+          )}
+          <small>Operators pay a temporary storage bond when submitting. It becomes a withdrawable credit after evaluation, replacement, or expiry; failed refunds can be retried.</small>
+        </section>
+      )}
+      <details className="operator-browser-probe" open>
+        <summary>{transactionAuthenticated ? "Submit an operator report" : "Create a signed report with a NEAR wallet"}</summary>
+        <p>{transactionAuthenticated
+          ? "Operators participate independently. Open this commitment on your own device, connect the listed account, enter the authorized endpoint and private salt, then submit. Your NEAR transaction authorizes and records the report in one wallet approval."
+          : "Connect a wallet listed as an operator in this policy. This browser-only check is limited to the same HTTPS origin as the Console, sends no credentials, follows no redirects, and reads no response body. Sign with NEP-413, then submit directly to the NEAR inbox."}</p>
+        <div className="form-grid">
+          <FormField label="Authorized health endpoint" wide><input type="url" value={browserProbeUrl} onChange={(event) => { setBrowserProbeUrl(event.target.value); setPendingBrowserProbePayload(null); setPendingSignedProbeReport(null); }} placeholder="https://your-console.example/health" autoComplete="url" /></FormField>
+          <FormField label="Private target salt · 64 lowercase hex" wide><input className="mono-input" value={browserProbeSaltHex} onChange={(event) => { setBrowserProbeSaltHex(event.target.value); setPendingBrowserProbePayload(null); setPendingSignedProbeReport(null); }} placeholder="Same 32-byte salt used for the pinned fingerprint" autoComplete="off" /></FormField>
+        </div>
+        {browserProbeMessage && <p className="form-success-message" role="status" aria-live="polite">{browserProbeMessage}</p>}
+        <div className="operator-probe-actions">
+          <button className="copy-payload-button" type="button" onClick={() => void runBrowserProbe()} disabled={runningBrowserProbe || busy || !connectedServiceSource || blocked || !serviceAvailabilityPolicy}>
+            {runningBrowserProbe && !pendingBrowserProbePayload ? "Checking endpoint…" : "Run health check"}
+          </button>
+          {pendingBrowserProbePayload && (transactionAuthenticated
+            ? <button className="lookup-button" type="button" onClick={() => void submitTransactionAuthenticatedReport()} disabled={runningBrowserProbe || busy || blocked || !data.serviceReportInboxAvailable}>{busy ? "Submitting from wallet…" : "Submit report with NEAR wallet"}</button>
+            : <button className="lookup-button" type="button" onClick={() => void signBrowserProbe()} disabled={runningBrowserProbe || busy || blocked}>{runningBrowserProbe ? "Confirming in wallet…" : "Sign report with NEAR wallet"}</button>)}
+          {pendingSignedProbeReport && !transactionAuthenticated && <button className="lookup-button" type="button" onClick={() => void submitSignedReportToInbox()} disabled={busy || blocked || !data.serviceReportInboxAvailable}>{busy ? "Submitting report…" : "Submit signed report to NEAR"}</button>}
+          {!transactionAuthenticated && reportsJson && <button className="browser-button" type="button" onClick={() => void navigator.clipboard.writeText(reportsJson).then(() => setCopiedReports(true)).catch(() => setFormError("Clipboard access failed. Copy the report JSON from Advanced report input."))}>{copiedReports ? "Reports copied" : "Copy report JSON to share"}</button>}
+        </div>
+        {!connectedServiceSource
+          ? <small>Open this commitment on each operator’s own device and connect the NEAR account listed for that source.</small>
+          : <small>Connected operator: {accountId}. {transactionAuthenticated ? "The account will authorize the report by submitting its NEAR transaction." : "The report is signed with that wallet’s existing key."}</small>}
+      </details>
       {commitment.pending_evaluation_id && (
         <div className="pending-evaluation">
-          <p className="form-wallet-hint">Evaluation #{commitment.pending_evaluation_id} is pending{pendingTimeoutNs ? ` until ${formatDate(pendingTimeoutNs)}` : ""}.</p>
-          <button className="challenge-expire-button" type="button" onClick={() => void onExpire()} disabled={!accountId || busy || !pendingTimeoutNs}>
-            {busy ? "Expiring evaluation…" : "Expire after timeout"}
-          </button>
-          <small>Any connected wallet can expire the request after its deadline if the evaluator callback has not completed.</small>
+          <p className="form-wallet-hint"><strong>Evaluation #{commitment.pending_evaluation_id} is still running.</strong> Wait for the evaluator result before submitting another request{pendingTimeoutNs ? `; its ${formatDuration(data.policy?.evaluator.request_timeout_ns ?? "0")} response deadline is ${formatDate(pendingTimeoutNs)}` : ""}.</p>
+          <div className="pending-evaluation-actions">
+            <button className="challenge-expire-button" type="button" onClick={() => void onRefresh()} disabled={busy}>
+              {busy ? "Refreshing…" : "Refresh status"}
+            </button>
+            <button className="challenge-expire-button" type="button" onClick={() => void onExpire()} disabled={!accountId || busy || !canExpire}>
+              {busy ? "Checking timeout…" : canExpire ? "Expire timed-out evaluation" : timeoutRemainingNs !== null && timeoutRemainingNs > 0n ? `Available in ${formatCountdown(timeoutRemainingNs.toString())}` : "Checking NEAR time…"}
+            </button>
+          </div>
+          <small>Refresh the commitment before retrying. A timed out evaluation is not a service verdict and its evaluator operations deposit is not automatically reusable.</small>
         </div>
       )}
       {commitment.active_challenge_id && <p className="form-wallet-hint">Resolve challenge #{commitment.active_challenge_id} before requesting another evaluation.</p>}
       {!canRequest && !commitment.pending_evaluation_id && <p className="form-wallet-hint">Connect the commitment maintainer or configured sponsor wallet to submit reports.</p>}
+      {!operationsReady && !commitment.pending_evaluation_id && (
+        <div className="service-operations-blocker" role="status">
+          <strong>Evaluator funds needed</strong>
+          <span>This request needs {formatNear(executionDeposit - operationsAvailable)} NEAR in evaluator operations. Add funds in the panel above before submitting.</span>
+        </div>
+      )}
       <form className="service-report-form" onSubmit={(event) => void handleSubmit(event)}>
-        <FormField label="Signed probe reports · JSON array" wide>
-          <textarea
-            className="mono-input service-report-json"
-            value={reportsJson}
-            onChange={(event) => setReportsJson(event.target.value)}
-            placeholder={'[\n  {"payload": { ... }, "signature_hex": "..."},\n  {"payload": { ... }, "signature_hex": "..."}\n]'}
-            rows={8}
-            spellCheck={false}
-            disabled={busy || blocked}
-            required
-          />
-          <small>Use the probe reports produced by each configured operator for evaluation #{commitment.next_evaluation_id}. Do not include private endpoint URLs, salts, credentials, or response bodies.</small>
-        </FormField>
-        <FormField label="Request storage deposit · NEAR">
-          <input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} disabled={busy} />
-          <small>The contract reserves callback storage and refunds any excess.</small>
-        </FormField>
-        {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
-        <div className="creation-submit-row"><p>The evaluator verifies each signature and applies the pinned quorum. Inconclusive reports do not refresh the commitment’s health clock.</p><button className="lookup-button" type="submit" disabled={busy || !canRequest || blocked || !serviceAvailabilityPolicy}>{busy ? <><span className="spinner" />Requesting evaluation</> : <>Request service evaluation <span aria-hidden="true">↗</span></>}</button></div>
+        {!transactionAuthenticated && <>
+        <div className="report-file-picker">
+          <label htmlFor="service-report-files">Signed reports · JSON files</label>
+          <input id="service-report-files" type="file" accept=".json,application/json" multiple onChange={(event) => void handleReportFilesChange(event)} disabled={formBusy || blocked || !operationsReady} />
+          <small>Choose the signed JSON reports from the configured operators. Each file can contain one report or a report array. Files stay in this browser until you submit the NEAR transaction.</small>
+          {selectedReportFiles.length > 0 && <p className="report-files-ready" role="status">Loaded {reportCount} signed report{reportCount === 1 ? "" : "s"} from {selectedReportFiles.length} file{selectedReportFiles.length === 1 ? "" : "s"}.</p>}
+          {reportCount !== null && reportCount < (serviceAvailabilityPolicy?.minimum_agreeing_sources ?? 0) && <small>This is below the configured quorum of {serviceAvailabilityPolicy?.minimum_agreeing_sources}. You can still submit it for a partial result, which may be inconclusive.</small>}
+        </div>
+        {signatureCheckAvailable === true && <p className="report-signature-status" role="status">Report signatures verified against the public keys pinned in this commitment.</p>}
+        {signatureCheckAvailable === false && <p className="report-signature-status" role="status">This browser could not check Ed25519 signatures locally. The evaluator will still verify them.</p>}
+        <details className="advanced-report-input">
+          <summary>Advanced: paste report JSON instead</summary>
+          <FormField label="Signed report JSON" wide>
+            <textarea
+              className="mono-input service-report-json"
+              value={reportsJson}
+              onChange={(event) => {
+                setReportsJson(event.target.value);
+                setSelectedReportFiles([]);
+                setSignatureCheckAvailable(null);
+                setPendingBrowserProbePayload(null);
+                setPendingSignedProbeReport(null);
+                setFormError(null);
+                try {
+                  const parsed: unknown = JSON.parse(event.target.value);
+                  const candidates = Array.isArray(parsed) ? parsed : [parsed];
+                  setReportCount(candidates.length);
+                } catch {
+                  setReportCount(null);
+                }
+              }}
+              placeholder={'[{"payload":{...},"wallet_signature":{...}}]'}
+              rows={7}
+              spellCheck={false}
+              disabled={formBusy || blocked || !operationsReady}
+            />
+            <small>Paste the complete report object or array from your operators. Wallet reports use NEP-413; legacy reports use a raw Ed25519 hex signature. Do not edit signed fields.</small>
+          </FormField>
+        </details>
+        <div className="creation-submit-row"><p>Manual report submission uses a fixed 0.05 NEAR temporary storage deposit; unused amount is refunded. A timed out or inconclusive evaluation still uses evaluator operations funds.</p><button className="lookup-button" type="submit" disabled={formBusy || !canRequest || blocked || !operationsReady || !serviceAvailabilityPolicy || !reportsJson.trim()}>{loadingReportFiles ? <><span className="spinner" />Loading reports</> : validating && !busy ? <><span className="spinner" />Checking reports</> : busy ? <><span className="spinner" />Requesting evaluation</> : <>Request evaluation <span aria-hidden="true">↗</span></>}</button></div>
+        </>}
       </form>
     </section>
   );
+}
+
+function serviceReportObservationLabel(report: ServiceProbeReport): string {
+  const observation = report.payload.observation;
+  switch (observation.kind) {
+    case "http_response":
+      return `HTTP ${observation.status_code} · ${observation.latency_ms} ms${observation.tls_verified ? " · TLS verified" : " · TLS not verified"}`;
+    case "timeout":
+      return `No response within ${observation.elapsed_ms} ms`;
+    case "tls_error":
+      return "TLS connection failed";
+    case "source_error":
+      return `Operator source error · ${observation.code}`;
+  }
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireOnlySignedReportKeys(value: Record<string, unknown>, allowedKeys: readonly string[], label: string) {
+  const unsupportedKey = Object.keys(value).find((key) => !allowedKeys.includes(key));
+  if (unsupportedKey) throw new Error(`${label} includes unsupported field “${unsupportedKey}”. Ask the operator to export a fresh report.`);
+}
+
+function canonicalizeSignedProbeReport(value: unknown): SignedProbeReport {
+  if (!isJsonObject(value)) throw new Error("Each selected file must contain a signed report object.");
+  requireOnlySignedReportKeys(value, ["payload", "signature_hex", "wallet_signature"], "Report");
+  const hasRawSignature = typeof value.signature_hex === "string" && /^[0-9a-f]{128}$/.test(value.signature_hex);
+  const walletSignature = value.wallet_signature === undefined ? null : parseNep413ProbeEnvelope(value.wallet_signature);
+  if (!isJsonObject(value.payload) || hasRawSignature === Boolean(walletSignature)
+      || (value.signature_hex !== undefined && !hasRawSignature)
+      || (value.wallet_signature !== undefined && !walletSignature)) {
+    throw new Error("Each report must contain a payload and a valid raw or NEP-413 signature.");
+  }
+
+  const payload = value.payload;
+  requireOnlySignedReportKeys(payload, [
+    "schema", "contract_id", "commitment_id", "evaluation_id", "policy_version", "policy_hash",
+    "source_policy_hash", "source_id", "operator_id", "target_id", "observed_at_ns", "observation",
+  ], "Report payload");
+  for (const key of [
+    "schema", "contract_id", "commitment_id", "evaluation_id", "policy_hash", "source_policy_hash",
+    "source_id", "operator_id", "target_id", "observed_at_ns",
+  ]) {
+    if (typeof payload[key] !== "string") throw new Error(`The report payload field “${key}” must be text.`);
+  }
+  if (payload.policy_version !== 3) throw new Error("This report is not for the service-availability policy version.");
+  if (!isJsonObject(payload.observation)) throw new Error("A report is missing its observation.");
+  const observation = payload.observation;
+  let canonicalObservation: SignedProbeReport["payload"]["observation"];
+
+  switch (observation.kind) {
+    case "http_response":
+      requireOnlySignedReportKeys(observation, ["kind", "status_code", "latency_ms", "tls_verified"], "HTTP observation");
+      if (typeof observation.status_code !== "number" || !Number.isInteger(observation.status_code) || observation.status_code < 100 || observation.status_code > 599
+          || typeof observation.latency_ms !== "number" || !Number.isInteger(observation.latency_ms) || observation.latency_ms < 0 || observation.latency_ms > 0xffff_ffff
+          || typeof observation.tls_verified !== "boolean") {
+        throw new Error("The HTTP observation has invalid status, latency, or TLS fields.");
+      }
+      canonicalObservation = {
+        kind: "http_response",
+        status_code: observation.status_code as number,
+        latency_ms: observation.latency_ms as number,
+        tls_verified: observation.tls_verified,
+      };
+      break;
+    case "timeout":
+      requireOnlySignedReportKeys(observation, ["kind", "elapsed_ms"], "Timeout observation");
+      if (typeof observation.elapsed_ms !== "number" || !Number.isInteger(observation.elapsed_ms) || observation.elapsed_ms < 0 || observation.elapsed_ms > 0xffff_ffff) {
+        throw new Error("The timeout observation has invalid elapsed time.");
+      }
+      canonicalObservation = { kind: "timeout", elapsed_ms: observation.elapsed_ms as number };
+      break;
+    case "tls_error":
+      requireOnlySignedReportKeys(observation, ["kind"], "TLS observation");
+      canonicalObservation = { kind: "tls_error" };
+      break;
+    case "source_error":
+      requireOnlySignedReportKeys(observation, ["kind", "code"], "Source error observation");
+      if (typeof observation.code !== "string" || !/^[a-z0-9._-]{1,64}$/.test(observation.code)) {
+        throw new Error("The source error code is invalid.");
+      }
+      canonicalObservation = { kind: "source_error", code: observation.code };
+      break;
+    default:
+      throw new Error("A report contains an unsupported observation type.");
+  }
+
+  const canonicalPayload: SignedProbeReport["payload"] = {
+    schema: payload.schema as SignedProbeReport["payload"]["schema"],
+    contract_id: payload.contract_id as string,
+    commitment_id: payload.commitment_id as string,
+    evaluation_id: payload.evaluation_id as string,
+    policy_version: payload.policy_version as 3,
+    policy_hash: payload.policy_hash as string,
+    source_policy_hash: payload.source_policy_hash as string,
+    source_id: payload.source_id as string,
+    operator_id: payload.operator_id as string,
+    target_id: payload.target_id as string,
+    observed_at_ns: payload.observed_at_ns as string,
+    observation: canonicalObservation,
+  };
+  if (walletSignature) return { payload: canonicalPayload, wallet_signature: walletSignature };
+  return {
+    payload: canonicalPayload,
+    signature_hex: value.signature_hex as string,
+  };
+}
+
+function hexToArrayBuffer(hex: string): ArrayBuffer {
+  if (!/^(?:[0-9a-f]{2})+$/.test(hex)) throw new Error("Expected lowercase hexadecimal bytes.");
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes.buffer;
+}
+
+function parseNep413ProbeEnvelope(value: unknown): Nep413ProbeSignature | null {
+  try {
+    if (!isJsonObject(value)) return null;
+    const parsed = value;
+    requireOnlySignedReportKeys(parsed, ["account_id", "public_key", "signature", "nonce_hex", "recipient", "callback_url"], "NEP-413 report signature");
+    if (typeof parsed.account_id !== "string" || typeof parsed.public_key !== "string"
+        || typeof parsed.signature !== "string" || typeof parsed.nonce_hex !== "string"
+        || typeof parsed.recipient !== "string" || typeof parsed.callback_url !== "string"
+        || !/^ed25519:[1-9A-HJ-NP-Za-km-z]+$/.test(parsed.public_key)
+        || !/^[0-9a-f]{64}$/.test(parsed.nonce_hex)
+        || !/^(?:[A-Za-z0-9+/]{4}){21}[A-Za-z0-9+/]{2}==$/.test(parsed.signature)
+        || !parsed.recipient || parsed.recipient.length > 64
+        || !parsed.callback_url || new TextEncoder().encode(parsed.callback_url).length > 2_048) return null;
+    return {
+      account_id: parsed.account_id,
+      public_key: parsed.public_key as NearEd25519PublicKey,
+      signature: parsed.signature,
+      nonce_hex: parsed.nonce_hex,
+      recipient: parsed.recipient,
+      callback_url: parsed.callback_url,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function nearPublicKeyBytes(publicKey: string): Uint8Array {
+  if (!/^ed25519:[1-9A-HJ-NP-Za-km-z]+$/.test(publicKey)) throw new Error("Expected an Ed25519 NEAR public key.");
+  const encoded = publicKey.slice("ed25519:".length);
+  if (encoded.length > 44) throw new Error("The NEAR public key exceeds the Ed25519 base58 size limit.");
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let value = 0n;
+  for (const character of encoded) {
+    const digit = alphabet.indexOf(character);
+    if (digit < 0) throw new Error("The wallet returned a malformed base58 NEAR public key.");
+    value = value * 58n + BigInt(digit);
+  }
+  const decoded: number[] = [];
+  while (value > 0n) {
+    decoded.push(Number(value & 0xffn));
+    value >>= 8n;
+  }
+  decoded.reverse();
+  const leadingZeroes = encoded.match(/^1*/)?.[0].length ?? 0;
+  if (decoded.length + leadingZeroes !== 32) throw new Error("The NEAR public key does not contain 32 Ed25519 bytes.");
+  const bytes = new Uint8Array(32);
+  bytes.set(decoded, 32 - decoded.length);
+  return bytes;
+}
+
+function nearPublicKeyHex(publicKey: string): string {
+  return Array.from(nearPublicKeyBytes(publicKey), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function decodeCanonicalBase64(value: string, expectedBytes: number): Uint8Array {
+  const bytes = Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+  const encoded = btoa(String.fromCharCode(...bytes));
+  if (encoded !== value || bytes.length !== expectedBytes) throw new Error("The wallet returned malformed NEP-413 signature bytes.");
+  return bytes;
+}
+
+function concatenateBytes(parts: Uint8Array[]): Uint8Array {
+  const output = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+}
+
+function u32leBytes(value: number): Uint8Array {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) throw new Error("NEP-413 message field is too large.");
+  return new Uint8Array([value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff]);
+}
+
+async function nep413MessageDigest(message: string, nonceHex: string, recipient: string, callbackUrl: string): Promise<Uint8Array> {
+  const messageBytes = new TextEncoder().encode(message);
+  const nonceBytes = new Uint8Array(hexToArrayBuffer(nonceHex));
+  const recipientBytes = new TextEncoder().encode(recipient);
+  const callbackBytes = new TextEncoder().encode(callbackUrl);
+  const payload = concatenateBytes([
+    u32leBytes(2 ** 31 + 413),
+    u32leBytes(messageBytes.length), messageBytes,
+    nonceBytes,
+    u32leBytes(recipientBytes.length), recipientBytes,
+    new Uint8Array([1]),
+    u32leBytes(callbackBytes.length), callbackBytes,
+  ]);
+  return new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", Uint8Array.from(payload).buffer));
+}
+
+async function verifyNearWalletMessage(
+  message: string,
+  nonce: Uint8Array,
+  recipient: string,
+  callbackUrl: string,
+  signed: NearSignedMessage,
+): Promise<boolean | null> {
+  if (!globalThis.crypto?.subtle) return null;
+  try {
+    const algorithm = { name: "Ed25519" } as AlgorithmIdentifier;
+    const publicKey = await globalThis.crypto.subtle.importKey("raw", Uint8Array.from(nearPublicKeyBytes(signed.publicKey)).buffer, algorithm, false, ["verify"]);
+    const nonceHex = Array.from(nonce, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const digest = await nep413MessageDigest(message, nonceHex, recipient, callbackUrl);
+    return await globalThis.crypto.subtle.verify(algorithm, publicKey, decodeCanonicalBase64(signed.signature, 64).buffer as ArrayBuffer, Uint8Array.from(digest).buffer as ArrayBuffer);
+  } catch (cause) {
+    if (isJsonObject(cause) && cause.name === "NotSupportedError") return null;
+    throw new Error("The NEP-413 wallet signature could not be checked in this browser.");
+  }
+}
+
+async function verifySignedProbeReport(report: SignedProbeReport, source: ServiceAvailabilitySourceInput): Promise<boolean | null> {
+  if (!source.public_key_hex) return false;
+  const rawSignature = report.signature_hex ?? null;
+  const envelope = report.wallet_signature ?? null;
+  if (envelope && (envelope.account_id !== source.operator_id
+      || envelope.recipient !== CONTRACT_ID
+      || nearPublicKeyHex(envelope.public_key) !== source.public_key_hex)) return false;
+  if (!globalThis.crypto?.subtle) return null;
+  try {
+    const algorithm = { name: "Ed25519" } as AlgorithmIdentifier;
+    const publicKey = await globalThis.crypto.subtle.importKey("raw", hexToArrayBuffer(source.public_key_hex), algorithm, false, ["verify"]);
+    const message = JSON.stringify(report.payload);
+    const signatureBytes = rawSignature
+      ? new Uint8Array(hexToArrayBuffer(rawSignature))
+      : envelope
+        ? decodeCanonicalBase64(envelope.signature, 64)
+        : null;
+    if (!signatureBytes) return false;
+    const signedMessage = envelope
+      ? await nep413MessageDigest(message, envelope.nonce_hex, envelope.recipient, envelope.callback_url)
+      : new TextEncoder().encode(message);
+    return await globalThis.crypto.subtle.verify(
+      algorithm,
+      publicKey,
+      Uint8Array.from(signatureBytes).buffer,
+      Uint8Array.from(signedMessage).buffer,
+    );
+  } catch (cause) {
+    if (isJsonObject(cause) && cause.name === "NotSupportedError") return null;
+    throw new Error("The report signature could not be checked in this browser.");
+  }
 }
 
 async function sha256TextHex(text: string): Promise<string> {
@@ -2207,7 +3072,7 @@ function EvidenceSubmissionCard({
         throw new Error(`Connect the maintainer wallet ${commitment.maintainer} before signing this observation.`);
       }
       const nonce = crypto.getRandomValues(new Uint8Array(32));
-      const callbackUrl = window.location.href.split("#", 1)[0];
+      const callbackUrl = window.location.origin;
       const signed = await onSignMessage(payload, nonce, CONTRACT_ID, callbackUrl);
       const nonceHex = Array.from(nonce, (byte) => byte.toString(16).padStart(2, "0")).join("");
       const input: HeartbeatSigningInput = {
@@ -2580,6 +3445,16 @@ interface CreationFields {
   storageDepositNear: string;
 }
 
+interface ServicePolicyDraft {
+  targetId: string;
+  sources: ServiceAvailabilitySourceInput[];
+  expectedStatusMin: string;
+  expectedStatusMax: string;
+  maxLatencyMs: string;
+  minimumAgreeingSources: string;
+  minimumCorroborationPercent: string;
+}
+
 type PolicyTemplateValues = Pick<
   CreationFields,
   | "subject"
@@ -2652,6 +3527,7 @@ function CreateCommitmentForm({
   onCreate: (args: CreateCommitmentArgs | CreateServiceAvailabilityCommitmentArgs, storageDeposit: string) => Promise<void>;
   onPinMaintainerKey: (accountId: string) => Promise<{ accountId: string; publicKey: NearEd25519PublicKey; fingerprint: string }>;
 }) {
+  const errorNoticeRef = useRef<HTMLDivElement>(null);
   const [hydrated, setHydrated] = useState(false);
   const [fields, setFields] = useState<CreationFields>({
     subject: "Open source service maintenance",
@@ -2681,7 +3557,23 @@ function CreateCommitmentForm({
   });
   const [selectedTemplateId, setSelectedTemplateId] = useState(POLICY_TEMPLATES[0].id);
   const [evidenceMode, setEvidenceMode] = useState<"heartbeat" | "service_availability">("heartbeat");
-  const [servicePolicyJson, setServicePolicyJson] = useState("");
+  const [servicePolicy, setServicePolicy] = useState<ServicePolicyDraft>({
+    targetId: "",
+    sources: [
+      { source_id: "operator-a", operator_id: "" },
+      { source_id: "operator-b", operator_id: "" },
+    ],
+    expectedStatusMin: "200",
+    expectedStatusMax: "299",
+    maxLatencyMs: "1500",
+    minimumAgreeingSources: "2",
+    minimumCorroborationPercent: "60",
+  });
+  const [targetUrl, setTargetUrl] = useState("");
+  const [targetSaltHex, setTargetSaltHex] = useState("");
+  const [targetFingerprintMessage, setTargetFingerprintMessage] = useState<string | null>(null);
+  const [targetFingerprintError, setTargetFingerprintError] = useState<string | null>(null);
+  const [generatingTargetFingerprint, setGeneratingTargetFingerprint] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [pinnedKeyAccountId, setPinnedKeyAccountId] = useState<string | null>(null);
   const [keyFingerprint, setKeyFingerprint] = useState<string | null>(null);
@@ -2730,8 +3622,8 @@ function CreateCommitmentForm({
       const args = evidenceMode === "service_availability"
         ? {
           ...baseArgs,
-          service_availability: parseServiceAvailabilityPolicy(
-            servicePolicyJson,
+          service_availability: buildServiceAvailabilityPolicy(
+            servicePolicy,
             secondsToNanoseconds(fields.maxSourceLagSeconds, "Maximum source lag"),
             secondsToNanoseconds(fields.evidenceTtlSeconds, "Evidence freshness TTL"),
           ),
@@ -2757,13 +3649,52 @@ function CreateCommitmentForm({
     setFormError(null);
   }
 
+  function updateServiceSources(sources: ServiceAvailabilitySourceInput[]) {
+    setServicePolicy((current) => {
+      const majority = Math.floor(sources.length / 2) + 1;
+      const currentThreshold = Number(current.minimumAgreeingSources);
+      return {
+        ...current,
+        sources,
+        minimumAgreeingSources: String(Math.min(sources.length, Math.max(majority, Number.isInteger(currentThreshold) ? currentThreshold : majority))),
+      };
+    });
+  }
+
+  async function generateTargetFingerprint() {
+    setGeneratingTargetFingerprint(true);
+    setTargetFingerprintError(null);
+    setTargetFingerprintMessage(null);
+    try {
+      const fingerprint = await fingerprintServiceTarget(targetUrl, targetSaltHex);
+      setServicePolicy((current) => ({ ...current, targetId: fingerprint }));
+      setTargetFingerprintMessage("Fingerprint generated in this browser. The URL and salt were not added to the commitment policy.");
+    } catch (cause) {
+      setTargetFingerprintError(cause instanceof Error ? cause.message : "The service target fingerprint could not be generated.");
+    } finally {
+      setGeneratingTargetFingerprint(false);
+    }
+  }
+
+  function generateTargetSalt() {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    setTargetSaltHex(Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""));
+    setTargetFingerprintMessage("A new 32-byte salt was generated in this browser. Save it securely and share it only with authorized operators.");
+    setTargetFingerprintError(null);
+  }
+
   useEffect(() => {
     setHydrated(true);
   }, []);
 
+  useEffect(() => {
+    if (formError) errorNoticeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [formError]);
+
   return (
-    <form className="creation-form" onSubmit={(event) => void handleSubmit(event)}>
-      <div className="creation-intro"><p>Creation stores an immutable policy and makes a Draft. Funding and activation are separate transactions below.</p><span>EDITABLE STARTER TEMPLATES</span></div>
+    <form className="creation-form" noValidate onSubmit={(event) => void handleSubmit(event)}>
+      <div className="creation-intro"><p>Choose a starter policy, confirm who is involved, and add the evaluator artifact. Timing and runtime tuning use safe defaults and stay under Advanced settings.</p><span>GUIDED SETUP</span></div>
+      {formError && <div ref={errorNoticeRef} className="notice notice-error form-notice" role="alert" tabIndex={-1}><span className="notice-icon">!</span>{formError}</div>}
       <div className="form-grid">
         <FormField label="Starter policy template" wide>
           <select value={selectedTemplateId} onChange={(event) => applyPolicyTemplate(event.target.value)}>
@@ -2771,32 +3702,85 @@ function CreateCommitmentForm({
           </select>
         </FormField>
       </div>
-      <p className="form-wallet-hint policy-template-note">{selectedTemplate?.description} Selecting a template changes only the subject and time/budget defaults; account roles, wallet key, and evaluator artifact stay as entered. Every value remains editable before creation.</p>
+      <p className="policy-template-note">{selectedTemplate?.description} The starter sets the schedule and budget defaults. Review the people, evidence, and total escrow before creating the draft.</p>
       <div className="form-grid">
         <FormField label="Evidence model" wide>
-          <select value={evidenceMode} onChange={(event) => setEvidenceMode(event.target.value as "heartbeat" | "service_availability")}>
+          <select value={evidenceMode} onChange={(event) => {
+            const nextMode = event.target.value as "heartbeat" | "service_availability";
+            setEvidenceMode(nextMode);
+            setFields((current) => ({
+              ...current,
+              storageDepositNear: nextMode === "service_availability"
+                ? DEFAULT_SERVICE_COMMITMENT_STORAGE_DEPOSIT
+                : DEFAULT_STORAGE_DEPOSIT,
+            }));
+          }}>
             <option value="heartbeat">Maintainer-signed heartbeat · v2</option>
             <option value="service_availability">Independent service probes · v3</option>
           </select>
         </FormField>
       </div>
       {evidenceMode === "service_availability" && (
-        <div className="form-grid">
-          <FormField label="Pinned service source policy · JSON" wide>
-            <textarea
-              className="mono-input service-report-json"
-              value={servicePolicyJson}
-              onChange={(event) => setServicePolicyJson(event.target.value)}
-              placeholder={'{\n  "schema": "lcp.service_availability.policy.v1",\n  "target_id": "64 lowercase hex characters",\n  "max_source_lag_ns": "30000000000",\n  "expected_status_min": 200,\n  "expected_status_max": 299,\n  "max_latency_ms": 1500,\n  "minimum_agreeing_sources": 2,\n  "minimum_corroboration_bps": 6000,\n  "sources": [{ "source_id": "operator-a", "operator_id": "operator-a.near", "public_key_hex": "64 lowercase hex characters" }]\n}'}
-              rows={11}
-              spellCheck={false}
-              required
-            />
-            <small>Use a sorted roster of 2–8 distinct operators and keys. Generate target_id with the service-availability probe tool; the endpoint URL and salt stay with the operators. The temporal “Max source lag” must be at least as long as this policy’s report age limit.</small>
+        <section className="service-policy-builder" aria-labelledby="service-policy-title">
+          <div className="service-policy-builder-heading">
+            <div><h3 id="service-policy-title">Service and operator setup</h3><p>Set the service identity and operator accounts. Each operator joins later from their own device and NEAR wallet.</p></div>
+            <span>2–8 SOURCES</span>
+          </div>
+          <FormField label="Service target fingerprint · 64 lowercase hex" wide>
+            <input className="mono-input" value={servicePolicy.targetId} onChange={(event) => setServicePolicy((current) => ({ ...current, targetId: event.target.value }))} placeholder="Generate it below or paste a fingerprint" required pattern="[0-9a-f]{64}" />
+            <small>The commitment stores this fingerprint, never the health endpoint URL or its private salt.</small>
           </FormField>
-        </div>
+          <details className="guided-advanced target-fingerprint-tool">
+            <summary>Generate the fingerprint in this app</summary>
+            <p>Enter the endpoint and private salt used by the operators. The browser hashes them locally and does not include either value in the NEAR transaction. Keep both private and share them only with authorized operators.</p>
+            <div className="form-grid">
+              <FormField label="Private HTTPS health endpoint" wide><input type="url" value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} placeholder="https://status.example.org/health" autoComplete="url" /></FormField>
+              <div className="form-field form-field-wide"><label htmlFor="service-target-salt">Private target salt · 64 lowercase hex</label><div className="maintainer-key-input"><input id="service-target-salt" className="mono-input" value={targetSaltHex} onChange={(event) => setTargetSaltHex(event.target.value)} placeholder="Generate a new 32-byte salt" autoComplete="off" /><button className="browser-button" type="button" onClick={generateTargetSalt}>Generate salt</button></div></div>
+            </div>
+            {targetFingerprintError && <p className="notice notice-error form-notice" role="alert">{targetFingerprintError}</p>}
+            {targetFingerprintMessage && <p className="form-success-message" role="status" aria-live="polite">{targetFingerprintMessage}</p>}
+            <button className="copy-payload-button" type="button" onClick={() => void generateTargetFingerprint()} disabled={generatingTargetFingerprint || !targetUrl.trim() || !targetSaltHex.trim()}>
+              {generatingTargetFingerprint ? "Generating…" : "Generate target fingerprint"}
+            </button>
+          </details>
+          <div className="service-policy-sources">
+            <div className="service-policy-sources-heading"><div><h4>Operator accounts</h4><p>List one distinct NEAR account per source. Operators do not need to be present during setup.</p></div>
+              <button className="browser-button" type="button" onClick={() => {
+                if (servicePolicy.sources.length >= 8) return;
+                let suffix = 1;
+                const existing = new Set(servicePolicy.sources.map((source) => source.source_id));
+                while (existing.has(`operator-${suffix}`)) suffix += 1;
+                updateServiceSources([...servicePolicy.sources, { source_id: `operator-${suffix}`, operator_id: "" }]);
+              }} disabled={servicePolicy.sources.length >= 8}>Add operator</button>
+            </div>
+            {servicePolicy.sources.map((source, index) => (
+              <div className="service-policy-source-row" key={`${source.source_id}:${index}`}>
+                <div className="service-policy-source-row-heading"><strong>Operator {index + 1}</strong>
+                  {servicePolicy.sources.length > 2 && <button className="remove-source-button" type="button" onClick={() => updateServiceSources(servicePolicy.sources.filter((_, sourceIndex) => sourceIndex !== index))} aria-label={`Remove operator ${source.source_id || index + 1}`}>Remove</button>}
+                </div>
+                <div className="form-grid service-operator-fields">
+                  <FormField label="Source label"><input value={source.source_id} onChange={(event) => updateServiceSources(servicePolicy.sources.map((item, sourceIndex) => sourceIndex === index ? { ...item, source_id: event.target.value } : item))} placeholder="operator-a" autoComplete="off" required /></FormField>
+                  <FormField label="NEAR operator account"><input value={source.operator_id} onChange={(event) => updateServiceSources(servicePolicy.sources.map((item, sourceIndex) => sourceIndex === index ? { ...item, operator_id: event.target.value } : item))} placeholder="operator-a.testnet" autoComplete="username" required /></FormField>
+                </div>
+                <small className="form-wallet-hint">The account name is public. Its owner authorizes each report by submitting the report transaction from that wallet.</small>
+              </div>
+            ))}
+            <p className="service-policy-privacy-note">The operator roster and report contents are public. The service URL and salt stay private with the operators. Each operator connects only when submitting their own report.</p>
+          </div>
+          <details className="guided-advanced">
+            <summary>Advanced service rules</summary>
+            <p>A strict majority is required. Higher thresholds can reduce false conclusions when you have more operators.</p>
+            <div className="form-grid form-grid-3">
+              <FormField label="Expected HTTP status from"><input type="number" min="100" max="599" step="1" value={servicePolicy.expectedStatusMin} onChange={(event) => setServicePolicy((current) => ({ ...current, expectedStatusMin: event.target.value }))} required /></FormField>
+              <FormField label="Expected HTTP status through"><input type="number" min="100" max="599" step="1" value={servicePolicy.expectedStatusMax} onChange={(event) => setServicePolicy((current) => ({ ...current, expectedStatusMax: event.target.value }))} required /></FormField>
+              <FormField label="Maximum response time · ms"><input type="number" min="1" max="4294967295" step="1" value={servicePolicy.maxLatencyMs} onChange={(event) => setServicePolicy((current) => ({ ...current, maxLatencyMs: event.target.value }))} required /></FormField>
+              <FormField label="Reports needed for a verdict"><select value={servicePolicy.minimumAgreeingSources} onChange={(event) => setServicePolicy((current) => ({ ...current, minimumAgreeingSources: event.target.value }))}>{Array.from({ length: servicePolicy.sources.length - Math.floor(servicePolicy.sources.length / 2) }, (_, index) => Math.floor(servicePolicy.sources.length / 2) + 1 + index).map((count) => <option key={count} value={count}>{count} of {servicePolicy.sources.length}</option>)}</select></FormField>
+              <FormField label="Minimum agreement · percent"><input type="number" min="0" max="100" step="1" value={servicePolicy.minimumCorroborationPercent} onChange={(event) => setServicePolicy((current) => ({ ...current, minimumCorroborationPercent: event.target.value }))} required /></FormField>
+            </div>
+          </details>
+        </section>
       )}
-      <div className="creation-section-heading"><span>01</span><div><strong>People &amp; promise</strong><small>Who commits, funds, arbitrates, and receives support.</small></div></div>
+      <div className="creation-section-heading"><span>01</span><div><h3>People and commitment</h3><small>Choose the accountable party, sponsor, reviewer, and beneficiary.</small></div></div>
       <div className="form-grid">
         <FormField label="Commitment subject" wide><input maxLength={128} value={fields.subject} onChange={(event) => update("subject", event.target.value)} placeholder="e.g. Maintain the community API" required /></FormField>
         <FormField label="Maintainer account"><input value={account(fields.maintainer)} onChange={(event) => update("maintainer", event.target.value)} placeholder="maintainer.testnet" required /></FormField>
@@ -2805,53 +3789,58 @@ function CreateCommitmentForm({
         <FormField label="Beneficiary account"><input value={account(fields.beneficiary)} onChange={(event) => update("beneficiary", event.target.value)} placeholder="beneficiary.testnet" required /></FormField>
       </div>
 
-      <div className="creation-section-heading"><span>02</span><div><strong>Evidence &amp; evaluator</strong><small>Pin the maintainer’s public key and the exact evaluator artifact.</small></div></div>
+      <div className="creation-section-heading"><span>02</span><div><h3>Evidence and evaluator</h3><small>Pin the maintainer wallet and the exact evaluator artifact.</small></div></div>
       <div className="form-grid">
-        <FormField label="Maintainer NEAR wallet key" wide>
+        <div className="form-field form-field-wide">
+          <label htmlFor="maintainer-wallet-key">Maintainer NEAR wallet key</label>
           <div className="maintainer-key-input">
-            <input className="mono-input" value={fields.maintainerPublicKey} readOnly placeholder="Connect the maintainer wallet and pin its public key" required />
+            <input id="maintainer-wallet-key" className="mono-input" value={fields.maintainerPublicKey} readOnly placeholder="Connect the maintainer wallet and pin its public key" required />
             <button className="copy-payload-button" type="button" onClick={() => void pinConnectedMaintainerKey()} disabled={!connectedAccountId || pinningKey || busy}>
               {pinningKey ? "Confirm in wallet…" : fields.maintainerPublicKey ? "Repin wallet key" : "Pin connected wallet key"}
             </button>
           </div>
           {keyFingerprint && <small className="form-wallet-hint">Pinned key fingerprint · <code>{keyFingerprint}</code> · signed by {pinnedKeyAccountId}</small>}
           {!connectedAccountId && <small className="form-wallet-hint">Connect the maintainer’s NEAR wallet first. The key is read from a NEP-413 wallet signature.</small>}
-        </FormField>
+        </div>
         <FormField label="Evaluator WASM HTTPS URL" wide><input value={fields.wasmUrl} onChange={(event) => update("wasmUrl", event.target.value)} placeholder={evidenceMode === "service_availability" ? "https://…/service-availability-evaluator.wasm" : "https://…/maintenance-heartbeat.wasm"} required /></FormField>
         <FormField label="Evaluator WASM SHA-256 · 64 lowercase hex" wide><input className="mono-input" value={fields.wasmSha256} onChange={(event) => update("wasmSha256", event.target.value)} placeholder="Digest of the exact uploaded WASM file" required /></FormField>
       </div>
 
-      <div className="creation-section-heading"><span>03</span><div><strong>Time &amp; consequence</strong><small>Short windows suit a testnet walkthrough. NEAR block time governs the real state.</small></div></div>
+      <div className="creation-section-heading"><span>03</span><div><h3>Funding schedule</h3><small>Set recurring support and review the full escrow target.</small></div></div>
       <div className="form-grid form-grid-3">
-        <FormField label="Initial evidence window · sec"><input type="number" min="1" step="1" value={fields.initialWindowSeconds} onChange={(event) => update("initialWindowSeconds", event.target.value)} required /></FormField>
-        <FormField label="Evidence freshness TTL · sec"><input type="number" min="1" step="1" value={fields.evidenceTtlSeconds} onChange={(event) => update("evidenceTtlSeconds", event.target.value)} required /></FormField>
-        <FormField label="Grace period · sec"><input type="number" min="1" step="1" value={fields.graceSeconds} onChange={(event) => update("graceSeconds", event.target.value)} required /></FormField>
-        <FormField label="Max source lag · sec"><input type="number" min="1" step="1" value={fields.maxSourceLagSeconds} onChange={(event) => update("maxSourceLagSeconds", event.target.value)} required /></FormField>
-        <FormField label="Challenge window · sec"><input type="number" min="1" step="1" value={fields.challengeWindowSeconds} onChange={(event) => update("challengeWindowSeconds", event.target.value)} required /></FormField>
-        <FormField label="Resolution timeout · sec"><input type="number" min="1" step="1" value={fields.resolutionTimeoutSeconds} onChange={(event) => update("resolutionTimeoutSeconds", event.target.value)} required /></FormField>
-        <FormField label="Budget epoch · sec"><input type="number" min="1" step="1" value={fields.epochSeconds} onChange={(event) => update("epochSeconds", event.target.value)} required /></FormField>
-        <FormField label="Maximum epochs · 1–64"><input type="number" min="1" max="64" step="1" value={fields.maxEpochs} onChange={(event) => update("maxEpochs", event.target.value)} required /></FormField>
-        <FormField label="Tranche per epoch · NEAR"><input inputMode="decimal" value={fields.trancheNear} onChange={(event) => update("trancheNear", event.target.value)} required /></FormField>
-        <label className="recovery-toggle"><input type="checkbox" checked={fields.recoveryAllowed} onChange={(event) => update("recoveryAllowed", event.target.checked)} /><span><strong>Allow recovery</strong><small>A fresh compliant evaluation may restore future eligibility.</small></span></label>
+        <FormField label="Payment interval · sec"><input type="number" min="1" step="1" value={fields.epochSeconds} onChange={(event) => update("epochSeconds", event.target.value)} required /></FormField>
+        <FormField label="Number of payments"><input type="number" min="1" max="64" step="1" value={fields.maxEpochs} onChange={(event) => update("maxEpochs", event.target.value)} required /></FormField>
+        <FormField label="Payment amount · NEAR"><input inputMode="decimal" value={fields.trancheNear} onChange={(event) => update("trancheNear", event.target.value)} required /></FormField>
       </div>
 
-      <div className="creation-section-heading"><span>04</span><div><strong>OutLayer execution limits</strong><small>Configure the testnet evaluator account and execution budget.</small></div></div>
-      <div className="form-grid form-grid-3">
-        <FormField label="OutLayer account"><select value="outlayer.testnet" disabled><option value="outlayer.testnet">outlayer.testnet</option></select></FormField>
-        <FormField label="Build target"><select value="wasm32-wasip2" disabled><option value="wasm32-wasip2">wasm32-wasip2</option></select></FormField>
-        <FormField label="Execution deposit · NEAR"><input inputMode="decimal" value={fields.executionDepositNear} onChange={(event) => update("executionDepositNear", event.target.value)} required /></FormField>
-        <FormField label="Maximum instructions"><input inputMode="numeric" value={fields.maxInstructions} onChange={(event) => update("maxInstructions", event.target.value)} required /></FormField>
-        <FormField label="Memory limit · MB"><input type="number" min="1" max="4096" step="1" value={fields.maxMemoryMb} onChange={(event) => update("maxMemoryMb", event.target.value)} required /></FormField>
-        <FormField label="Execution limit · sec"><input type="number" min="1" max="180" step="1" value={fields.maxExecutionSeconds} onChange={(event) => update("maxExecutionSeconds", event.target.value)} required /></FormField>
-        <FormField label="Request timeout · sec"><input type="number" min="1" step="1" value={fields.requestTimeoutSeconds} onChange={(event) => update("requestTimeoutSeconds", event.target.value)} required /></FormField>
-        <FormField label="Create storage deposit · NEAR"><input inputMode="decimal" value={fields.storageDepositNear} onChange={(event) => update("storageDepositNear", event.target.value)} required /></FormField>
-      </div>
+      <details className="guided-advanced creation-advanced-settings">
+        <summary>Advanced policy and evaluator settings</summary>
+        <p>Defaults come from the starter policy. Change them only when the commitment needs different timing or evaluator limits.</p>
+        <div className="creation-section-heading"><span>A</span><div><h3>Timing and recovery</h3><small>These rules determine when evidence expires and whether health can recover.</small></div></div>
+        <div className="form-grid form-grid-3">
+          <FormField label="Initial evidence window · sec"><input type="number" min="1" step="1" value={fields.initialWindowSeconds} onChange={(event) => update("initialWindowSeconds", event.target.value)} required /></FormField>
+          <FormField label="Evidence freshness · sec"><input type="number" min="1" step="1" value={fields.evidenceTtlSeconds} onChange={(event) => update("evidenceTtlSeconds", event.target.value)} required /></FormField>
+          <FormField label="Maximum source age · sec"><input type="number" min="1" step="1" value={fields.maxSourceLagSeconds} onChange={(event) => update("maxSourceLagSeconds", event.target.value)} required /></FormField>
+          <FormField label="Grace period · sec"><input type="number" min="1" step="1" value={fields.graceSeconds} onChange={(event) => update("graceSeconds", event.target.value)} required /></FormField>
+          <FormField label="Challenge window · sec"><input type="number" min="1" step="1" value={fields.challengeWindowSeconds} onChange={(event) => update("challengeWindowSeconds", event.target.value)} required /></FormField>
+          <FormField label="Arbiter resolution limit · sec"><input type="number" min="1" step="1" value={fields.resolutionTimeoutSeconds} onChange={(event) => update("resolutionTimeoutSeconds", event.target.value)} required /></FormField>
+          <label className="recovery-toggle"><input type="checkbox" checked={fields.recoveryAllowed} onChange={(event) => update("recoveryAllowed", event.target.checked)} /><span><strong>Allow recovery</strong><small>Fresh compliant evidence can restore future eligibility after a breach.</small></span></label>
+        </div>
+        <div className="creation-section-heading"><span>B</span><div><h3>Evaluator runtime</h3><small>OutLayer account and WASM target are fixed by this testnet Console.</small></div></div>
+        <div className="form-grid form-grid-3">
+          <FormField label="Evaluator execution budget · NEAR"><input inputMode="decimal" value={fields.executionDepositNear} onChange={(event) => update("executionDepositNear", event.target.value)} required /></FormField>
+          <FormField label="Maximum instructions"><input inputMode="numeric" value={fields.maxInstructions} onChange={(event) => update("maxInstructions", event.target.value)} required /></FormField>
+          <FormField label="Memory limit · MB"><input type="number" min="1" max="4096" step="1" value={fields.maxMemoryMb} onChange={(event) => update("maxMemoryMb", event.target.value)} required /></FormField>
+          <FormField label="Execution limit · sec"><input type="number" min="1" max="180" step="1" value={fields.maxExecutionSeconds} onChange={(event) => update("maxExecutionSeconds", event.target.value)} required /></FormField>
+          <FormField label="Evaluator response deadline · sec"><input type="number" min="1" step="1" value={fields.requestTimeoutSeconds} onChange={(event) => update("requestTimeoutSeconds", event.target.value)} required /></FormField>
+          <FormField label="Draft storage bond · NEAR"><input inputMode="decimal" value={fields.storageDepositNear} onChange={(event) => update("storageDepositNear", event.target.value)} readOnly={evidenceMode === "service_availability"} required /><small>{evidenceMode === "service_availability" ? "Service policies attach a conservative 0.05 NEAR bond; the contract returns the unused amount." : "Any excess is returned by the contract."}</small></FormField>
+        </div>
+      </details>
 
-      <div className="creation-summary"><span>FULL ESCROW TARGET</span><strong>{escrowPreview} NEAR</strong><small>Calculated from max epochs × tranche size; fund this separately after creation.</small></div>
-      {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
+      <div className="creation-summary"><span>ESCROW REQUIRED AFTER DRAFT</span><strong>{escrowPreview} NEAR</strong><small>{fields.maxEpochs} payments × {fields.trancheNear} NEAR. This is funded separately after creation.</small></div>
       {!connectedAccountId && <p className="form-wallet-hint">Connect a testnet wallet to create the draft. Your wallet account becomes the on-chain creator.</p>}
       {!contractConfigured && <p className="form-wallet-hint">Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local before creating.</p>}
-      <div className="creation-submit-row"><p>Storage bond excess is refunded. The evaluator URL and digest should refer to the same uploaded WASM artifact. Source roster and quorum become immutable with this policy.</p><button className="lookup-button" type="submit" disabled={!hydrated || busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Create draft <span aria-hidden="true">↗</span></>}</button></div>
+      <div className="creation-submit-row"><p>Creating stores an immutable policy and makes a Draft; it does not fund or activate it. Public policy fields and signed reports are visible on NEAR.</p><button className="lookup-button" type="submit" disabled={!hydrated || busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Review and create draft <span aria-hidden="true">↗</span></>}</button></div>
     </form>
   );
 }
@@ -2860,23 +3849,59 @@ function FormField({ label, wide = false, children }: { label: string; wide?: bo
   return <label className={`form-field ${wide ? "form-field-wide" : ""}`}><span>{label}</span>{children}</label>;
 }
 
-function parseServiceAvailabilityPolicy(
-  text: string,
+function buildServiceAvailabilityPolicy(
+  draft: ServicePolicyDraft,
   temporalMaxSourceLagNs: string,
   evidenceTtlNs: string,
 ): ServiceAvailabilityPolicyInput {
-  let value: unknown;
+  const sources = draft.sources.map((source) => ({
+    source_id: source.source_id.trim(),
+    operator_id: source.operator_id.trim(),
+  })).sort((left, right) => left.source_id < right.source_id ? -1 : left.source_id > right.source_id ? 1 : 0);
+  const policy: ServiceAvailabilityPolicyInput = {
+    schema: "lcp.service_availability.policy.v2",
+    target_id: draft.targetId.trim(),
+    max_source_lag_ns: temporalMaxSourceLagNs,
+    expected_status_min: Number(integerString(draft.expectedStatusMin, "Expected minimum HTTP status", 100, 599)),
+    expected_status_max: Number(integerString(draft.expectedStatusMax, "Expected maximum HTTP status", 100, 599)),
+    max_latency_ms: Number(integerString(draft.maxLatencyMs, "Maximum response time", 1, 0xffff_ffff)),
+    minimum_agreeing_sources: Number(integerString(draft.minimumAgreeingSources, "Reports needed for a verdict", 1, sources.length)),
+    minimum_corroboration_bps: Number(integerString(draft.minimumCorroborationPercent, "Minimum agreement", 0, 100)) * 100,
+    sources,
+  };
+  validateServiceAvailabilityPolicyInput(policy);
+  if (BigInt(policy.max_source_lag_ns) > BigInt(evidenceTtlNs)) {
+    throw new Error("Evidence freshness must be longer than the maximum report age.");
+  }
+  return policy;
+}
+
+async function fingerprintServiceTarget(rawUrl: string, saltHex: string): Promise<string> {
+  if (!/^[0-9a-f]{64}$/.test(saltHex)) {
+    throw new Error("Enter the 32-byte target salt as 64 lowercase hexadecimal characters.");
+  }
+  let url: URL;
   try {
-    value = JSON.parse(text);
+    url = new URL(rawUrl.trim());
   } catch {
-    throw new Error("Service source policy must be valid JSON.");
+    throw new Error("Enter a valid HTTPS health endpoint.");
   }
-  validateServiceAvailabilityPolicyInput(value);
-  if (BigInt(value.max_source_lag_ns) > BigInt(temporalMaxSourceLagNs)
-      || BigInt(value.max_source_lag_ns) > BigInt(evidenceTtlNs)) {
-    throw new Error("Service source-age limit cannot exceed the commitment's maximum source lag or evidence TTL.");
+  const hostname = url.hostname.toLowerCase();
+  const isIpv4Literal = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(hostname);
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
+    throw new Error("The endpoint must use HTTPS on port 443 and must not include a username or password.");
   }
-  return value;
+  if (isIpv4Literal || hostname.includes(":") || hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local")) {
+    throw new Error("Use a public hostname, not an IP address or local hostname.");
+  }
+
+  const salt = new Uint8Array(hexToArrayBuffer(saltHex));
+  const urlBytes = new TextEncoder().encode(url.toString());
+  const fingerprintInput = new Uint8Array(salt.length + urlBytes.length);
+  fingerprintInput.set(salt, 0);
+  fingerprintInput.set(urlBytes, salt.length);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", fingerprintInput);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: string | null): CreateCommitmentArgs {
@@ -3123,6 +4148,30 @@ function formatDate(nanoseconds: string): string {
 type AttestationLookupState =
   | { kind: "idle" | "loading" | "missing" | "unavailable"; message: string }
   | { kind: "found"; message: string; reportUrl: string | null };
+
+function evaluationVerdictLabel(record: EvaluationRecordView): string {
+  if (record.verdict) return record.verdict;
+  return record.status === "Pending" ? "Waiting for evaluator" : "No verdict";
+}
+
+function evaluationExplanation(record: EvaluationRecordView): string | null {
+  if (record.reason_codes.includes("OUTLAYER_TIMEOUT")) {
+    return "The evaluator did not return a result before the contract deadline. This is not a service health verdict; another evaluation uses evaluator operations funds.";
+  }
+  if (record.reason_codes.includes("SOURCE_QUORUM_NOT_MET")) {
+    const summary = record.service_availability?.source_counts;
+    const count = summary ? ` ${summary.valid} of ${summary.configured} reports passed the policy checks.` : "";
+    return `The reports did not meet the required source quorum.${count} This does not mean the service was down.`;
+  }
+  if (record.reason_codes.includes("CORROBORATION_THRESHOLD_NOT_MET")) {
+    return "The reports did not meet the configured agreement coverage. The result is inconclusive, not proof that the service was down.";
+  }
+  if (record.reason_codes.includes("OUTLAYER_EXECUTION_FAILED") || record.reason_codes.includes("MISSING_OUTLAYER_RESULT")) {
+    return "The evaluator failed before returning a result. This is not a service health verdict; check the evaluator service before retrying.";
+  }
+  if (record.status === "Pending") return "The request is waiting for the configured evaluator to return a result.";
+  return null;
+}
 
 function EvaluationProofReference({
   record,

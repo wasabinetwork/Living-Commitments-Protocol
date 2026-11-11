@@ -27,7 +27,7 @@ test("service source policy accepts a sorted independent majority roster", () =>
 test("service source policy rejects duplicate operators, unsorted sources, and non-majority quorum", () => {
   const duplicateOperator = policy();
   duplicateOperator.sources[2].operator_id = duplicateOperator.sources[1].operator_id;
-  assert.throws(() => validateServiceAvailabilityPolicyInput(duplicateOperator), /unique source IDs, operators/);
+  assert.throws(() => validateServiceAvailabilityPolicyInput(duplicateOperator), /Each source ID and NEAR operator account must be unique/);
 
   const unsorted = policy();
   unsorted.sources.reverse();
@@ -44,5 +44,15 @@ test("service source policy rejects out-of-range decimal timestamps and extra fi
   assert.throws(() => validateServiceAvailabilityPolicyInput(outOfRange), /source-age limit/);
 
   const extra = { ...policy(), reviewer_email: "person@example.test" };
-  assert.throws(() => validateServiceAvailabilityPolicyInput(extra), /only the documented v1 fields/);
+  assert.throws(() => validateServiceAvailabilityPolicyInput(extra), /unsupported or missing fields/);
+});
+
+test("transaction-authenticated source policy lists accounts without pinning wallet keys", () => {
+  const current = policy();
+  current.schema = "lcp.service_availability.policy.v2";
+  current.sources = current.sources.map(({ source_id, operator_id }) => ({ source_id, operator_id }));
+  assert.doesNotThrow(() => validateServiceAvailabilityPolicyInput(current));
+
+  current.sources[0].public_key_hex = "1".repeat(64);
+  assert.throws(() => validateServiceAvailabilityPolicyInput(current), /must not pin wallet keys/);
 });

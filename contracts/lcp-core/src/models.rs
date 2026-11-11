@@ -15,6 +15,7 @@ pub type TransferId = u64;
 pub const EVALUATION_REQUEST_SCHEMA: &str = "lcp.evaluation.request.v1";
 pub const EVALUATION_VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v2";
 pub const SERVICE_AVAILABILITY_REQUEST_SCHEMA: &str = "lcp.service_availability.request.v1";
+pub const SERVICE_AVAILABILITY_INBOX_REQUEST_SCHEMA: &str = "lcp.service_availability.request.v2";
 pub const SERVICE_AVAILABILITY_VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v3";
 pub const HEARTBEAT_SCHEMA: &str = "lcp.heartbeat.v1";
 pub const HEARTBEAT_EVIDENCE_TYPE: &str = "signed_maintenance_heartbeat";
@@ -340,7 +341,8 @@ pub struct ServiceAvailabilityPolicy {
 pub struct ServiceAvailabilitySource {
     pub source_id: String,
     pub operator_id: String,
-    pub public_key_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key_hex: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -400,14 +402,46 @@ pub struct CreateServiceAvailabilityCommitmentArgs {
     pub service_availability: ServiceAvailabilityPolicy,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde", deny_unknown_fields)]
 pub struct SignedProbeReport {
     pub payload: ProbeReportPayload,
-    pub signature_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_hex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_signature: Option<Nep413ProbeSignature>,
+    /// Set by the contract when reports are assembled from the transaction-authenticated inbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submitted_by: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+pub struct Nep413ProbeSignature {
+    pub account_id: String,
+    pub public_key: String,
+    pub signature: String,
+    pub nonce_hex: String,
+    pub recipient: String,
+    pub callback_url: String,
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct ServiceReportInboxView {
+    pub commitment_id: U64,
+    pub evaluation_id: U64,
+    pub source_id: String,
+    pub operator_id: String,
+    pub submitted_by: near_sdk::AccountId,
+    pub submitted_at_ns: U64,
+    pub expires_at_ns: U64,
+    pub storage_deposit_yocto: U128,
+    pub expired: bool,
+    pub report: SignedProbeReport,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde", deny_unknown_fields)]
 pub struct ProbeReportPayload {
     pub schema: String,
@@ -424,7 +458,7 @@ pub struct ProbeReportPayload {
     pub observation: ProbeObservation,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(
     crate = "near_sdk::serde",
     tag = "kind",

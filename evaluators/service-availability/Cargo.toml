@@ -9,6 +9,7 @@ name = "service-availability-evaluator"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
 ed25519-dalek.workspace = true
 bs58.workspace = true
 serde = { workspace = true }

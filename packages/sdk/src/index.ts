@@ -69,11 +69,11 @@ export interface CreateCommitmentArgs {
 export interface ServiceAvailabilitySourceInput {
   source_id: string;
   operator_id: string;
-  public_key_hex: Ed25519PublicKeyHex;
+  public_key_hex?: Ed25519PublicKeyHex;
 }
 
 export interface ServiceAvailabilityPolicyInput {
-  schema: "lcp.service_availability.policy.v1";
+  schema: "lcp.service_availability.policy.v1" | "lcp.service_availability.policy.v2";
   target_id: Sha256Hex;
   max_source_lag_ns: Nanoseconds;
   expected_status_min: number;
@@ -84,7 +84,7 @@ export interface ServiceAvailabilityPolicyInput {
   sources: ServiceAvailabilitySourceInput[];
 }
 
-/** Validate the canonical v1 source-policy shape before it is sent to a wallet or contract. */
+/** Validate the canonical source-policy shape before it is sent to a wallet or contract. */
 export function validateServiceAvailabilityPolicyInput(value: unknown): asserts value is ServiceAvailabilityPolicyInput {
   if (!isRecord(value)) throw new Error("Service source policy must be a JSON object.");
   const expectedKeys = [
@@ -92,10 +92,11 @@ export function validateServiceAvailabilityPolicyInput(value: unknown): asserts 
     "max_latency_ms", "minimum_agreeing_sources", "minimum_corroboration_bps", "sources",
   ].sort();
   if (Object.keys(value).sort().join(",") !== expectedKeys.join(",")) {
-    throw new Error("Service source policy must contain only the documented v1 fields.");
+    throw new Error("Service source policy contains unsupported or missing fields.");
   }
   const policy = value as unknown as ServiceAvailabilityPolicyInput;
-  if (policy.schema !== "lcp.service_availability.policy.v1"
+  const legacyKeyRoster = policy.schema === "lcp.service_availability.policy.v1";
+  if ((!legacyKeyRoster && policy.schema !== "lcp.service_availability.policy.v2")
       || !/^[0-9a-f]{64}$/.test(policy.target_id)
       || typeof policy.max_source_lag_ns !== "string"
       || !/^[1-9][0-9]*$/.test(policy.max_source_lag_ns)
@@ -128,26 +129,41 @@ export function validateServiceAvailabilityPolicyInput(value: unknown): asserts 
   const publicKeys = new Set<string>();
   let previousSourceId = "";
   for (const source of policy.sources) {
-    if (!isRecord(source)
-        || Object.keys(source).sort().join(",") !== ["operator_id", "public_key_hex", "source_id"].join(",")) {
-      throw new Error("Each source must contain only source_id, operator_id, and public_key_hex.");
+    if (!isRecord(source)) throw new Error("Each source must be a JSON object.");
+    if (!legacyKeyRoster && Object.prototype.hasOwnProperty.call(source, "public_key_hex")) {
+      throw new Error("Transaction-authenticated sources must not pin wallet keys.");
+    }
+    const expectedSourceKeys = legacyKeyRoster
+      ? ["operator_id", "public_key_hex", "source_id"]
+      : ["operator_id", "source_id"];
+    if (Object.keys(source).sort().join(",") !== expectedSourceKeys.sort().join(",")) {
+      throw new Error(legacyKeyRoster
+        ? "Each legacy source must contain source_id, operator_id, and public_key_hex."
+        : "Each transaction-authenticated source must contain only source_id and operator_id.");
     }
     if (typeof source.source_id !== "string"
         || typeof source.operator_id !== "string"
-        || typeof source.public_key_hex !== "string"
         || !/^[a-z0-9._-]{1,64}$/.test(source.source_id)
-        || !/^[a-z0-9._-]{1,64}$/.test(source.operator_id)
-        || !/^[0-9a-f]{64}$/.test(source.public_key_hex)
-        || source.source_id <= previousSourceId
-        || sourceIds.has(source.source_id)
-        || operatorIds.has(source.operator_id)
-        || publicKeys.has(source.public_key_hex)) {
-      throw new Error("Sources must be sorted and use unique source IDs, operators, and lowercase Ed25519 keys.");
+        || !/^[a-z0-9._-]{1,64}$/.test(source.operator_id)) {
+      throw new Error("Source IDs and NEAR operator account IDs must use lowercase letters, digits, dot, underscore, or hyphen.");
+    }
+    if (source.source_id <= previousSourceId) {
+      throw new Error("Sources must be sorted by source ID.");
+    }
+    if (sourceIds.has(source.source_id) || operatorIds.has(source.operator_id)) {
+      throw new Error("Each source ID and NEAR operator account must be unique.");
+    }
+    if (legacyKeyRoster) {
+      if (typeof source.public_key_hex !== "string"
+          || !/^[0-9a-f]{64}$/.test(source.public_key_hex)
+          || publicKeys.has(source.public_key_hex)) {
+        throw new Error("Legacy sources must use unique lowercase Ed25519 public keys.");
+      }
+      publicKeys.add(source.public_key_hex);
     }
     previousSourceId = source.source_id;
     sourceIds.add(source.source_id);
     operatorIds.add(source.operator_id);
-    publicKeys.add(source.public_key_hex);
   }
 }
 
@@ -215,26 +231,57 @@ export interface ServiceAvailabilityEvaluationSummaryView {
   corroboration_bps: number;
 }
 
-export interface SignedProbeReport {
-  payload: {
-    schema: "lcp.service_availability.report.v1";
-    contract_id: string;
-    commitment_id: CommitmentId;
-    evaluation_id: EvaluationId;
-    policy_version: 3;
-    policy_hash: Sha256Hex;
-    source_policy_hash: Sha256Hex;
-    source_id: string;
-    operator_id: string;
-    target_id: Sha256Hex;
-    observed_at_ns: Nanoseconds;
-    observation:
-      | { kind: "http_response"; status_code: number; latency_ms: number; tls_verified: boolean }
-      | { kind: "timeout"; elapsed_ms: number }
-      | { kind: "tls_error" }
-      | { kind: "source_error"; code: string };
-  };
-  signature_hex: Ed25519SignatureHex;
+export interface ServiceAvailabilityReportPayload {
+  schema: "lcp.service_availability.report.v1";
+  contract_id: string;
+  commitment_id: CommitmentId;
+  evaluation_id: EvaluationId;
+  policy_version: 3;
+  policy_hash: Sha256Hex;
+  source_policy_hash: Sha256Hex;
+  source_id: string;
+  operator_id: string;
+  target_id: Sha256Hex;
+  observed_at_ns: Nanoseconds;
+  observation:
+    | { kind: "http_response"; status_code: number; latency_ms: number; tls_verified: boolean }
+    | { kind: "timeout"; elapsed_ms: number }
+    | { kind: "tls_error" }
+    | { kind: "source_error"; code: string };
+}
+
+export interface Nep413ProbeSignature {
+  account_id: string;
+  public_key: NearEd25519PublicKey;
+  signature: string;
+  nonce_hex: string;
+  recipient: string;
+  callback_url: string;
+}
+
+export type SignedProbeReport = { payload: ServiceAvailabilityReportPayload } & (
+  | { signature_hex: Ed25519SignatureHex; wallet_signature?: never }
+  | { signature_hex?: never; wallet_signature: Nep413ProbeSignature }
+);
+
+/** Inbox submissions in policy v2 are authenticated by the operator's NEAR transaction. */
+export interface TransactionAuthenticatedProbeReport {
+  payload: ServiceAvailabilityReportPayload;
+}
+
+export type ServiceProbeReport = SignedProbeReport | TransactionAuthenticatedProbeReport;
+
+export interface ServiceReportInboxView {
+  commitment_id: CommitmentId;
+  evaluation_id: EvaluationId;
+  source_id: string;
+  operator_id: string;
+  submitted_by: string;
+  submitted_at_ns: Nanoseconds;
+  expires_at_ns: Nanoseconds;
+  storage_deposit_yocto: YoctoNear;
+  expired: boolean;
+  report: ServiceProbeReport;
 }
 
 interface SignedHeartbeatEvidenceBase {
@@ -576,6 +623,59 @@ export class LcpClient {
       "get_service_availability_policy",
       { commitment_id: id },
     );
+  }
+
+  getServiceReportInbox(id: CommitmentId, evaluationId: EvaluationId): Promise<ServiceReportInboxView[]> {
+    return this.transport.view<ServiceReportInboxView[]>(this.contractId, "get_service_report_inbox", {
+      commitment_id: id,
+      evaluation_id: evaluationId,
+    });
+  }
+
+  getServiceReportStorageDeposit(id: CommitmentId, report: ServiceProbeReport): Promise<YoctoNear> {
+    return this.transport.view<YoctoNear>(this.contractId, "get_service_report_storage_deposit", {
+      commitment_id: id,
+      report,
+    });
+  }
+
+  getServiceReportRefundBalance(accountId: string): Promise<YoctoNear> {
+    return this.transport.view<YoctoNear>(this.contractId, "get_service_report_refund_balance", {
+      account_id: accountId,
+    });
+  }
+
+  submitServiceReport(
+    id: CommitmentId,
+    report: ServiceProbeReport,
+    storageDepositYocto: YoctoNear,
+    options: Omit<ContractCallOptions, "attachedDepositYocto"> = {},
+  ): Promise<YoctoNear> {
+    return this.transport.call<YoctoNear>(this.contractId, "submit_service_report", {
+      commitment_id: id,
+      report,
+    }, { ...options, attachedDepositYocto: storageDepositYocto });
+  }
+
+  requestServiceEvaluationFromInbox(
+    id: CommitmentId,
+    options: ContractCallOptions,
+  ): Promise<EvaluationId> {
+    return this.transport.call<EvaluationId>(this.contractId, "request_service_evaluation_from_inbox", {
+      commitment_id: id,
+    }, options);
+  }
+
+  reclaimServiceReport(id: CommitmentId, evaluationId: EvaluationId, sourceId: string): Promise<boolean> {
+    return this.transport.call<boolean>(this.contractId, "reclaim_service_report", {
+      commitment_id: id,
+      evaluation_id: evaluationId,
+      source_id: sourceId,
+    });
+  }
+
+  withdrawServiceReportRefund(): Promise<void> {
+    return this.transport.call<void>(this.contractId, "withdraw_service_report_refund", {});
   }
 
   getLatestServicePolicyAmendment(id: CommitmentId): Promise<ServicePolicyAmendmentView | null> {
