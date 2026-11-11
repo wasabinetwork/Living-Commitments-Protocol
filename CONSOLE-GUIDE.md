@@ -10,10 +10,11 @@ Set the public app configuration in the ignored `apps/console/.env.local` file:
 NEXT_PUBLIC_LCP_CONTRACT_ID=livingcommitmentsprotocol.testnet
 NEXT_PUBLIC_NEAR_NETWORK_ID=testnet
 NEXT_PUBLIC_NEAR_RPC_URL=https://test.rpc.fastnear.com
+NEXT_PUBLIC_NEAR_RPC_FALLBACK_URLS=https://near-testnet.drpc.org,https://testnet-rpc.intea.rs
 NEXT_PUBLIC_LCP_EVENT_INDEXER_URL=https://lcp-event-indexer.wasabinetwork.workers.dev
 ```
 
-Run `npm run dev --workspace=@lcp/console` and open `http://localhost:3000`. The LCP Console follows the system color preference and lets you switch between dark and light mode from the top bar. Connect a testnet wallet when signing or submitting an action; on reload, the Console restores a saved connector session without opening the wallet prompt again. The recent list, older-page control, wallet connection, and explicit disconnection have been manually checked in Firefox.
+Run `npm run dev --workspace=@lcp/console` and open `http://localhost:3000`. The LCP Console follows the system color preference and lets you switch between dark and light mode from the top bar. Contract reads and finalized time use the primary RPC, then the configured fallback URLs in order. All endpoints must be for the selected network. Connect a testnet wallet when signing or submitting an action; on reload, the Console restores a saved connector session without opening the wallet prompt again. The recent list, older-page control, wallet connection, and explicit disconnection have been manually checked in Firefox.
 
 ## Follow Existing Testnet Examples
 
@@ -40,7 +41,7 @@ Use a test commitment and the appropriate role wallet for each action:
 
 ## Staged P1 Workflows
 
-The transaction-authenticated source-policy v2 contract is deployed to testnet, its evaluator is published to R2, and the updated Console is deployed at <https://6c526792.lcp-preview.pages.dev> with stable alias <https://preview.lcp-preview.pages.dev>. Both `/health` routes returned HTTP 200 on 2026-11-11. The contract code hash is `FR3TS4oyqGRtHxjo8y7jLRi13ruWwJ3Cs9gdcKgT3mvG`. The evaluator SHA-256 is `908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611`; use <https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm>. Service-policy creation attaches a fixed 0.05 NEAR storage bond; the contract retains the measured requirement and refunds the unused amount. Existing source-policy v1 commitments keep their NEP-413 flow. Commitment `26` remains a separate legacy-evaluator fixture. Reviewer access remains disabled until its private Worker resources are provisioned and deployed.
+The transaction-authenticated source-policy v2 contract is deployed to testnet, its evaluator is published to R2, and the updated Console is deployed at <https://ed6d81cc.lcp-preview.pages.dev> with stable alias <https://preview.lcp-preview.pages.dev>. Both `/health` routes returned HTTP 200 on 2026-11-11. The preview includes ordered read-RPC fallback and the connected-wallet badge wrapping fix; the latter still needs a manual narrow-screen Firefox check. The contract code hash is `FR3TS4oyqGRtHxjo8y7jLRi13ruWwJ3Cs9gdcKgT3mvG`. The evaluator SHA-256 is `908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611`; use <https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm>. Service-policy creation attaches a fixed 0.05 NEAR storage bond; the contract retains the measured requirement and refunds the unused amount. Existing source-policy v1 commitments keep their NEP-413 flow. Commitment `26` remains a separate legacy-evaluator fixture. Reviewer access remains disabled until its private Worker resources are provisioned and deployed.
 
 ### Independent service probes
 
@@ -57,6 +58,21 @@ After provisioning the private Worker, D1 database, and private R2 bucket as des
 The deployed LCP contract already contains the amendment methods; the current local 938,518-byte build has the same code hash. On a dedicated v3 commitment, prepare the new source-policy JSON and propose an amendment at least one hour in the future. Each distinct sponsor, maintainer, beneficiary, and arbiter connects their own wallet and approves. Once the activation time and all approvals are satisfied, activate the amendment; confirm the policy digest changes and the evidence clock restarts. Also exercise proposer cancellation and permissionless expiry on separate proposals.
 
 For the adapter, deploy an instance with the LCP contract, fixed resource recipient, and pool-manager account, then prefund its pool. A sponsor or beneficiary can create a bounded grant with an adapter account, recipient, per-action and cumulative limits, and expiry. Only execute after NEAR reports the normal claim eligibility as true. Verify that an empty pool or failed recipient transfer restores the adapter's available pool, that the LCP grant allowance remains consumed on a failed adapter call, and that the pool manager can withdraw only available funds after pending transfers settle.
+
+### Dedicated governance testnet accounts
+
+Use separate Firefox wallet sessions for each role; never sign for one role from another role's wallet. These accounts were checked against finalized testnet state on 2026-11-11 17:16 UTC and each had `0 NEAR`, so fund them from the official testnet faucet before creating fixtures or signing transactions.
+
+| Test role | NEAR account | Use |
+| --- | --- | --- |
+| Sponsor | `lcpsponsor.testnet` | Propose or approve policy changes; fund escrow and create adapter grants |
+| Maintainer | `lcpmaintainer.testnet` | Approve amendments and control maintenance evidence |
+| Beneficiary | `lcpbeneficiary.testnet` | Approve amendments and exercise beneficiary grant authority |
+| Arbiter | `lcparbiter.testnet` | Approve amendments and resolve disputes |
+| Adapter pool manager | `lcppool.testnet` | Prefund the sample adapter and recover only unreserved pool funds |
+| Adapter recipient | `lcprecipient.testnet` | Receive the adapter's bounded payout |
+
+Use the first four accounts for amendment approval and cancellation/expiry fixtures. Use the last two only after a separate adapter account has been deployed and its upgrade authority is reviewed. No private keys are needed by the Console or repository.
 
 ## Verified Browser Journeys
 

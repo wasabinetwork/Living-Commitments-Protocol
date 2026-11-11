@@ -25,6 +25,22 @@ test("finalized block timestamp is read from NEAR RPC", async (t) => {
   assert.equal(await finalizedTimeNs(env), 1_794_192_696_952_171_274n);
 });
 
+test("reviewer authorization reads fall back when the primary RPC is unavailable", async (t) => {
+  const endpoints = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    endpoints.push(url);
+    if (url.includes("primary")) return new Response("unavailable", { status: 503 });
+    return Response.json({ result: { header: { timestamp_nanosec: "1794192696952171274" } } });
+  });
+
+  assert.equal(await finalizedTimeNs({
+    ...env,
+    NEAR_RPC_URL: "https://primary.example.test",
+    NEAR_RPC_FALLBACK_URLS: "https://fallback.example.test",
+  }), 1_794_192_696_952_171_274n);
+  assert.deepEqual(endpoints, ["https://primary.example.test", "https://fallback.example.test"]);
+});
+
 test("network and malformed JSON responses map to retryable NEAR failures", async (t) => {
   t.mock.method(globalThis, "fetch", async () => new Response("{", { status: 200 }));
   await assert.rejects(finalizedTimeNs(env), NearUnavailableError);

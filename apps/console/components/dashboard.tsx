@@ -7,6 +7,7 @@ import {
   LcpClient,
   NearJsonRpcTransport,
   nearPublicKeyFingerprintHex,
+  requestNearJsonRpc,
   validateServiceAvailabilityPolicyInput,
 } from "@lcp/sdk";
 import type {
@@ -102,7 +103,18 @@ type ClosureAction = "close" | "refund";
 
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
 const NEAR_NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK_ID?.trim() === "mainnet" ? "mainnet" : "testnet";
-const RPC_URL = process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || "https://test.rpc.fastnear.com";
+const DEFAULT_RPC_URLS = NEAR_NETWORK_ID === "mainnet"
+  ? ["https://free.rpc.fastnear.com", "https://near.drpc.org", "https://rpc.intea.rs"]
+  : ["https://test.rpc.fastnear.com", "https://near-testnet.drpc.org", "https://testnet-rpc.intea.rs"];
+const RPC_FALLBACK_URLS = (process.env.NEXT_PUBLIC_NEAR_RPC_FALLBACK_URLS ?? "")
+  .split(",")
+  .map((url) => url.trim())
+  .filter(Boolean);
+const RPC_URL = [...new Set([
+  process.env.NEXT_PUBLIC_NEAR_RPC_URL?.trim() || DEFAULT_RPC_URLS[0],
+  ...RPC_FALLBACK_URLS,
+  ...DEFAULT_RPC_URLS.slice(1),
+])];
 const EVENT_INDEXER_URL = process.env.NEXT_PUBLIC_LCP_EVENT_INDEXER_URL?.trim().replace(/\/+$/, "") ?? "";
 const DEFAULT_STORAGE_DEPOSIT = "0.01";
 const DEFAULT_SERVICE_COMMITMENT_STORAGE_DEPOSIT = "0.05";
@@ -4085,25 +4097,12 @@ function createWalletSender(connector: NearConnectorPort): NearTransactionSender
   };
 }
 
-async function getFinalBlockTimestampNs(rpcUrl: string): Promise<string> {
-  const response = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: "lcp-heartbeat-time",
-      method: "block",
-      params: { finality: "final" },
-    }),
-  });
-  if (!response.ok) throw new Error(`NEAR RPC returned HTTP ${response.status} while reading block time.`);
-  const result: unknown = await response.json();
-  if (!isRecord(result)) throw new Error("NEAR RPC returned an invalid block response.");
-  if ("error" in result) throw new Error(`NEAR RPC block query failed: ${JSON.stringify(result.error)}`);
-  if (!isRecord(result.result) || !isRecord(result.result.header)) {
+async function getFinalBlockTimestampNs(rpcUrls: string | readonly string[]): Promise<string> {
+  const result = await requestNearJsonRpc(rpcUrls, "block", { finality: "final" });
+  if (!isRecord(result) || !isRecord(result.header)) {
     throw new Error("NEAR RPC block response is missing its finalized header.");
   }
-  const timestamp = result.result.header.timestamp_nanosec;
+  const timestamp = result.header.timestamp_nanosec;
   if (typeof timestamp !== "string" || !/^(0|[1-9][0-9]*)$/.test(timestamp)) {
     throw new Error("NEAR RPC returned an invalid finalized block timestamp.");
   }

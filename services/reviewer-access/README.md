@@ -8,6 +8,8 @@ The browser encrypts a selected artifact with a fresh AES-256-GCM key and wraps 
 
 The checked-in Wrangler config uses local D1/R2 emulation. Before deploying, create a dedicated private R2 bucket and D1 database, replace the placeholder database ID, and apply the migrations. Do not enable public R2 access. The reviewer-access bucket must remain separate from public evaluator artifacts and the event indexer.
 
+Finalized role, key, and timestamp reads try `NEAR_RPC_URL` first, then comma-separated `NEAR_RPC_FALLBACK_URLS`. The testnet defaults are FastNear, dRPC, and Intear, in that order; use only providers for the same configured network. Failover is limited to transport errors, rate limits, and server errors. Contract/RPC application errors remain visible. This pool is for ordinary RPC reads and does not replace the event indexer's archival block source.
+
 ```sh
 npm install
 npx wrangler d1 migrations apply lcp-reviewer-access --local --config services/reviewer-access/wrangler.jsonc

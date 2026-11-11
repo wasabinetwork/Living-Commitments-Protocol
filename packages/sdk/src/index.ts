@@ -526,7 +526,8 @@ export interface NearTransactionRequest extends ContractCallOptions {
 export type NearTransactionSender = <T = unknown>(request: NearTransactionRequest) => Promise<T>;
 
 export interface NearJsonRpcTransportOptions {
-  rpcUrl: string;
+  /** Primary RPC URL followed by optional same-network fallback URLs. */
+  rpcUrl: string | readonly string[];
   sendTransaction?: NearTransactionSender;
   fetchImplementation?: typeof fetch;
 }
@@ -545,37 +546,23 @@ export class NearJsonRpcTransport implements LcpTransport {
   }
 
   async view<T>(contractId: string, methodName: string, args: Record<string, unknown>): Promise<T> {
-    const response = await this.fetchImplementation(this.options.rpcUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "lcp-sdk",
-        method: "query",
-        params: {
-          request_type: "call_function",
-          finality: "final",
-          account_id: contractId,
-          method_name: methodName,
-          args_base64: encodeBase64(new TextEncoder().encode(JSON.stringify(args))),
-        },
-      }),
-    });
-    if (!response.ok) throw new Error(`NEAR RPC returned HTTP ${response.status}.`);
-
-    const payload: unknown = await response.json();
-    if (!isRecord(payload)) throw new Error("NEAR RPC returned an invalid JSON-RPC response.");
-    if ("error" in payload) throw new Error(`NEAR RPC query failed: ${describeError(payload.error)}`);
-    if (!isRecord(payload.result)) throw new Error("NEAR RPC response is missing its result.");
-    if (typeof payload.result.error === "string") {
-      throw new Error(`NEAR view method ${methodName} failed: ${payload.result.error}`);
+    const result = await requestNearJsonRpc(this.options.rpcUrl, "query", {
+      request_type: "call_function",
+      finality: "final",
+      account_id: contractId,
+      method_name: methodName,
+      args_base64: encodeBase64(new TextEncoder().encode(JSON.stringify(args))),
+    }, this.fetchImplementation);
+    if (!isRecord(result)) throw new Error("NEAR RPC response is missing its result.");
+    if (typeof result.error === "string") {
+      throw new Error(`NEAR view method ${methodName} failed: ${result.error}`);
     }
-    if (!Array.isArray(payload.result.result)
-      || !payload.result.result.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
+    if (!Array.isArray(result.result)
+      || !result.result.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) {
       throw new Error("NEAR RPC view result is not a byte array.");
     }
 
-    const json = new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(payload.result.result));
+    const json = new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(result.result));
     return JSON.parse(json) as T;
   }
 
@@ -590,6 +577,82 @@ export class NearJsonRpcTransport implements LcpTransport {
     }
     return this.options.sendTransaction<T>({ contractId, methodName, args, ...options });
   }
+}
+
+/** Send one JSON-RPC request across ordered, same-network endpoints. */
+export async function requestNearJsonRpc(
+  rpcUrls: string | readonly string[],
+  method: string,
+  params: unknown,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<unknown> {
+  const urls = [...new Set((typeof rpcUrls === "string" ? [rpcUrls] : rpcUrls).map((url) => url.trim()).filter(Boolean))];
+  if (urls.length === 0) throw new Error("At least one NEAR RPC URL must be configured.");
+
+  const failures: string[] = [];
+  for (const rpcUrl of urls) {
+    let response: Response;
+    try {
+      response = await fetchImplementation(rpcUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "lcp-sdk", method, params }),
+        signal: AbortSignal.timeout(8_000),
+      });
+    } catch {
+      failures.push(`${rpcHost(rpcUrl)} unreachable or timed out`);
+      continue;
+    }
+
+    if (!response.ok) {
+      await response.body?.cancel();
+      if ([401, 403, 408, 429].includes(response.status) || response.status >= 500) {
+        failures.push(`${rpcHost(rpcUrl)} returned HTTP ${response.status}`);
+        continue;
+      }
+      throw new Error(`NEAR RPC returned HTTP ${response.status}.`);
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      failures.push(`${rpcHost(rpcUrl)} returned invalid JSON`);
+      continue;
+    }
+    if (!isRecord(payload)) {
+      failures.push(`${rpcHost(rpcUrl)} returned an invalid JSON-RPC response`);
+      continue;
+    }
+    if ("error" in payload) {
+      if (isTransientRpcError(payload.error)) {
+        failures.push(`${rpcHost(rpcUrl)} is temporarily unavailable`);
+        continue;
+      }
+      throw new Error(`NEAR RPC ${method} failed: ${describeError(payload.error)}`);
+    }
+    if (!("result" in payload)) {
+      failures.push(`${rpcHost(rpcUrl)} response is missing its result`);
+      continue;
+    }
+    return payload.result;
+  }
+
+  throw new Error(`NEAR RPC request failed across configured providers (${failures.join("; ")}).`);
+}
+
+function rpcHost(rpcUrl: string): string {
+  try {
+    return new URL(rpcUrl).host;
+  } catch {
+    return "configured endpoint";
+  }
+}
+
+function isTransientRpcError(error: unknown): boolean {
+  if (!isRecord(error)) return false;
+  const message = typeof error.message === "string" ? error.message : "";
+  return /rate.?limit|too many requests|temporar|timed? ?out|unavailable|overload|capacity|server error|internal error/i.test(message);
 }
 
 /** Thin typed wrapper. Wallet connection and NEAR transaction signing stay in the transport. */

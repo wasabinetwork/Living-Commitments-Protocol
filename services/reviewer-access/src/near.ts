@@ -15,29 +15,60 @@ export class NearUnavailableError extends NearReadError {
 }
 
 async function rpc(env: Env, method: string, params: unknown): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(env.NEAR_RPC_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: "lcp-reviewer-access", method, params }),
-      signal: AbortSignal.timeout(8_000),
-    });
-  } catch {
-    throw new NearUnavailableError("Finalized NEAR state is unavailable.");
+  const urls = [...new Set([
+    env.NEAR_RPC_URL,
+    ...(env.NEAR_RPC_FALLBACK_URLS ?? "").split(","),
+  ].map((url) => url.trim()).filter(Boolean))];
+  const failures: string[] = [];
+  for (const url of urls) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "lcp-reviewer-access", method, params }),
+        signal: AbortSignal.timeout(8_000),
+      });
+    } catch {
+      failures.push("provider unreachable or timed out");
+      continue;
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      if ([401, 403, 408, 429].includes(response.status) || response.status >= 500) {
+        failures.push(`provider returned HTTP ${response.status}`);
+        continue;
+      }
+      throw new NearUnavailableError("Finalized NEAR state is unavailable.");
+    }
+
+    let payload: { result?: unknown; error?: unknown };
+    try {
+      payload = await response.json() as { result?: unknown; error?: unknown };
+    } catch {
+      failures.push("provider returned invalid JSON");
+      continue;
+    }
+    if (payload.error) {
+      if (isTransientRpcError(payload.error)) {
+        failures.push("provider is temporarily unavailable");
+        continue;
+      }
+      throw new NearUnavailableError("Finalized NEAR state is unavailable.");
+    }
+    if (payload.result === undefined) {
+      failures.push("provider response is missing its result");
+      continue;
+    }
+    return payload.result;
   }
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new NearUnavailableError("Finalized NEAR state is unavailable.");
-  }
-  let payload: { result?: unknown; error?: unknown };
-  try {
-    payload = await response.json() as { result?: unknown; error?: unknown };
-  } catch {
-    throw new NearUnavailableError("Finalized NEAR state is unavailable.");
-  }
-  if (payload.error || payload.result === undefined) throw new NearUnavailableError("Finalized NEAR state is unavailable.");
-  return payload.result;
+  throw new NearUnavailableError(`Finalized NEAR state is unavailable (${failures.length} providers failed).`);
+}
+
+function isTransientRpcError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("message" in error)) return false;
+  const message = typeof error.message === "string" ? error.message : "";
+  return /rate.?limit|too many requests|temporar|timed? ?out|unavailable|overload|capacity|server error|internal error/i.test(message);
 }
 
 export async function finalizedTimeNs(env: Env): Promise<bigint> {
