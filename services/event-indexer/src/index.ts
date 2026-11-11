@@ -6,13 +6,17 @@ const MAX_PAGE_SIZE = 100;
 const MAX_RESPONSE_BYTES_FALLBACK = 16 * 1024 * 1024;
 const MAX_BLOCKS_PER_RUN_FALLBACK = 20;
 const SOURCE_REQUEST_INTERVAL_MS_FALLBACK = 1_000;
+const BLOCK_FETCH_CONCURRENCY = 4;
 
 type IndexerErrorCode = "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "INVALID_BLOCK" | "CHAIN_DISCONTINUITY" | "INVALID_CONFIGURATION" | "DATABASE_ERROR";
 
 class IndexerError extends Error {
-  constructor(readonly code: IndexerErrorCode, message: string) {
+  readonly code: IndexerErrorCode;
+
+  constructor(code: IndexerErrorCode, message: string) {
     super(message);
     this.name = "IndexerError";
+    this.code = code;
   }
 }
 
@@ -235,6 +239,74 @@ function parseBlock(value: unknown, expectedHeight: number, contractId: string):
   return { height, hash, previousHash, events };
 }
 
+export async function readNextCanonicalBlocks(
+  requestBlockAtHeight: (height: number) => Promise<unknown>,
+  startHeight: number,
+  finalizedHeadHeight: number,
+  maxHeightSlots: number,
+  lastBlockHash: string | null,
+  contractId: string,
+  batchSize = BLOCK_FETCH_CONCURRENCY,
+): Promise<{ blocks: ReturnType<typeof parseBlock>[]; heightSlotCount: number }> {
+  const lastCandidateHeight = Math.min(finalizedHeadHeight, startHeight + maxHeightSlots - 1);
+  let cursorHeight = startHeight;
+  let previousHash = lastBlockHash;
+  const blocks: ReturnType<typeof parseBlock>[] = [];
+
+  while (cursorHeight <= lastCandidateHeight) {
+    const batchEndHeight = Math.min(lastCandidateHeight, cursorHeight + batchSize - 1);
+    const heights = Array.from({ length: batchEndHeight - cursorHeight + 1 }, (_, index) => cursorHeight + index);
+    const values = await Promise.all(heights.map((height) => requestBlockAtHeight(height)));
+
+    for (let index = 0; index < heights.length; index += 1) {
+      const height = heights[index];
+      const value = values[index];
+      if (value === null) {
+        if (!previousHash) {
+          throw new IndexerError("INVALID_BLOCK", `Cannot skip missing block ${height} without a previous block hash.`);
+        }
+        continue;
+      }
+
+      const block = parseBlock(value, height, contractId);
+      if (previousHash && block.previousHash !== previousHash) {
+        throw new IndexerError("CHAIN_DISCONTINUITY", `Block ${height} does not extend the last indexed block.`);
+      }
+      blocks.push(block);
+      previousHash = block.hash;
+    }
+    cursorHeight = batchEndHeight + 1;
+  }
+
+  return {
+    blocks,
+    heightSlotCount: Math.max(0, lastCandidateHeight - startHeight + 1),
+  };
+}
+
+export function createRequestPacer(intervalMs: number): () => Promise<void> {
+  let scheduledRequest = Promise.resolve();
+  let lastStartedAt = 0;
+  return () => {
+    const nextScheduledRequest = scheduledRequest.then(async () => {
+      const waitMs = intervalMs - (Date.now() - lastStartedAt);
+      if (lastStartedAt > 0 && waitMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+      }
+      lastStartedAt = Date.now();
+    });
+    scheduledRequest = nextScheduledRequest.catch(() => undefined);
+    return nextScheduledRequest;
+  };
+}
+
+export function addFastNearApiKey(url: string, apiKey: string | undefined): string {
+  if (!apiKey) return url;
+  const authenticatedUrl = new URL(url);
+  authenticatedUrl.searchParams.set("apiKey", apiKey);
+  return authenticatedUrl.toString();
+}
+
 async function getState(env: Env): Promise<IndexerStateRow | null> {
   return env.DB.prepare(
     `SELECT next_block_height, last_processed_height, last_block_hash,
@@ -334,21 +406,14 @@ async function releaseScheduledLease(env: Env, token: string): Promise<void> {
   ).bind(env.NETWORK, env.CONTRACT_ID, token).run();
 }
 
-async function runIndexer(env: Env): Promise<{ processedBlocks: number; indexedEvents: number; headHeight: number }> {
+async function runIndexer(env: Env): Promise<{ processedBlocks: number; skippedHeightCount: number; indexedEvents: number; headHeight: number }> {
   const { startHeight, maxBlocks, maxBlockBytes, sourceRequestIntervalMs } = validateConfig(env);
   const sourceBase = env.SOURCE_BASE_URL.replace(/\/$/, "");
-  let lastSourceRequestAt = 0;
+  const fastNearApiKey = (env as Env & { FASTNEAR_API_KEY?: string }).FASTNEAR_API_KEY?.trim();
+  const waitForSourceSlot = createRequestPacer(sourceRequestIntervalMs);
   const requestBlock = async (url: string, maxBytes: number): Promise<unknown> => {
-    const waitMs = sourceRequestIntervalMs - (Date.now() - lastSourceRequestAt);
-    if (lastSourceRequestAt > 0 && waitMs > 0) {
-      await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
-    }
-    lastSourceRequestAt = Date.now();
-    try {
-      return await fetchBlock(url, maxBytes);
-    } finally {
-      lastSourceRequestAt = Date.now();
-    }
+    await waitForSourceSlot();
+    return fetchBlock(addFastNearApiKey(url, fastNearApiKey), maxBytes);
   };
   const stateTableReady = await env.DB.prepare(
     `INSERT OR IGNORE INTO indexer_state (
@@ -368,31 +433,46 @@ async function runIndexer(env: Env): Promise<{ processedBlocks: number; indexedE
   if (!state) throw new IndexerError("INVALID_CONFIGURATION", "Indexer state is unavailable after initialization.");
 
   let processedBlocks = 0;
+  let processedHeightSlots = 0;
+  let skippedHeightCount = 0;
   let indexedEvents = 0;
-  while (state.next_block_height <= headHeight && processedBlocks < maxBlocks) {
-    const height: number = state.next_block_height;
-    const blockValue = await requestBlock(`${sourceBase}/v0/block/${height}`, maxBlockBytes);
-    const parsed = parseBlock(blockValue, height, env.CONTRACT_ID);
-    if (state.last_block_hash && parsed.previousHash !== state.last_block_hash) {
-      throw new IndexerError("CHAIN_DISCONTINUITY", `Block ${height} does not extend the last indexed block.`);
+  let scanNextHeight = state.next_block_height;
+  while (scanNextHeight <= headHeight && processedHeightSlots < maxBlocks) {
+    const height: number = scanNextHeight;
+    const heightBudget = Math.min(BLOCK_FETCH_CONCURRENCY, maxBlocks - processedHeightSlots);
+    const next = await readNextCanonicalBlocks(
+      (candidateHeight) => requestBlock(`${sourceBase}/v0/block/${candidateHeight}`, maxBlockBytes),
+      height,
+      headHeight,
+      heightBudget,
+      state.last_block_hash,
+      env.CONTRACT_ID,
+    );
+    if (next.heightSlotCount === 0) break;
+    processedHeightSlots += next.heightSlotCount;
+    scanNextHeight += next.heightSlotCount;
+    if (next.blocks.length === 0) continue;
+    for (const parsed of next.blocks) {
+      if (parsed.events.length > 900) {
+        throw new IndexerError("INVALID_BLOCK", `Block ${parsed.height} contains more events than one atomic D1 batch can safely write.`);
+      }
+      const skippedBeforeBlock = parsed.height - state.next_block_height;
+      await persistBlock(env, parsed);
+      indexedEvents += parsed.events.length;
+      processedBlocks += 1;
+      skippedHeightCount += skippedBeforeBlock;
+      state = {
+        ...state,
+        next_block_height: parsed.height + 1,
+        last_processed_height: parsed.height,
+        last_block_hash: parsed.hash,
+        last_indexed_at: new Date().toISOString(),
+        last_error_code: null,
+      };
     }
-    if (parsed.events.length > 900) {
-      throw new IndexerError("INVALID_BLOCK", `Block ${height} contains more events than one atomic D1 batch can safely write.`);
-    }
-    await persistBlock(env, parsed);
-    indexedEvents += parsed.events.length;
-    processedBlocks += 1;
-    state = {
-      ...state,
-      next_block_height: height + 1,
-      last_processed_height: height,
-      last_block_hash: parsed.hash,
-      last_indexed_at: new Date().toISOString(),
-      last_error_code: null,
-    };
   }
 
-  return { processedBlocks, indexedEvents, headHeight };
+  return { processedBlocks, skippedHeightCount, indexedEvents, headHeight };
 }
 
 function parsePageSize(rawValue: string | null): number | null {

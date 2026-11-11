@@ -33,7 +33,7 @@
     "CONTRACT_ID": "livingcommitmentsprotocol.testnet",
     "SOURCE_BASE_URL": "https://testnet.neardata.xyz",
     "START_BLOCK_HEIGHT": "276808247",
-    "MAX_BLOCKS_PER_RUN": "20",
+    "MAX_BLOCKS_PER_RUN": "40",
     "MAX_BLOCK_BYTES": "16777216",
     "SOURCE_REQUEST_INTERVAL_MS": "1000",
     "ALLOWED_ORIGINS": "http://localhost:3000,https://preview.lcp-preview.pages.dev,https://lcp.gama.works"

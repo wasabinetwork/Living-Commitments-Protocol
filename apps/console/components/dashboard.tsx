@@ -2179,6 +2179,9 @@ function ServiceAvailabilityEvidenceCard({
   const [runningBrowserProbe, setRunningBrowserProbe] = useState(false);
   const [pendingBrowserProbePayload, setPendingBrowserProbePayload] = useState<SignedProbeReport["payload"] | null>(null);
   const [pendingSignedProbeReport, setPendingSignedProbeReport] = useState<SignedProbeReport | null>(null);
+  const [lastSubmittedTransactionReport, setLastSubmittedTransactionReport] = useState<ServiceProbeReport | null>(null);
+  const [replayTestEnabled, setReplayTestEnabled] = useState(false);
+  const [replayTestMessage, setReplayTestMessage] = useState<string | null>(null);
   const [browserProbeMessage, setBrowserProbeMessage] = useState<string | null>(null);
   const [copiedReports, setCopiedReports] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -2209,6 +2212,13 @@ function ServiceAvailabilityEvidenceCard({
   useEffect(() => {
     if (formError) errorNoticeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [formError]);
+
+  useEffect(() => {
+    const hostname = window.location.hostname;
+    const previewOrLocal = hostname === "localhost" || hostname === "127.0.0.1"
+      || hostname === "lcp-preview.pages.dev" || hostname.endsWith(".lcp-preview.pages.dev");
+    setReplayTestEnabled(previewOrLocal && new URLSearchParams(window.location.search).get("lcpReplayTest") === "1");
+  }, []);
 
   async function handleReportFilesChange(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
@@ -2248,6 +2258,8 @@ function ServiceAvailabilityEvidenceCard({
     if (!serviceAvailabilityPolicy) return;
     setFormError(null);
     setBrowserProbeMessage(null);
+    setLastSubmittedTransactionReport(null);
+    setReplayTestMessage(null);
     setPendingBrowserProbePayload(null);
     setRunningBrowserProbe(true);
     try {
@@ -2400,11 +2412,23 @@ function ServiceAvailabilityEvidenceCard({
 
   async function submitTransactionAuthenticatedReport() {
     if (!pendingBrowserProbePayload) return;
-    const submitted = await onSubmitReport({ payload: pendingBrowserProbePayload });
+    const report: ServiceProbeReport = { payload: pendingBrowserProbePayload };
+    const submitted = await onSubmitReport(report);
     if (submitted) {
+      setLastSubmittedTransactionReport(report);
+      setReplayTestMessage(null);
       setPendingBrowserProbePayload(null);
       setBrowserProbeMessage(`Report from ${pendingBrowserProbePayload.source_id} is in the NEAR inbox. The operator account was authenticated by the transaction; no separate signature or file handoff was needed.`);
     }
+  }
+
+  async function repeatTransactionAuthenticatedReport() {
+    if (!lastSubmittedTransactionReport) return;
+    setReplayTestMessage(null);
+    const accepted = await onSubmitReport(lastSubmittedTransactionReport);
+    setReplayTestMessage(accepted
+      ? "Unexpected result: the identical report transaction succeeded. Check the inbox and report this replay-test failure."
+      : "The identical report was rejected. Confirm the failed wallet transaction reports that the exact report is already staged.");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -2548,8 +2572,8 @@ function ServiceAvailabilityEvidenceCard({
           ? "Operators participate independently. Open this commitment on your own device, connect the listed account, enter the authorized endpoint and private salt, then submit. Your NEAR transaction authorizes and records the report in one wallet approval."
           : "Connect a wallet listed as an operator in this policy. This browser-only check is limited to the same HTTPS origin as the Console, sends no credentials, follows no redirects, and reads no response body. Sign with NEP-413, then submit directly to the NEAR inbox."}</p>
         <div className="form-grid">
-          <FormField label="Authorized health endpoint" wide><input type="url" value={browserProbeUrl} onChange={(event) => { setBrowserProbeUrl(event.target.value); setPendingBrowserProbePayload(null); setPendingSignedProbeReport(null); }} placeholder="https://your-console.example/health" autoComplete="url" /></FormField>
-          <FormField label="Private target salt · 64 lowercase hex" wide><input className="mono-input" value={browserProbeSaltHex} onChange={(event) => { setBrowserProbeSaltHex(event.target.value); setPendingBrowserProbePayload(null); setPendingSignedProbeReport(null); }} placeholder="Same 32-byte salt used for the pinned fingerprint" autoComplete="off" /></FormField>
+          <FormField label="Authorized health endpoint" wide><input type="url" value={browserProbeUrl} onChange={(event) => { setBrowserProbeUrl(event.target.value); setPendingBrowserProbePayload(null); setPendingSignedProbeReport(null); setLastSubmittedTransactionReport(null); setReplayTestMessage(null); }} placeholder="https://your-console.example/health" autoComplete="url" /></FormField>
+          <FormField label="Private target salt · 64 lowercase hex" wide><input className="mono-input" value={browserProbeSaltHex} onChange={(event) => { setBrowserProbeSaltHex(event.target.value); setPendingBrowserProbePayload(null); setPendingSignedProbeReport(null); setLastSubmittedTransactionReport(null); setReplayTestMessage(null); }} placeholder="Same 32-byte salt used for the pinned fingerprint" autoComplete="off" /></FormField>
         </div>
         {browserProbeMessage && <p className="form-success-message" role="status" aria-live="polite">{browserProbeMessage}</p>}
         <div className="operator-probe-actions">
@@ -2559,12 +2583,21 @@ function ServiceAvailabilityEvidenceCard({
           {pendingBrowserProbePayload && (transactionAuthenticated
             ? <button className="lookup-button" type="button" onClick={() => void submitTransactionAuthenticatedReport()} disabled={runningBrowserProbe || busy || blocked || !data.serviceReportInboxAvailable}>{busy ? "Submitting from wallet…" : "Submit report with NEAR wallet"}</button>
             : <button className="lookup-button" type="button" onClick={() => void signBrowserProbe()} disabled={runningBrowserProbe || busy || blocked}>{runningBrowserProbe ? "Confirming in wallet…" : "Sign report with NEAR wallet"}</button>)}
+          {transactionAuthenticated && replayTestEnabled && lastSubmittedTransactionReport && !blocked && (
+            <button className="challenge-expire-button" type="button" onClick={() => void repeatTransactionAuthenticatedReport()} disabled={busy || !data.serviceReportInboxAvailable}>
+              Repeat identical report · test replay rejection
+            </button>
+          )}
           {pendingSignedProbeReport && !transactionAuthenticated && <button className="lookup-button" type="button" onClick={() => void submitSignedReportToInbox()} disabled={busy || blocked || !data.serviceReportInboxAvailable}>{busy ? "Submitting report…" : "Submit signed report to NEAR"}</button>}
           {!transactionAuthenticated && reportsJson && <button className="browser-button" type="button" onClick={() => void navigator.clipboard.writeText(reportsJson).then(() => setCopiedReports(true)).catch(() => setFormError("Clipboard access failed. Copy the report JSON from Advanced report input."))}>{copiedReports ? "Reports copied" : "Copy report JSON to share"}</button>}
         </div>
         {!connectedServiceSource
           ? <small>Open this commitment on each operator’s own device and connect the NEAR account listed for that source.</small>
           : <small>Connected operator: {accountId}. {transactionAuthenticated ? "The account will authorize the report by submitting its NEAR transaction." : "The report is signed with that wallet’s existing key."}</small>}
+        {transactionAuthenticated && replayTestEnabled && lastSubmittedTransactionReport && !blocked && (
+          <small>Replay test enabled: repeat this exact report before the sponsor requests evaluation. Expected contract rejection: “this exact signed report is already staged.”</small>
+        )}
+        {transactionAuthenticated && replayTestEnabled && replayTestMessage && <p className="form-wallet-hint" role="status" aria-live="polite">{replayTestMessage}</p>}
       </details>
       {commitment.pending_evaluation_id && (
         <div className="pending-evaluation">

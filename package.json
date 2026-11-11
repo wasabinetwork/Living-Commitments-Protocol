@@ -13,7 +13,7 @@
     "dev:indexer": "npm run dev --workspace=@lcp/event-indexer",
     "dev:reviewer-access": "npm run dev --workspace=@lcp/reviewer-access",
     "build:indexer": "npm run check --workspace=@lcp/event-indexer",
-    "test": "npm run test --workspace=@lcp/sdk && npm run test --workspace=@lcp/reviewer-access && node --test evaluators/service-availability/test/probe.test.mjs",
+    "test": "npm run test --workspace=@lcp/sdk && npm run test --workspace=@lcp/event-indexer && npm run test --workspace=@lcp/reviewer-access && node --test evaluators/service-availability/test/probe.test.mjs",
     "build": "npm run build --workspace=@lcp/console"
   }
 }

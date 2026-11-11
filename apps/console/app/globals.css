@@ -741,11 +741,11 @@ a { color: inherit; text-decoration: none; }
 
 @media (max-width: 620px) {
   .app-shell { padding: 0 20px; }
-  .topbar { height: 70px; }
+  .topbar { height: auto; min-height: 70px; gap: 10px; padding: 10px 0; flex-wrap: wrap; }
   .brand-mark { width: 29px; height: 29px; }
   .brand-name { font-size: 14px; }
   .brand-name span { font-size: 14px; }
-  .topbar-right { gap: 8px; }
+  .topbar-right { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .theme-toggle { min-width: 36px; justify-content: center; padding: 0 9px; }
   .theme-toggle-label { display: none; }
   .network-chip { padding: 8px; font-size: 14px; }
@@ -755,7 +755,7 @@ a { color: inherit; text-decoration: none; }
   .wallet-icon { font-size: 14px; }
   .intro { display: block; min-height: unset; position: relative; }
   .intro-copy { padding: 53px 0 40px; }
-  .intro h1 { font-size: 56px; }
+  .intro h1 { font-size: clamp(42px, 14vw, 56px); }
   .intro-description { max-width: 390px; font-size: 16px; }
   .intro-art { position: absolute; width: 175px; right: -47px; bottom: -17px; opacity: .2; pointer-events: none; }
   .art-label { display: none; }
@@ -829,6 +829,14 @@ a { color: inherit; text-decoration: none; }
   .authority-grant-id-input { max-width: 100%; }
 }
 
+@media (max-width: 360px) {
+  .app-shell { padding: 0 16px; }
+  .topbar { align-items: flex-start; }
+  .topbar-right { max-width: 100%; }
+  .health-title-row { align-items: flex-start; flex-wrap: wrap; }
+  .health-title-row h3 { overflow-wrap: anywhere; }
+}
+
 @media (max-width: 420px) {
   .network-chip { display: none; }
 }
@@ -837,13 +845,15 @@ a { color: inherit; text-decoration: none; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 
-:root { --focus-ring: #176a3d; }
+:root { --focus-ring: #176a3d; --muted: #5f6c61; }
 :root[data-theme="dark"] { --focus-ring: #b5d1a9; }
-body { min-width: 320px; font-size: 16px; line-height: 1.5; }
+body { min-width: 320px; font-size: 16px; line-height: 1.6; }
 .app-shell :where(p, li, small, time, code) { overflow-wrap: anywhere; }
-.app-shell small { color: var(--ink-soft); font-size: max(14px, 0.875rem); line-height: 1.5; }
+.app-shell :where(p:not(.eyebrow), li) { font-size: max(16px, 1rem); line-height: 1.6; }
+.app-shell small { color: var(--ink-soft); font-size: max(15px, 0.9375rem); line-height: 1.55; }
+.app-shell .card-heading h3 { font-size: clamp(22px, 1.6vw, 24px); line-height: 1.2; }
 .app-shell :where(.eyebrow, .heading-index, .read-source, .lookup-label, .lookup-hint, .browser-toolbar p, .browser-panel-heading span, .browser-empty, .commitment-list-id, .commitment-list-status, .commitment-list-escrow, .creation-intro p, .creation-intro span, .creation-section-heading > span, .creation-submit-row p, .operations-funding-copy, .draft-intro, .setup-help, .evidence-intro, .empty-copy, .form-wallet-hint, .policy-template-note, .service-policy-details > .eyebrow, .service-policy-builder-heading > span, .service-policy-builder-heading p, .service-policy-sources-heading p, .service-policy-privacy-note, .timeline-explainer, .timeline-content p, .timeline-content time, .reviewer-access-intro, .reviewer-security-note) { color: var(--ink-soft); }
-.app-shell :is(button, input, select, textarea) { min-height: 44px; font-size: max(14px, 0.875rem); }
+.app-shell :is(button, input, select, textarea) { min-height: 44px; font-size: max(16px, 1rem); }
 .app-shell :is(button, input, select, textarea, summary, a, [tabindex]):focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 .app-shell summary { min-height: 44px; }
 .app-shell textarea { line-height: 1.5; }
