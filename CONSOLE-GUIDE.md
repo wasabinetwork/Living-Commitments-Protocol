@@ -61,7 +61,7 @@ For the adapter, deploy an instance with the LCP contract, fixed resource recipi
 
 ### Dedicated governance testnet accounts
 
-Use separate Firefox wallet sessions for each role; never sign for one role from another role's wallet. These accounts were checked against finalized testnet state on 2026-11-11 17:16 UTC and each had `0 NEAR`, so fund them from the official testnet faucet before creating fixtures or signing transactions.
+Use separate Firefox wallet sessions for each role; never sign for one role from another role's wallet. After the owner funded them, finalized testnet reads on 2026-11-11 showed 5 NEAR in each account (block `277257669`; recipient read at block `277257668`). Recheck balances before creating fixtures or signing transactions.
 
 | Test role | NEAR account | Use |
 | --- | --- | --- |

@@ -4349,7 +4349,7 @@ function healthDescription(health?: string, eligibility?: ClaimEligibilityView |
 }
 
 function shortenAccount(accountId: string): string {
-  return accountId.length > 22 ? `${accountId.slice(0, 9)}…${accountId.slice(-8)}` : accountId;
+  return accountId.length > 16 ? `${accountId.slice(0, 6)}…${accountId.slice(-8)}` : accountId;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

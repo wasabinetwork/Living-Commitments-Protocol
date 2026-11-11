@@ -4,6 +4,12 @@ This separate Cloudflare Worker provides signed, consent-based access to encrypt
 
 The browser encrypts a selected artifact with a fresh AES-256-GCM key and wraps that key to the requesting reviewer’s X25519 key using HPKE. The maintainer signs a grant bound to the exact request, artifact digest, reviewer key fingerprint, scope, and expiry. The Worker cannot decrypt the file or wrapped content key. D1 retains the reviewer request and maintainer approval/rejection NEP-413 signature envelopes for consent audit; API list responses do not expose those signatures. A reviewer must sign a one-time download request; the maintainer can reject a request or revoke a grant. Revocation blocks later downloads but cannot erase a copy already received.
 
+## Deployment status
+
+The testnet Worker is deployed at `https://lcp-reviewer-access.wasabinetwork.workers.dev`; its `/health` route returned HTTP 200 on 2026-11-11. It uses the dedicated `lcp-reviewer-access` D1 database and private `lcp-reviewer-private-artifacts` R2 bucket. The Console integration remains disabled pending independent security review. This test deployment does not authorize production use.
+
+For a new environment, create a dedicated private R2 bucket and D1 database, set their names and IDs in Wrangler configuration, and apply the migrations. Do not enable public R2 access. Keep reviewer storage separate from public evaluator artifacts and the event indexer.
+
 ## Local development
 
 The checked-in Wrangler config uses local D1/R2 emulation. Before deploying, create a dedicated private R2 bucket and D1 database, replace the placeholder database ID, and apply the migrations. Do not enable public R2 access. The reviewer-access bucket must remain separate from public evaluator artifacts and the event indexer.
@@ -19,7 +25,7 @@ npm run dev:reviewer-access
 
 Set `NEXT_PUBLIC_LCP_REVIEWER_ACCESS_URL` in the Console environment to the local Worker URL to enable the panel. The recipient string must match `ACCESS_RECIPIENT` in Wrangler configuration. Local request signatures use the same testnet contract and account state as the LCP Console. The Worker only accepts exact configured app origins and only returns ciphertext after a valid reviewer NEP-413 signature, unexpired grant, matching account, scope, and unused nonce.
 
-Before a remote deploy, create a dedicated private R2 bucket and D1 database, replace the placeholder database ID and bucket name, add the Console’s exact production origin, and apply all three migrations remotely. Do not enable public R2 access. The `*/15 * * * *` Worker trigger expires pending requests, deletes ciphertext for revoked or expired grants, and retries deletion of unlinked ciphertext left by an interrupted grant write. Active grant/request metadata is retained while access is valid; terminal grant and request metadata, including consent signatures, is deleted after 90 days from the later of closure and last access. Rejected/expired requests without grants are retained 90 days from resolution. Access-event rows are kept for 90 days; nonce and rate-limit rows are removed after their replay and throttle windows.
+Before deploying another environment, configure its exact Console origin and apply all three migrations remotely. Do not enable public R2 access. The `*/15 * * * *` Worker trigger expires pending requests, deletes ciphertext for revoked or expired grants, and retries deletion of unlinked ciphertext left by an interrupted grant write. Active grant/request metadata is retained while access is valid; terminal grant and request metadata, including consent signatures, is deleted after 90 days from the later of closure and last access. Rejected/expired requests without grants are retained 90 days from resolution. Access-event rows are kept for 90 days; nonce and rate-limit rows are removed after their replay and throttle windows.
 
 ## Data boundary
 

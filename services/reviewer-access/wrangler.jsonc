@@ -27,7 +27,7 @@
     {
       "binding": "DB",
       "database_name": "lcp-reviewer-access",
-      "database_id": "00000000-0000-4000-8000-000000000001",
+      "database_id": "db61970b-8e54-452c-bec3-07668e25828b",
       "migrations_dir": "migrations"
     }
   ],
