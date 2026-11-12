@@ -16,9 +16,50 @@ const themeBootstrap = `
   })();
 `;
 
+const siteDescription = "Create on-chain commitments on NEAR, attach verifiable evidence, and apply transparent policies to recurring support.";
+
 export const metadata: Metadata = {
-  title: "Living Commitments Protocol | Console",
-  description: "Create and inspect on-chain commitments, review evidence, and manage recurring budget eligibility.",
+  metadataBase: new URL("https://lcp.gama.works"),
+  title: "Living Commitments Protocol | NEAR",
+  description: siteDescription,
+  applicationName: "Living Commitments Protocol",
+  keywords: [
+    "Living Commitments Protocol",
+    "NEAR Protocol",
+    "on-chain commitments",
+    "verifiable evidence",
+    "recurring support",
+  ],
+  authors: [{ name: "WasabiNetwork", url: "https://x.com/WasabiNetwork" }],
+  creator: "WasabiNetwork",
+  publisher: "GAMA Works",
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "/",
+    siteName: "Living Commitments Protocol",
+    title: "Living Commitments Protocol | NEAR",
+    description: siteDescription,
+  },
+  twitter: {
+    card: "summary",
+    site: "@WasabiNetwork",
+    creator: "@WasabiNetwork",
+    title: "Living Commitments Protocol | NEAR",
+    description: siteDescription,
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

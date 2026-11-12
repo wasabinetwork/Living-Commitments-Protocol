@@ -467,11 +467,15 @@ a { color: inherit; text-decoration: none; }
 .empty-state > p:not(.eyebrow) { max-width: 410px; margin: 9px 0 0; color: #7b837a; font-size: 14px; line-height: 1.6; }
 .empty-state-foot { display: flex; align-items: center; gap: 7px; margin-top: 21px; color: #728074; font: 14px var(--mono); }
 .tiny-check { display: grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; background: #e1ecde; color: #517c57; font-size: 14px; }
-.footer { display: flex; align-items: center; justify-content: space-between; min-height: 72px; border-top: 1px solid var(--line); color: #838980; }
-.footer-brand { display: flex; align-items: center; gap: 7px; font: 14px var(--mono); letter-spacing: .05em; }
+.footer { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 14px 0 10px; border-top: 1px solid var(--line); color: var(--ink-soft); }
+.footer-topline { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.footer-brand { display: flex; align-items: center; gap: 7px; min-height: 44px; color: var(--ink); font: 14px var(--mono); letter-spacing: .05em; }
 .footer-brand > span:not(.brand-mark) { color: #b0b4aa; }
 .brand-mark-small { width: 20px; height: 20px; transform: scale(.65); margin-right: -4px; }
-.footer p { margin: 0; font-size: 14px; }
+.footer p { margin: 0; color: var(--ink-soft); font-size: 15px; line-height: 1.5; }
+.footer-links { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 16px; }
+.footer-links a { display: inline-flex; align-items: center; min-height: 44px; color: var(--ink-soft); font-size: 16px; font-weight: 500; text-underline-offset: 3px; }
+.footer-links a:hover { color: var(--ink); text-decoration: underline; }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -819,8 +823,9 @@ a { color: inherit; text-decoration: none; }
   .claim-button { flex-basis: 100%; }
   .setup-input-row { flex-wrap: wrap; }
   .setup-input-row input { width: 100%; min-height: 34px; }
-  .footer { align-items: flex-start; justify-content: center; flex-direction: column; gap: 8px; padding: 15px 0; }
-  .footer p { font-size: 14px; }
+  .footer { gap: 7px; padding: 15px 0; }
+  .footer-topline { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .footer-links { gap: 0 12px; }
   .reviewer-subheading, .reviewer-section-title { align-items: flex-start; flex-direction: column; }
   .reviewer-workflow-block .browser-button { width: 100%; }
   .reviewer-file-input { align-items: flex-start; flex-direction: column; }

@@ -1599,8 +1599,15 @@ export function Dashboard() {
       </section>
 
       <footer className="footer">
-        <a className="footer-brand" href="#top"><span className="brand-mark brand-mark-small"><span /></span>LCP <span>·</span> LIVING COMMITMENTS PROTOCOL</a>
-        <p>Health is time-derived. The contract is the authority.</p>
+        <div className="footer-topline">
+          <a className="footer-brand" href="#top"><span className="brand-mark brand-mark-small"><span /></span>LCP <span>·</span> LIVING COMMITMENTS PROTOCOL</a>
+          <p>Health is time-derived. The contract is the authority.</p>
+        </div>
+        <nav className="footer-links" aria-label="Project links">
+          <a href="https://gama.works/">Built by GAMA Works</a>
+          <a href="https://x.com/WasabiNetwork">Developed by @WasabiNetwork</a>
+          <a href="https://github.com/wasabinetwork/Living-Commitments-Protocol">GitHub</a>
+        </nav>
       </footer>
     </main>
   );
