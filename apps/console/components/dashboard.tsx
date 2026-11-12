@@ -86,6 +86,7 @@ interface CommitmentData {
   servicePolicyAmendment: ServicePolicyAmendmentView | null;
   latestAuthorityGrant: BoundedPayoutAuthorityGrantView | null;
   governanceMethodsAvailable: boolean;
+  amendmentRejectionSupported: boolean;
   chainTimeNs: string | null;
   chainTimeCapturedAtMs: number;
   evaluation: EvaluationRecordView | null;
@@ -285,10 +286,13 @@ export function Dashboard() {
       const amendmentViewPromise = policy?.version === 3
         ? client.getLatestServicePolicyAmendment(normalizedId).then((value) => ({ value, available: true }), () => ({ value: null, available: false }))
         : Promise.resolve({ value: null, available: true });
+      const amendmentRejectionSupportPromise = policy?.version === 3
+        ? client.supportsServicePolicyAmendmentRejection().catch(() => false)
+        : Promise.resolve(false);
       const authorityViewPromise = client.getLatestBoundedPayoutAuthorityGrant(normalizedId)
         .then((value) => ({ value, available: true }), () => ({ value: null, available: false }));
       const trancheEpoch = eligibility?.claimable_epoch ?? epoch;
-      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche, serviceAvailabilityPolicy, reportInboxState, serviceReportRefundBalance, amendmentView, authorityView] = await Promise.all([
+      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche, serviceAvailabilityPolicy, reportInboxState, serviceReportRefundBalance, amendmentView, amendmentRejectionSupported, authorityView] = await Promise.all([
         Promise.all(evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)))
           .then((records) => records.filter((record): record is EvaluationRecordView => record !== null)),
         Promise.all(evaluationIds.map((evaluationId) => client.getChallengeForEvaluation(normalizedId, evaluationId)))
@@ -309,6 +313,7 @@ export function Dashboard() {
           ? client.getServiceReportRefundBalance(accountId).catch(() => "0")
           : Promise.resolve("0"),
         amendmentViewPromise,
+        amendmentRejectionSupportPromise,
         authorityViewPromise,
       ]);
       const servicePolicyAmendment = amendmentView.value;
@@ -319,7 +324,7 @@ export function Dashboard() {
         allChallengeHistory.push(activeChallenge);
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
-      setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, serviceReportRefundBalance, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, serviceReportRefundBalance, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, amendmentRejectionSupported, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
       if (!keepCurrentData) setData(null);
@@ -1461,6 +1466,7 @@ export function Dashboard() {
                 amendment={data.servicePolicyAmendment}
                 chainTimeNs={data.chainTimeNs}
                 contractSupported={data.governanceMethodsAvailable}
+                rejectionSupported={data.amendmentRejectionSupported}
                 onRefresh={() => loadCommitment(data.commitment.id)}
                 onPropose={(policy, effectiveAtNs, expiresAtNs, nonceHex) => connectedWalletClient().proposeServicePolicyAmendment(
                   data.commitment.id,
@@ -1482,6 +1488,7 @@ export function Dashboard() {
                 )}
                 onExpire={(amendmentId) => connectedWalletClient().expireServicePolicyAmendment(data.commitment.id, amendmentId)}
                 onCancel={(amendmentId) => connectedWalletClient().cancelServicePolicyAmendment(data.commitment.id, amendmentId)}
+                onReject={(amendmentId) => connectedWalletClient().rejectServicePolicyAmendment(data.commitment.id, amendmentId)}
               />
             )}
             {data.policy && (

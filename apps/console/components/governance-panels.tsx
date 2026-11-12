@@ -24,12 +24,14 @@ interface AmendmentProps {
   amendment: ServicePolicyAmendmentView | null;
   chainTimeNs: string | null;
   contractSupported: boolean;
+  rejectionSupported: boolean;
   onRefresh: () => Promise<boolean>;
   onPropose: (policy: ServiceAvailabilityPolicyInput, effectiveAtNs: string, expiresAtNs: string, nonceHex: string) => Promise<string>;
   onApprove: (amendmentId: string) => Promise<boolean>;
   onActivate: (amendmentId: string) => Promise<void>;
   onExpire: (amendmentId: string) => Promise<void>;
   onCancel: (amendmentId: string) => Promise<void>;
+  onReject: (amendmentId: string) => Promise<void>;
 }
 
 export function ServicePolicyAmendmentCard(props: AmendmentProps) {
@@ -105,7 +107,7 @@ export function ServicePolicyAmendmentCard(props: AmendmentProps) {
         <div><p className="eyebrow">CONSENT-BASED GOVERNANCE</p><h3 id="amendment-title">Policy amendments</h3></div>
         <span className="card-index">05</span>
       </div>
-      <p className="governance-intro">A v3 source-policy amendment needs separate wallet approval from the sponsor, maintainer, beneficiary, and arbiter. The current policy stays active until the approved future boundary; activation starts a fresh evidence clock and requires new compliant evidence before claims resume.</p>
+      <p className="governance-intro">A v3 source-policy amendment needs separate wallet approval from the sponsor, maintainer, beneficiary, and arbiter. Any required approver can reject it while pending; rejection leaves the current policy active and frees the proposal slot. Activation at the approved future boundary starts a fresh evidence clock.</p>
       {!props.contractSupported && <p className="reviewer-notice reviewer-notice-error">The selected contract does not expose amendment methods yet. Deploy the updated LCP contract before using this control.</p>}
       {amendment && (
         <div className="governance-state">
@@ -118,12 +120,15 @@ export function ServicePolicyAmendmentCard(props: AmendmentProps) {
           {pending && (
             <div className="reviewer-inline-actions governance-actions">
               {isApprover && !alreadyApproved && <button type="button" className="browser-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onApprove(amendment.amendment_id); await props.onRefresh(); }, "Approval recorded on NEAR.")}>Approve with wallet</button>}
+              {isApprover && !isExpired && props.rejectionSupported && <button type="button" className="browser-text-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onReject(amendment.amendment_id); await props.onRefresh(); }, "Amendment rejected; the active policy is unchanged and a new proposal can be submitted.")}>Reject proposal</button>}
               {canActivate && <button type="button" className="browser-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onActivate(amendment.amendment_id); await props.onRefresh(); }, "The amended source policy is active.")}>Activate amendment</button>}
               {isExpired && <button type="button" className="browser-text-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onExpire(amendment.amendment_id); await props.onRefresh(); }, "Expired proposal recorded; the active policy was unchanged.")}>Record expiry</button>}
               {props.accountId === amendment.proposed_by && <button type="button" className="browser-text-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onCancel(amendment.amendment_id); await props.onRefresh(); }, "Amendment proposal cancelled; the active policy is unchanged.")}>Cancel proposal</button>}
-              {!isApprover && <small>Connect one of the listed affected accounts to approve.</small>}
+              {!isApprover && <small>Connect one of the listed affected accounts to approve or reject.</small>}
+              {isApprover && !isExpired && !props.rejectionSupported && <small>Update the LCP core to enable early rejection. Anyone can record expiry after the proposal deadline.</small>}
             </div>
           )}
+          {amendment.status === "rejected" && <small>A required approver rejected this proposal. The active policy is unchanged and the proposal slot is available.</small>}
         </div>
       )}
       <div className="governance-proposal-form">
@@ -133,7 +138,7 @@ export function ServicePolicyAmendmentCard(props: AmendmentProps) {
           <label>Proposal expiry · hours from now<input type="number" min="2" max="720" value={expiryHours} onChange={(event) => setExpiryHours(event.target.value)} /></label>
         </div>
         <button type="button" className="browser-button" disabled={busy || !props.contractSupported || !props.accountId || !isAffectedParty || !props.chainTimeNs || pending || props.commitment.lifecycle === "Closed" || Boolean(props.commitment.pending_evaluation_id || props.commitment.active_challenge_id)} onClick={() => void run(async () => { await propose(); await props.onRefresh(); }, "Amendment proposal recorded on NEAR. All affected parties must approve before activation.")}>Propose future amendment</button>
-        <small>Storage bond · 0.05 NEAR attached; the contract refunds any excess. A proposal expires without effect if required approvals are missing.</small>
+        <small>Storage bond · 0.05 NEAR attached; the contract refunds any excess. Any required approver may reject early; anyone may record expiry after the deadline.</small>
       </div>
       {error && <p className="reviewer-notice reviewer-notice-error" role="alert">{error}</p>}
       {message && <p className="reviewer-notice reviewer-notice-success" role="status">{message}</p>}

@@ -73,7 +73,7 @@ Each commitment has a policy version and digest.
 
 Version 1 is immutable after activation.
 
-A full amendment engine is deferred. The contract should preserve a version field so amendments can be introduced without changing the meaning of historical evaluations.
+A full amendment engine for all commitment terms is deferred. The P1 implementation supports v3 service-source-policy amendments only; budget, evaluator, and role terms remain immutable. Every required approver may approve or reject a pending proposal, and rejection leaves the active digest unchanged while releasing the proposal slot. Historical evaluations retain their original policy digest.
 
 ## 2.4 Deterministic time
 
@@ -1177,6 +1177,12 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | `challenge_evaluation` | Authorized party | Opens challenge |
 | `resolve_challenge` | Arbiter | Applies challenge decision |
 | `expire_challenge` | Anyone | Applies timeout fallback |
+| `propose_service_policy_amendment` | Affected party | Proposes a future v3 service-policy change with required approvals |
+| `approve_service_policy_amendment` | Required approver | Records approval; may activate when all conditions are met |
+| `reject_service_policy_amendment` | Required approver | Rejects a pending proposal and releases its slot without changing active policy |
+| `cancel_service_policy_amendment` | Proposer | Cancels a pending proposal |
+| `expire_service_policy_amendment` | Anyone after expiry | Records expiry and releases the proposal slot |
+| `activate_service_policy_amendment` | Anyone after approval/effective time | Activates the approved v3 service policy |
 | `claim_tranche` | Beneficiary | Initiates eligible payment |
 | `on_tranche_transfer` | Private callback | Reconciles transfer |
 | `close_commitment` | Creator, maintainer, arbiter, sponsor, or beneficiary | Closes after pending work settles; non-beneficiary callers cannot close over an eligible tranche. The beneficiary may close voluntarily and forfeit it. |
@@ -1194,6 +1200,7 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | `get_challenge` | Challenge status and optional exact completion timestamp |
 | `get_current_epoch` | Current budget epoch |
 | `can_claim_tranche` | Eligibility, blocking reason, current and claimable epochs, and whether a challenge-paused window resumed |
+| `supports_service_policy_amendment_rejection` | Whether the core supports required-approver rejection |
 | `get_escrow_status` | Funding and settlement accounting |
 
 ## 11.3 API conventions

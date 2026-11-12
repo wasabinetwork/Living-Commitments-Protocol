@@ -167,7 +167,7 @@ export function validateServiceAvailabilityPolicyInput(value: unknown): asserts 
   }
 }
 
-export type PolicyAmendmentStatus = "proposed" | "activated" | "expired" | "cancelled";
+export type PolicyAmendmentStatus = "proposed" | "activated" | "expired" | "cancelled" | "rejected";
 
 export interface ServicePolicyAmendmentView {
   schema: "lcp.service-policy-amendment.v1";
@@ -752,6 +752,10 @@ export class LcpClient {
     );
   }
 
+  supportsServicePolicyAmendmentRejection(): Promise<boolean> {
+    return this.transport.view<boolean>(this.contractId, "supports_service_policy_amendment_rejection", {});
+  }
+
   getBoundedPayoutAuthorityGrant(id: CommitmentId, grantId: string): Promise<BoundedPayoutAuthorityGrantView | null> {
     return this.transport.view<BoundedPayoutAuthorityGrantView | null>(
       this.contractId,
@@ -842,6 +846,13 @@ export class LcpClient {
 
   cancelServicePolicyAmendment(id: CommitmentId, amendmentId: string): Promise<void> {
     return this.transport.call<void>(this.contractId, "cancel_service_policy_amendment", {
+      commitment_id: id,
+      amendment_id: amendmentId,
+    });
+  }
+
+  rejectServicePolicyAmendment(id: CommitmentId, amendmentId: string): Promise<void> {
+    return this.transport.call<void>(this.contractId, "reject_service_policy_amendment", {
       commitment_id: id,
       amendment_id: amendmentId,
     });

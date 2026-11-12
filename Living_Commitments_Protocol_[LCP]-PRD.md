@@ -678,7 +678,7 @@ Old evaluations cannot silently authorize actions under incompatible new rules.
 
 ## 10.3 Full amendment workflow
 
-A complete consent-based amendment engine is deferred to P1.
+A full amendment engine for all commitment terms remains outside the MVP. The P1 implementation supports amendments to v3 service source policies only; budget, evaluator, and role fields remain immutable.
 
 It will support:
 
@@ -688,6 +688,8 @@ It will support:
 * Activation at a defined boundary.
 * Preservation of prior policy versions.
 * Re-evaluation of rights affected by the amendment.
+
+Every affected party is a required approver. Any required approver may reject a pending proposal before it expires, including after previously approving it. Rejection leaves the active policy unchanged and releases the single pending-proposal slot; the proposer may also cancel, and anyone may record expiry after the deadline.
 
 No unilateral policy replacement is permitted in the MVP.
 

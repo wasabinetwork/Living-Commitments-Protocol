@@ -597,6 +597,37 @@ impl Contract {
         );
     }
 
+    pub fn reject_service_policy_amendment(&mut self, commitment_id: U64, amendment_id: String) {
+        let mut amendment = read_service_amendment(commitment_id.0, &amendment_id)
+            .unwrap_or_else(|| env::panic_str("service policy amendment not found"));
+        require!(
+            amendment.status == PolicyAmendmentStatus::Proposed,
+            "amendment is no longer pending"
+        );
+        let caller = env::predecessor_account_id();
+        require!(
+            amendment.required_approvers.contains(&caller),
+            "only a required approver may reject this amendment"
+        );
+        let now_ns = env::block_timestamp();
+        require!(
+            now_ns < amendment.expires_at_ns.0,
+            "amendment has expired; record expiry instead"
+        );
+        amendment.status = PolicyAmendmentStatus::Rejected;
+        write_service_amendment(&amendment);
+        emit_event(
+            "service_policy_amendment_rejected",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "amendment_id": amendment_id,
+                "rejected_by": caller,
+                "rejected_at_ns": now_ns.to_string(),
+                "approved_by": amendment.approved_by,
+            }),
+        );
+    }
+
     #[payable]
     pub fn create_bounded_payout_authority_grant(
         &mut self,
@@ -2876,6 +2907,10 @@ impl Contract {
     ) -> Option<ServicePolicyAmendmentView> {
         let amendment_id = read_latest_service_amendment_id(commitment_id.0)?;
         read_service_amendment(commitment_id.0, &amendment_id)
+    }
+
+    pub fn supports_service_policy_amendment_rejection(&self) -> bool {
+        true
     }
 
     pub fn get_bounded_payout_authority_grant(

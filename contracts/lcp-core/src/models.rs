@@ -354,6 +354,7 @@ pub enum PolicyAmendmentStatus {
     Activated,
     Expired,
     Cancelled,
+    Rejected,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
