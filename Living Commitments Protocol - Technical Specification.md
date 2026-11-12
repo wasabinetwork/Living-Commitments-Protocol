@@ -1216,6 +1216,7 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 - Return structured errors where practical.
 - Avoid unbounded collection reads.
 - Do not expose privileged callbacks as normal user actions.
+- Adapter `execute_authorized_action` implementations return JSON `true` only after the authorized action settles successfully and `false` only when it had no effect. LCP reserves the grant's nonce, epoch, and cumulative allowance while pending, then restores the previous values on call failure or `false`; adapters must reconcile any failed payout before returning `false`.
 
 ---
 
