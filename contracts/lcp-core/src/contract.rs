@@ -68,6 +68,9 @@ const MAX_SERVICE_REPORT_INBOX_TTL_NS: u64 = 15 * 60 * 1_000_000_000;
 const SERVICE_REPORT_REFUND_RESERVE_BYTES: u64 = 256;
 const SERVICE_REPORT_STORAGE_OVERHEAD_BYTES: u64 = 256;
 const AUTHORITY_ADAPTER_GAS_TGAS: u64 = 25;
+const AUTHORITY_ADAPTER_CALLBACK_GAS_TGAS: u64 = 20;
+/// Budget epochs are bounded to a small count, so the top bit can mark a pending adapter action.
+const AUTHORITY_PENDING_EPOCH_FLAG: u64 = 1 << 63;
 
 #[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -790,6 +793,14 @@ impl Contract {
             |reason| env::panic_str(&format!("authority action is not eligible: {reason}")),
         ));
         require!(
+            epoch < AUTHORITY_PENDING_EPOCH_FLAG,
+            "budget epoch exceeds authority action encoding"
+        );
+        require!(
+            !authority_action_is_pending(grant.last_authorized_epoch),
+            "a previous authority action is still settling"
+        );
+        require!(
             grant.last_authorized_epoch != epoch,
             "this authority grant already acted during the current epoch"
         );
@@ -810,12 +821,15 @@ impl Contract {
             "action exceeds the grant's cumulative payout limit"
         );
 
+        let previous_authorized_yocto = grant.authorized_yocto;
+        let previous_last_action_nonce = grant.last_action_nonce;
+        let previous_last_authorized_epoch = grant.last_authorized_epoch;
         grant.authorized_yocto = authorized_total;
         grant.last_action_nonce = action_nonce.0;
-        grant.last_authorized_epoch = epoch;
+        grant.last_authorized_epoch = epoch | AUTHORITY_PENDING_EPOCH_FLAG;
         write_authority_grant(commitment_id.0, &grant_id, &grant);
         emit_event(
-            "bounded_payout_authority_action",
+            "bounded_payout_authority_action_pending",
             json!({
                 "commitment_id": commitment_id.0.to_string(),
                 "grant_id": grant_id.clone(),
@@ -825,6 +839,7 @@ impl Contract {
                 "epoch": epoch.to_string(),
                 "amount_yocto": amount_yocto.0.to_string(),
                 "authorized_total_yocto": authorized_total.to_string(),
+                "status": "pending",
             }),
         );
         let adapter_args = near_sdk::serde_json::to_vec(&json!({
@@ -834,12 +849,91 @@ impl Contract {
             "amount_yocto": amount_yocto,
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize authority adapter request"));
-        Promise::new(grant.adapter_account).function_call(
-            "execute_authorized_action".to_string(),
-            adapter_args,
-            NearToken::from_yoctonear(0),
-            Gas::from_tgas(AUTHORITY_ADAPTER_GAS_TGAS),
-        )
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "commitment_id": commitment_id,
+            "grant_id": grant_id,
+            "action_nonce": action_nonce,
+            "epoch": U64(epoch),
+            "amount_yocto": amount_yocto,
+            "previous_authorized_yocto": U128(previous_authorized_yocto),
+            "previous_last_action_nonce": U64(previous_last_action_nonce),
+            "previous_last_authorized_epoch": U64(previous_last_authorized_epoch),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize authority adapter callback"));
+        Promise::new(grant.adapter_account)
+            .function_call(
+                "execute_authorized_action".to_string(),
+                adapter_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(AUTHORITY_ADAPTER_GAS_TGAS),
+            )
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_authority_grant_action_settled".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(AUTHORITY_ADAPTER_CALLBACK_GAS_TGAS),
+            ))
+    }
+
+    #[private]
+    pub fn on_authority_grant_action_settled(
+        &mut self,
+        commitment_id: U64,
+        grant_id: String,
+        action_nonce: U64,
+        epoch: U64,
+        amount_yocto: U128,
+        previous_authorized_yocto: U128,
+        previous_last_action_nonce: U64,
+        previous_last_authorized_epoch: U64,
+    ) -> bool {
+        let Some(mut grant) = read_authority_grant(commitment_id.0, &grant_id) else {
+            env::log_str("ignored authority callback for a missing grant");
+            return false;
+        };
+        let expected_authorized_yocto = previous_authorized_yocto
+            .0
+            .checked_add(amount_yocto.0)
+            .unwrap_or_else(|| env::panic_str("authority callback accounting overflow"));
+        if grant.last_action_nonce != action_nonce.0
+            || grant.last_authorized_epoch != (epoch.0 | AUTHORITY_PENDING_EPOCH_FLAG)
+            || grant.authorized_yocto != expected_authorized_yocto
+        {
+            env::log_str("ignored stale or mismatched authority action callback");
+            return false;
+        }
+        let succeeded = env::promise_results_count() == 1
+            && match env::promise_result_checked(0, 8) {
+                Ok(result) => near_sdk::serde_json::from_slice::<bool>(&result).unwrap_or(false),
+                Err(_) => false,
+            };
+
+        if succeeded {
+            grant.last_authorized_epoch = epoch.0;
+        } else {
+            grant.authorized_yocto = previous_authorized_yocto.0;
+            grant.last_action_nonce = previous_last_action_nonce.0;
+            grant.last_authorized_epoch = previous_last_authorized_epoch.0;
+        }
+        write_authority_grant(commitment_id.0, &grant_id, &grant);
+        emit_event(
+            if succeeded {
+                "bounded_payout_authority_action_settled"
+            } else {
+                "bounded_payout_authority_action_failed"
+            },
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "grant_id": grant_id,
+                "adapter_account": grant.adapter_account,
+                "action_nonce": action_nonce.0.to_string(),
+                "epoch": epoch.0.to_string(),
+                "amount_yocto": amount_yocto.0.to_string(),
+                "authorized_total_yocto": grant.authorized_yocto.to_string(),
+                "allowance_restored": !succeeded,
+            }),
+        );
+        succeeded
     }
 
     #[payable]
@@ -2932,8 +3026,10 @@ impl Contract {
             authorized_yocto: U128(grant.authorized_yocto),
             expires_at_ns: U64(grant.expires_at_ns),
             last_action_nonce: U64(grant.last_action_nonce),
-            last_authorized_epoch: (grant.last_authorized_epoch != u64::MAX)
-                .then_some(U64(grant.last_authorized_epoch)),
+            last_authorized_epoch: (grant.last_authorized_epoch != u64::MAX).then_some(U64(grant
+                .last_authorized_epoch
+                & !AUTHORITY_PENDING_EPOCH_FLAG)),
+            action_pending: authority_action_is_pending(grant.last_authorized_epoch),
             revoked: grant.revoked,
         })
     }
@@ -3666,6 +3762,10 @@ fn read_authority_grant(commitment_id: u64, grant_id: &str) -> Option<AuthorityG
     }
     let bytes = env::storage_read(&authority_grant_storage_key(commitment_id, grant_id))?;
     near_sdk::borsh::from_slice(&bytes).ok()
+}
+
+fn authority_action_is_pending(last_authorized_epoch: u64) -> bool {
+    last_authorized_epoch != u64::MAX && last_authorized_epoch & AUTHORITY_PENDING_EPOCH_FLAG != 0
 }
 
 fn write_service_policy(commitment_id: u64, policy: &ServiceAvailabilityPolicy) {

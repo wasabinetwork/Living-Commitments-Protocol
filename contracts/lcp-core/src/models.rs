@@ -392,6 +392,7 @@ pub struct BoundedPayoutAuthorityGrantView {
     pub expires_at_ns: U64,
     pub last_action_nonce: U64,
     pub last_authorized_epoch: Option<U64>,
+    pub action_pending: bool,
     pub revoked: bool,
 }
 

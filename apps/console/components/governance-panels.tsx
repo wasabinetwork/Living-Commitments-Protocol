@@ -417,15 +417,16 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
         {grant && (
           <>
             <div className="digest-row"><span>GRANT STATUS</span><code>{grant.revoked ? "revoked" : props.chainTimeNs && BigInt(props.chainTimeNs) >= BigInt(grant.expires_at_ns) ? "expired" : "active"}</code></div>
+            <div className="digest-row"><span>ACTION SETTLEMENT</span><code>{grant.action_pending ? "pending" : "settled"}</code></div>
             <div className="digest-row"><span>ADAPTER / RESOURCE</span><code>{grant.adapter_account} → {grant.resource_account}</code></div>
             <div className="digest-row"><span>AUTHORIZED / CAP</span><code>{formatNear(grant.authorized_yocto)} / {formatNear(grant.cumulative_limit_yocto)} NEAR</code></div>
             <div className="digest-row"><span>PER ACTION / EXPIRES</span><code>{formatNear(grant.per_action_limit_yocto)} NEAR · {formatNs(grant.expires_at_ns)}</code></div>
             <div className="reviewer-inline-actions governance-actions">
               <label className="governance-amount">Action amount · NEAR<input inputMode="decimal" value={actionAmount} onChange={(event) => setActionAmount(event.target.value)} /></label>
-              <button type="button" className="browser-button" disabled={busy || !canExecute} onClick={() => void run(executeGrant, "LCP authorized the bounded action; adapter settlement is asynchronous.")}>Authorize eligible epoch action</button>
+              <button type="button" className="browser-button" disabled={busy || !canExecute || grant.action_pending} onClick={() => void run(executeGrant, "Adapter action submitted. LCP restores its allowance, nonce, and epoch if the adapter call fails.")}>Authorize eligible epoch action</button>
               {props.accountId === grant.granting_account && !grant.revoked && <button type="button" className="browser-text-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onRevokeGrant(grant.grant_id); await props.onRefresh(); await loadGrant(grant.grant_id); }, "Authority grant revoked on NEAR.")}>Revoke grant</button>}
             </div>
-            <small>Actions require the same eligibility as a tranche claim, including a closed challenge window. {props.eligibility?.eligible ? `Epoch ${props.eligibility.claimable_epoch ?? props.eligibility.current_epoch ?? "—"} is eligible.` : props.eligibility?.reason ?? "Refresh finalized commitment state to determine eligibility."} The adapter also requires the grant creator to match its configured pool manager. It transfers only to its initialized recipient and can fail if its pool is empty.</small>
+            <small>Actions require the same eligibility as a tranche claim, including a closed challenge window. {props.eligibility?.eligible ? `Epoch ${props.eligibility.claimable_epoch ?? props.eligibility.current_epoch ?? "—"} is eligible.` : props.eligibility?.reason ?? "Refresh finalized commitment state to determine eligibility."} The adapter also requires the grant creator to match its configured pool manager. The LCP allowance, nonce, and epoch stay reserved while pending, then restore if the adapter call or payout transfer fails.</small>
             {!grantAdapterStatus
               ? <small>Refresh this grant's adapter pool status to confirm its configured manager.</small>
               : !grantManagerMatches && <small>This grant was created by a different account than the adapter pool manager, so its payout will be rejected.</small>}

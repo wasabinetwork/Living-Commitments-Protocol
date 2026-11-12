@@ -1185,6 +1185,10 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | `activate_service_policy_amendment` | Anyone after approval/effective time | Activates the approved v3 service policy |
 | `claim_tranche` | Beneficiary | Initiates eligible payment |
 | `on_tranche_transfer` | Private callback | Reconciles transfer |
+| `create_bounded_payout_authority_grant` | Sponsor or beneficiary | Grants a named adapter limited authority over its own pool and a fixed recipient |
+| `execute_authority_grant` | Grantor or named adapter | Reserves the nonce, epoch, and cumulative allowance while calling the adapter |
+| `on_authority_grant_action_settled` | Private callback | Keeps the allowance only on a `true` adapter result; restores its prior values on call failure or `false` |
+| `revoke_authority_grant` | Grantor | Revokes a bounded adapter grant |
 | `close_commitment` | Creator, maintainer, arbiter, sponsor, or beneficiary | Closes after pending work settles; non-beneficiary callers cannot close over an eligible tranche. The beneficiary may close voluntarily and forfeit it. |
 | `refund_remaining` | Sponsor | Refunds eligible residual escrow |
 
@@ -1202,6 +1206,7 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | `can_claim_tranche` | Eligibility, blocking reason, current and claimable epochs, and whether a challenge-paused window resumed |
 | `supports_service_policy_amendment_rejection` | Whether the core supports required-approver rejection |
 | `get_escrow_status` | Funding and settlement accounting |
+| `get_bounded_payout_authority_grant` | Grant settings, cumulative allowance, and pending settlement status |
 
 ## 11.3 API conventions
 

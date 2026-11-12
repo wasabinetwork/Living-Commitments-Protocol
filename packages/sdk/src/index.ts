@@ -200,6 +200,7 @@ export interface BoundedPayoutAuthorityGrantView {
   expires_at_ns: Nanoseconds;
   last_action_nonce: DecimalString;
   last_authorized_epoch: DecimalString | null;
+  action_pending: boolean;
   revoked: boolean;
 }
 
