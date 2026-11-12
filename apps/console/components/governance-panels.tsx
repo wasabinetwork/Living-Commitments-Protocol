@@ -199,8 +199,7 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
   const grantActive = Boolean(grant && props.chainTimeNs && !grant.revoked
     && BigInt(props.chainTimeNs) < BigInt(grant.expires_at_ns));
   const canExecute = Boolean(canTrigger && grantManagerMatches && props.contractSupported && props.eligibility?.eligible
-    && props.commitment.lifecycle === "Active" && grantActive
-    && props.commitment.effective_health === "Healthy");
+    && props.commitment.lifecycle === "Active" && grantActive);
 
   useEffect(() => {
     setGrant(props.latestGrant);
@@ -421,7 +420,7 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
               <button type="button" className="browser-button" disabled={busy || !canExecute} onClick={() => void run(executeGrant, "LCP authorized the bounded action; adapter settlement is asynchronous.")}>Authorize eligible epoch action</button>
               {props.accountId === grant.granting_account && !grant.revoked && <button type="button" className="browser-text-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onRevokeGrant(grant.grant_id); await props.onRefresh(); await loadGrant(grant.grant_id); }, "Authority grant revoked on NEAR.")}>Revoke grant</button>}
             </div>
-            <small>Actions require the same eligibility as a tranche claim, including a closed challenge window. {props.eligibility?.eligible ? "The current tranche is eligible." : props.eligibility?.reason ?? "Refresh finalized commitment state to determine eligibility."} The adapter also requires the grant creator to match its configured pool manager. It transfers only to its initialized recipient and can fail if its pool is empty.</small>
+            <small>Actions require the same eligibility as a tranche claim, including a closed challenge window. {props.eligibility?.eligible ? `Epoch ${props.eligibility.claimable_epoch ?? props.eligibility.current_epoch ?? "—"} is eligible.` : props.eligibility?.reason ?? "Refresh finalized commitment state to determine eligibility."} The adapter also requires the grant creator to match its configured pool manager. It transfers only to its initialized recipient and can fail if its pool is empty.</small>
             {!grantAdapterStatus
               ? <small>Refresh this grant's adapter pool status to confirm its configured manager.</small>
               : !grantManagerMatches && <small>This grant was created by a different account than the adapter pool manager, so its payout will be rejected.</small>}

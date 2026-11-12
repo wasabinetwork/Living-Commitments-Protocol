@@ -548,7 +548,11 @@ The arbiter cannot redirect escrow to an arbitrary address or rewrite unrelated 
 
 A challenge timeout must be finite.
 
-If the arbiter fails to respond, the fallback is conservative: no new tranche is authorized on the basis of the disputed evaluation. Funds follow the predefined expiry/refund rules.
+If the arbiter fails to respond, anyone may dismiss the challenge after its deadline. The accepted evaluation remains in force; timeout is not an adverse ruling. A claim window paused by the challenge resumes with its unused duration, but only for an epoch reserved when the challenge opened. Explicit invalidation removes the evidence and that reserved claim.
+
+New commitments must assign an arbiter distinct from the maintainer, sponsor, and beneficiary. Existing commitments retain their recorded roles; the Console warns about overlap, and the contract prevents an arbiter who is also the maintainer or sponsor from opening a challenge.
+
+The beneficiary may close a commitment. Other authorized parties cannot close while a tranche is eligible; the beneficiary must claim it or explicitly close and forfeit that tranche and all future support.
 
 ## 8.3 Recovery
 

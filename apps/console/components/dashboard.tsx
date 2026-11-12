@@ -287,6 +287,7 @@ export function Dashboard() {
         : Promise.resolve({ value: null, available: true });
       const authorityViewPromise = client.getLatestBoundedPayoutAuthorityGrant(normalizedId)
         .then((value) => ({ value, available: true }), () => ({ value: null, available: false }));
+      const trancheEpoch = eligibility?.claimable_epoch ?? epoch;
       const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche, serviceAvailabilityPolicy, reportInboxState, serviceReportRefundBalance, amendmentView, authorityView] = await Promise.all([
         Promise.all(evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)))
           .then((records) => records.filter((record): record is EvaluationRecordView => record !== null)),
@@ -298,7 +299,7 @@ export function Dashboard() {
         commitment.active_challenge_id
           ? client.getChallenge(commitment.active_challenge_id)
           : Promise.resolve(null),
-        epoch ? client.getTranche(normalizedId, epoch) : Promise.resolve(null),
+        trancheEpoch ? client.getTranche(normalizedId, trancheEpoch) : Promise.resolve(null),
         policy?.version === 3 ? client.getServiceAvailabilityPolicy(normalizedId) : Promise.resolve(null),
         policy?.version === 3
           ? client.getServiceReportInbox(normalizedId, commitment.next_evaluation_id)
@@ -846,6 +847,10 @@ export function Dashboard() {
         setError(`Only ${commitment.maintainer} or ${policy.budget.sponsor} can challenge an evaluation.`);
         return;
       }
+      if (accountId === commitment.arbiter) {
+        setError("The designated arbiter cannot challenge an evaluation. Assign an independent arbiter for future commitments.");
+        return;
+      }
       if (commitment.pending_evaluation_id || commitment.active_challenge_id || challenge) {
         setError("Resolve the pending evaluation or existing challenge before opening another challenge.");
         return;
@@ -909,7 +914,7 @@ export function Dashboard() {
         await client.expireChallenge(challenge!.id);
         const loaded = await loadCommitment(commitment.id);
         setActionMessage(loaded
-          ? `Challenge #${challenge!.id} timed out; its evidence no longer qualifies.`
+          ? `Challenge #${challenge!.id} timed out and was dismissed. Accepted evidence remains in force; any claim window paused by the challenge resumes.`
           : `Challenge #${challenge!.id} timed out. Reload commitment #${commitment.id} to verify its state.`);
       }
     } catch (cause) {
@@ -928,9 +933,10 @@ export function Dashboard() {
     }
     const { commitment, policy } = data;
     if (action === "close") {
-      const canClose = [commitment.creator, commitment.maintainer, commitment.arbiter, policy.budget.sponsor].includes(accountId);
+      const beneficiary = policy.budget.beneficiary;
+      const canClose = [commitment.creator, commitment.maintainer, commitment.arbiter, policy.budget.sponsor, beneficiary].includes(accountId);
       if (!canClose) {
-        setError("Only the creator, maintainer, arbiter, or sponsor can close this commitment.");
+        setError("Only the creator, maintainer, arbiter, sponsor, or beneficiary can close this commitment.");
         return;
       }
       if (commitment.lifecycle === "Closed") {
@@ -940,6 +946,14 @@ export function Dashboard() {
       if (commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(commitment.escrow_pending_yocto) > 0n) {
         setError("Resolve pending evaluations, challenges, and transfers before closing.");
         return;
+      }
+      if (data.eligibility?.eligible && accountId !== beneficiary) {
+        setError("The beneficiary must claim the currently eligible tranche before another participant can close this commitment.");
+        return;
+      }
+      if (data.eligibility?.eligible && accountId === beneficiary) {
+        const epoch = data.eligibility.claimable_epoch ?? data.eligibility.current_epoch ?? "unknown";
+        if (!window.confirm(`Close commitment #${commitment.id}? This permanently forfeits the ${formatNear(data.eligibility.amount_yocto)} NEAR tranche for epoch ${epoch}, plus future support.`)) return;
       }
     } else {
       if (commitment.lifecycle !== "Closed") {
@@ -1031,6 +1045,14 @@ export function Dashboard() {
   const retryingFailedPayout = failedTranche && claimAllowed;
   const correctBeneficiary = Boolean(accountId && data?.policy && accountId === data.policy.budget.beneficiary);
   const canSubmitClaim = Boolean(data && claimAllowed && correctBeneficiary && !claiming);
+  const claimableEpoch = data?.eligibility?.claimable_epoch ?? null;
+  const currentClaimEpoch = data?.eligibility?.current_epoch ?? null;
+  const claimWindowWasPaused = Boolean(
+    claimAllowed && (data?.eligibility?.claim_window_resumed === true
+      || (claimableEpoch !== null
+        && currentClaimEpoch !== null
+        && BigInt(claimableEpoch) < BigInt(currentClaimEpoch))),
+  );
   const lastGoodObservationNs = data?.commitment.last_good_observed_at_ns ?? null;
   const evidenceAgeNs = data?.chainTimeNs && lastGoodObservationNs
     ? BigInt(data.chainTimeNs) - BigInt(lastGoodObservationNs)
@@ -1290,6 +1312,12 @@ export function Dashboard() {
                 <Fact label="BENEFICIARY" value={data.policy?.budget.beneficiary ?? "Unknown"} mono />
                 <Fact label="POLICY VERSION" value={`v${data.commitment.policy_version}`} mono />
               </div>
+              {data.policy && [data.commitment.maintainer, data.policy.budget.sponsor, data.policy.budget.beneficiary].includes(data.commitment.arbiter) && (
+                <div className="notice notice-warning" role="note">
+                  <span className="notice-icon">!</span>
+                  This commitment predates arbiter separation and assigns {data.commitment.arbiter} another direct role. The arbiter cannot open a challenge on this commitment, but can still resolve one. New commitments require an independent arbiter.
+                </div>
+              )}
             </section>
 
             <HealthTimeline data={data} busy={loading} onRefresh={() => void loadCommitment(data.commitment.id)} />
@@ -1519,7 +1547,11 @@ export function Dashboard() {
                     <span className={`eligibility-mark ${claimAllowed ? "is-eligible" : "is-blocked"}`}>{claimAllowed ? "✓" : "×"}</span>
                     <div>
                       <strong>{retryingFailedPayout ? "Previous payout failed; retry is available" : failedTranche ? "Previous payout failed; this epoch is currently blocked" : claimAllowed ? "A tranche can be claimed" : "A tranche is blocked"}</strong>
-                      <span>{retryingFailedPayout ? "The failed transfer was released back to escrow. Retry when the beneficiary account can receive funds." : data.eligibility?.reason ?? "The contract has no current claim."}</span>
+                      <span>{retryingFailedPayout
+                        ? "The failed transfer was released back to escrow. Retry when the beneficiary account can receive funds."
+                        : claimWindowWasPaused
+                          ? `The claim window for epoch ${claimableEpoch} was paused while its challenge was unresolved. It resumes now.`
+                          : data.eligibility?.reason ?? "The contract has no current claim."}</span>
                     </div>
                   </div>
                   {data.eligibility?.eligible && (
@@ -1535,7 +1567,7 @@ export function Dashboard() {
                     </div>
                   )}
                 </div>
-                {data.tranche && <div className="tranche-line"><span>CURRENT EPOCH · {data.tranche.epoch}</span><strong>{data.tranche.status}</strong></div>}
+                {data.tranche && <div className="tranche-line"><span>{claimAllowed ? "CLAIMABLE EPOCH" : "CURRENT EPOCH"} · {data.tranche.epoch}</span><strong>{data.tranche.status}</strong></div>}
               </section>
 
               <section className="content-card integrity-card">
@@ -1600,7 +1632,7 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
   const actions: Array<{
     atNs: string;
     order: number;
-    kind: "policy-amended" | "evaluation" | "challenge-open" | "challenge-upheld" | "challenge-invalidated";
+    kind: "policy-amended" | "evaluation" | "challenge-open" | "challenge-upheld" | "challenge-timed-out" | "challenge-invalidated";
     record?: EvaluationRecordView;
     challenge?: ChallengeView;
     amendment?: ServicePolicyAmendmentView;
@@ -1620,7 +1652,11 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
     actions.push({
       atNs: challenge.completed_at_ns,
       order: 2,
-      kind: challenge.status === "Upheld" ? "challenge-upheld" : "challenge-invalidated",
+      kind: challenge.status === "Upheld"
+        ? "challenge-upheld"
+        : challenge.status === "TimedOut" && challenge.timeout_preserves_evidence
+          ? "challenge-timed-out"
+          : "challenge-invalidated",
       challenge,
     });
   }
@@ -1714,6 +1750,13 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
         atNs: action.atNs,
         source: "recorded",
       });
+    } else if (action.kind === "challenge-timed-out" && action.challenge) {
+      points.push({
+        label: "Challenge timed out · evidence retained",
+        detail: `The arbiter did not resolve challenge #${action.challenge.id} by the deadline. Evaluation #${action.challenge.evaluation_id} remains accepted, and any reserved claim window resumes.`,
+        atNs: action.atNs,
+        source: "recorded",
+      });
     } else if (action.kind === "challenge-invalidated" && action.challenge) {
       const before = stateIsKnown ? healthAt(atNs) : null;
       if (before === "Breached" && !temporal.recovery_allowed) breachLatched = true;
@@ -1725,7 +1768,7 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
       stateIsKnown = true;
       const after = healthAt(atNs);
       points.push({
-        label: `${after} · challenge ${action.challenge.status === "TimedOut" ? "timed out" : "invalidated"}`,
+        label: `${after} · challenge invalidated`,
         detail: `The challenge outcome invalidated evaluation #${action.challenge.evaluation_id} as qualifying evidence.`,
         atNs: action.atNs,
         source: "recorded",
@@ -2127,7 +2170,18 @@ function NextTrancheMetric({ data }: { data: CommitmentData }) {
   }, []);
 
   const eligibility = data.eligibility;
-  const reason = eligibility?.reason ?? (data.epoch ? `Current epoch ${data.epoch}` : "No active budget epoch");
+  const pausedEpoch = Boolean(
+    eligibility?.eligible
+      && (eligibility.claim_window_resumed === true
+        || (typeof eligibility.claimable_epoch === "string"
+          && typeof eligibility.current_epoch === "string"
+          && BigInt(eligibility.claimable_epoch) < BigInt(eligibility.current_epoch))),
+  );
+  const reason = eligibility?.eligible
+    ? pausedEpoch
+      ? `Epoch ${eligibility.claimable_epoch} claim window resumed after a challenge.`
+      : `Epoch ${eligibility.claimable_epoch ?? eligibility.current_epoch ?? data.epoch ?? "—"} is eligible now.`
+    : eligibility?.reason ?? (data.epoch ? `Current epoch ${data.epoch}` : "No active budget epoch");
   const activatedAtNs = data.commitment.activated_at_ns;
   const budget = data.policy?.budget;
   if (!activatedAtNs || !budget || BigInt(budget.epoch_ns) <= 0n || budget.max_epochs <= 0) {
@@ -2147,10 +2201,14 @@ function NextTrancheMetric({ data }: { data: CommitmentData }) {
   const chainNowNs = data.chainTimeNs
     ? BigInt(data.chainTimeNs) + BigInt(Math.max(0, clientNowMs === null ? 0 : clientNowMs - data.chainTimeCapturedAtMs)) * 1_000_000n
     : null;
-  const programEnded = eligibility?.reason === "the funded budget program has ended" || (chainNowNs !== null && chainNowNs >= programEndsAtNs);
+  const programEnded = !eligibility?.eligible && (eligibility?.reason === "the funded budget program has ended" || (chainNowNs !== null && chainNowNs >= programEndsAtNs));
   let milestone: string | null = null;
 
-  if (programEnded) {
+  if (eligibility?.eligible) {
+    milestone = pausedEpoch
+      ? `Previously earned epoch ${eligibility.claimable_epoch} · available now`
+      : `Claimable epoch ${eligibility.claimable_epoch ?? eligibility.current_epoch ?? "—"}`;
+  } else if (programEnded) {
     milestone = chainNowNs !== null && chainNowNs >= programEndsAtNs
       ? `Ended ${formatDate(programEndsAtNs.toString())} · ${formatCountdown((chainNowNs - programEndsAtNs).toString())} ago`
       : `Ended ${formatDate(programEndsAtNs.toString())} · refresh for elapsed time`;
@@ -3285,7 +3343,9 @@ function ChallengeControlsCard({
   const { commitment, policy, evaluation, challenge } = data;
   const [reason, setReason] = useState("");
   const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
-  const canChallenge = Boolean(accountId && (accountId === commitment.maintainer || accountId === policy?.budget.sponsor));
+  const canChallenge = Boolean(accountId
+    && accountId !== commitment.arbiter
+    && (accountId === commitment.maintainer || accountId === policy?.budget.sponsor));
   const canResolve = accountId === commitment.arbiter;
   const latestCompliant = Boolean(evaluation?.status === "Accepted" && evaluation.verdict === "Compliant" && evaluation.accepted_at_ns);
 
@@ -3313,18 +3373,23 @@ function ChallengeControlsCard({
             <button type="button" onClick={() => void onAction("invalidate")} disabled={busyAction !== null || !canResolve}>{busyAction === "invalidate" ? "Resolving…" : "Invalidate evidence"}</button>
             <button className="challenge-expire" type="button" onClick={() => void onAction("expire")} disabled={busyAction !== null}>{busyAction === "expire" ? "Expiring…" : "Expire after deadline"}</button>
           </div>
-          <small className="challenge-help">Upholding leaves the accepted observation intact. Invalidating or timing out removes it from health calculations.</small>
+          <small className="challenge-help">Upholding or timing out keeps accepted evidence. A timeout dismisses the challenge; its paused claim window resumes. Explicit invalidation removes the challenged evidence and any reserved claim window.</small>
         </>
       ) : challenge ? (
         <>
           <p className="challenge-intro">Evaluation #{challenge.evaluation_id} was already challenged. Its resolution is final and cannot be challenged again.</p>
           <div className="challenge-history"><span className={`status-pill status-${challenge.status.toLowerCase()}`}>{challenge.status}</span><span>Challenge #{challenge.id} · {formatDate(challenge.opened_at_ns)}</span></div>
           <div className="digest-row"><span>REASON HASH</span><code>{challenge.reason_hash}</code></div>
+          {challenge.status === "TimedOut" && (
+            <small className="challenge-help">{challenge.timeout_preserves_evidence
+              ? "The challenge was dismissed. Accepted evidence remains in force, and a reserved claim window resumes."
+              : "This challenge timed out under the earlier contract policy, which invalidated its evidence."}</small>
+          )}
         </>
       ) : (
         <>
           <p className="challenge-intro">The latest accepted evaluation is compliant. An authorized maintainer or sponsor can open one challenge during its policy window; the reason is stored as a hash.</p>
-          {!canChallenge && <p className="form-wallet-hint">Connect the maintainer or sponsor wallet to challenge this evaluation.</p>}
+          {!canChallenge && <p className="form-wallet-hint">Connect a maintainer or sponsor wallet that is not the designated arbiter. The arbiter resolves challenges but cannot open one.</p>}
           <form className="challenge-open-form" onSubmit={(event) => void handleOpen(event)}>
             <FormField label="Challenge reason · max 1024 UTF-8 bytes" wide><textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1024} rows={3} required placeholder="Describe the evidence concern; only its hash is stored on-chain." /></FormField>
             <div className="challenge-submit-row">
@@ -3350,7 +3415,8 @@ function ClosureControlsCard({
   onAction: (action: ClosureAction, storageDeposit?: string) => Promise<void>;
 }) {
   const { commitment, policy, escrow } = data;
-  const canClose = Boolean(accountId && [commitment.creator, commitment.maintainer, commitment.arbiter, policy?.budget.sponsor].includes(accountId));
+  const beneficiary = policy?.budget.beneficiary;
+  const canClose = Boolean(accountId && [commitment.creator, commitment.maintainer, commitment.arbiter, policy?.budget.sponsor, beneficiary].includes(accountId));
   const canRefund = accountId === policy?.budget.sponsor;
   const residualYocto = escrow?.free_yocto ?? "0";
   const hasResidual = BigInt(residualYocto) > 0n;
@@ -3358,6 +3424,10 @@ function ClosureControlsCard({
   const hasRefundPending = BigInt(pendingYocto) > 0n;
   const refundedYocto = escrow?.refunded_yocto ?? "0";
   const hasPending = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(commitment.escrow_pending_yocto) > 0n);
+  const eligibleEpoch = data.eligibility?.eligible ? data.eligibility.claimable_epoch ?? data.eligibility.current_epoch : null;
+  const beneficiaryHasClaimableTranche = Boolean(data.eligibility?.eligible && eligibleEpoch !== null);
+  const beneficiaryConnected = Boolean(accountId && beneficiary && accountId === beneficiary);
+  const blockedByClaimableTranche = beneficiaryHasClaimableTranche && !beneficiaryConnected;
 
   return (
     <section className="content-card closure-controls">
@@ -3386,9 +3456,17 @@ function ClosureControlsCard({
       ) : (
         <>
           <p className="closure-intro">Closing stops future evaluations and claims. After pending work settles, the sponsor can request the remaining escrow refund.</p>
+          {beneficiaryHasClaimableTranche && (
+            <div className="notice notice-warning" role="status">
+              <span className="notice-icon">!</span>
+              {beneficiaryConnected
+                ? `Closing now forfeits the eligible ${formatNear(data.eligibility!.amount_yocto)} NEAR tranche for epoch ${eligibleEpoch}, as well as all future support. Claim it first if you want to receive it.`
+                : `Epoch ${eligibleEpoch} has an eligible ${formatNear(data.eligibility!.amount_yocto)} NEAR tranche. The beneficiary must claim it before another participant can close.`}
+            </div>
+          )}
           {hasPending && <p className="form-wallet-hint">Resolve pending evaluations, challenges, and escrow transfers before closing.</p>}
-          {!canClose && <p className="form-wallet-hint">Connect the creator, maintainer, arbiter, or sponsor wallet to close this commitment.</p>}
-          <button className="close-commitment-button" type="button" onClick={() => void onAction("close")} disabled={!canClose || hasPending || busyAction !== null}>{busyAction === "close" ? "Closing commitment…" : "Close commitment"}</button>
+          {!canClose && <p className="form-wallet-hint">Connect the creator, maintainer, arbiter, sponsor, or beneficiary wallet to close this commitment.</p>}
+          <button className="close-commitment-button" type="button" onClick={() => void onAction("close")} disabled={!canClose || hasPending || blockedByClaimableTranche || busyAction !== null}>{busyAction === "close" ? "Closing commitment…" : beneficiaryHasClaimableTranche && beneficiaryConnected ? "Close and forfeit eligible tranche" : "Close commitment"}</button>
         </>
       )}
     </section>
@@ -3878,10 +3956,11 @@ function CreateCommitmentForm({
         </section>
       )}
       <div className="creation-section-heading"><span>01</span><div><h3>People and commitment</h3><small>Choose the accountable party, sponsor, reviewer, and beneficiary.</small></div></div>
+      <p className="form-wallet-hint">The arbiter must be a separate account from the maintainer, sponsor, and beneficiary. NEAR enforces this before creating the commitment.</p>
       <div className="form-grid">
         <FormField label="Commitment subject" wide><input maxLength={128} value={fields.subject} onChange={(event) => update("subject", event.target.value)} placeholder="e.g. Maintain the community API" required /></FormField>
         <FormField label="Maintainer account"><input value={account(fields.maintainer)} onChange={(event) => update("maintainer", event.target.value)} placeholder="maintainer.testnet" required /></FormField>
-        <FormField label="Arbiter account"><input value={account(fields.arbiter)} onChange={(event) => update("arbiter", event.target.value)} placeholder="arbiter.testnet" required /></FormField>
+        <FormField label="Independent arbiter account"><input value={fields.arbiter} onChange={(event) => update("arbiter", event.target.value)} placeholder="arbiter.testnet" autoComplete="username" required /></FormField>
         <FormField label="Sponsor account"><input value={account(fields.sponsor)} onChange={(event) => update("sponsor", event.target.value)} placeholder="sponsor.testnet" required /></FormField>
         <FormField label="Beneficiary account"><input value={account(fields.beneficiary)} onChange={(event) => update("beneficiary", event.target.value)} placeholder="beneficiary.testnet" required /></FormField>
       </div>
@@ -4053,16 +4132,22 @@ function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: s
   }
 
   const maintainer = fields.maintainer.trim() || connectedAccountId || "";
-  const arbiter = fields.arbiter.trim() || connectedAccountId || "";
+  const arbiter = fields.arbiter.trim();
   const sponsor = fields.sponsor.trim() || connectedAccountId || "";
   const beneficiary = fields.beneficiary.trim() || connectedAccountId || "";
-  if (![maintainer, arbiter, sponsor, beneficiary].every(Boolean)) {
+  if (!arbiter) {
+    throw new Error("Enter an independent arbiter account. It cannot be the maintainer, sponsor, or beneficiary.");
+  }
+  if (![maintainer, sponsor, beneficiary].every(Boolean)) {
     throw new Error("Connect a wallet or enter all commitment account IDs.");
   }
   for (const account of [maintainer, arbiter, sponsor, beneficiary]) {
     if (account.length < 2 || account.length > 64 || !/^(?:[a-z0-9]+(?:[-_.][a-z0-9]+)*|[a-f0-9]{64})$/.test(account)) {
       throw new Error(`Invalid NEAR account ID: ${account}`);
     }
+  }
+  if (arbiter === maintainer || arbiter === sponsor || arbiter === beneficiary) {
+    throw new Error("The arbiter must be a separate account from the maintainer, sponsor, and beneficiary.");
   }
 
   return {
@@ -4389,6 +4474,13 @@ function healthLabel(health?: string): string {
 }
 
 function healthDescription(health?: string, eligibility?: ClaimEligibilityView | null): string {
+  if (eligibility?.eligible
+    && (eligibility.claim_window_resumed === true
+      || (typeof eligibility.claimable_epoch === "string"
+        && typeof eligibility.current_epoch === "string"
+        && BigInt(eligibility.claimable_epoch) < BigInt(eligibility.current_epoch)))) {
+    return "A previously eligible tranche is available after its challenge-paused claim window resumed.";
+  }
   if (eligibility?.eligible) return "Current evidence satisfies the policy, and this epoch is eligible for its configured support.";
   switch (health) {
     case "Healthy": return "Current evidence satisfies the policy. The contract still checks the active epoch and challenge window before a claim.";

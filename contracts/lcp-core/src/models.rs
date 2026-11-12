@@ -169,6 +169,7 @@ pub struct ChallengeView {
     pub opened_at_ns: U64,
     pub resolution_deadline_ns: U64,
     pub completed_at_ns: Option<U64>,
+    pub timeout_preserves_evidence: bool,
     pub status: ChallengeStatus,
 }
 
@@ -183,6 +184,7 @@ impl From<&Challenge> for ChallengeView {
             opened_at_ns: U64(challenge.opened_at_ns),
             resolution_deadline_ns: U64(challenge.resolution_deadline_ns),
             completed_at_ns: None,
+            timeout_preserves_evidence: false,
             status: challenge.status,
         }
     }
@@ -789,6 +791,8 @@ pub struct ClaimEligibilityView {
     pub eligible: bool,
     pub reason: Option<String>,
     pub current_epoch: Option<U64>,
+    pub claimable_epoch: Option<U64>,
+    pub claim_window_resumed: bool,
     pub amount_yocto: U128,
 }
 

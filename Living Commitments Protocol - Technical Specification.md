@@ -99,9 +99,9 @@ The financial model is intentionally simple.
 
 ## 2.7 No automatic catch-up
 
-An unclaimed budget epoch expires when the next epoch begins.
+An unclaimed budget epoch expires when the next epoch begins, except for a single epoch whose potential claim window was reserved when a challenge opened.
 
-Recovery restores eligibility for the current or future epochs, not missed payments.
+Recovery restores eligibility for the current or future epochs, not missed payments. A reserved epoch is an explicit exception for a claim window interrupted by a challenge; it is not general catch-up eligibility.
 
 ---
 
@@ -500,7 +500,7 @@ pub struct Contract {
 }
 ```
 
-`ChallengeView` additionally exposes optional `completed_at_ns`. New challenges reserve a fixed-width timestamp slot in raw contract storage when opened and fill it when the arbiter resolves or timeout is applied. This keeps the persisted `Challenge` and top-level contract state layout unchanged. Views of challenges created before this timestamp was introduced return `null` rather than inventing an outcome time.
+`ChallengeView` additionally exposes optional `completed_at_ns` and `timeout_preserves_evidence`. New challenges reserve fixed-width timestamp and timeout-policy slots in raw contract storage when opened, without changing the persisted `Challenge` or top-level contract state layout. A separate optional epoch slot records the single claim opportunity that may resume after an upheld or timed-out challenge. Older challenges report no preservation marker; the Console keeps their historical timeout semantics rather than rewriting the past.
 
 ## 4.1 Storage requirements
 
@@ -995,9 +995,9 @@ The epoch is eligible only if:
 
 `current_epoch < max_epochs`
 
-Only the current epoch can be claimed.
+Only the current epoch can be claimed, except for a previously reserved epoch whose claim window was paused by an upheld or timed-out challenge.
 
-Earlier unclaimed epochs are not retroactively payable.
+Earlier unclaimed epochs are not retroactively payable. A challenge reserves an epoch only if the commitment is Active and Healthy, its accepted compliant evidence has a positive policy-valid claim interval, that epoch is unpaid, and escrow already covers its tranche. The normal claim window begins after both the challenge window and epoch start, and ends at the earlier of evidence expiry or epoch end. If the challenge resolves after that window begins, the remaining duration resumes after resolution. An invalidated challenge removes the reservation; a later substantive accepted evaluation supersedes it.
 
 ## 9.3 Claim authorization
 
@@ -1007,7 +1007,7 @@ A tranche claim is permitted only when:
 - Current effective health is Healthy.
 - No blocking challenge is open.
 - The governing compliant evaluation's challenge window has elapsed.
-- The epoch is within the funded program.
+- The current epoch is within the funded program, or the contract has a live reserved claim window for the epoch.
 - The epoch has not been paid or placed in pending settlement.
 - The commitment has sufficient unallocated escrow.
 - The intended beneficiary matches the immutable budget policy.
@@ -1126,6 +1126,8 @@ If upheld:
 - Preserve the evaluation.
 - Recompute current health before any later consequence.
 
+- Resume any claim window paused by the challenge, preserving only its unused duration.
+
 If invalidated:
 
 - Close the challenge.
@@ -1133,18 +1135,25 @@ If invalidated:
 - Enter AtRisk, using the resolution time as the negative-condition anchor.
 - Require fresh compliant evidence for recovery.
 
+- Remove any epoch claim reservation made when this challenge opened.
+
 ## 10.3 Timeout
 
 A challenge has a finite resolution deadline.
 
 If unresolved:
 
-- The challenged evaluation cannot authorize a new tranche.
 - The challenge is marked TimedOut.
-- The disputed evidence is treated as invalid for financial eligibility.
-- Remaining funds follow the predefined closure and refund policy.
+- The challenge is dismissed, not decided against either party.
+- The accepted evidence remains in force and its time-derived health continues to advance normally.
+- Resume any claim window reserved at challenge opening, preserving its unused duration after timeout is recorded.
+- A challenge opened before this behavior was deployed retains its prior outcome; the contract cannot reconstruct or restore an old cleared observation.
 
-## 10.4 Challenge-window boundary
+## 10.4 Arbiter independence
+
+New commitments require an arbiter distinct from the maintainer, sponsor, and beneficiary. This prevents an interested party from both challenging and adjudicating the evidence. Existing commitment roles are immutable, so the Console warns when an old commitment has overlap and the contract rejects a challenge sent by an account that is also its arbiter. That runtime guard cannot change who resolves an already-open challenge.
+
+## 10.5 Challenge-window boundary
 
 A claim cannot execute before the applicable challenge window ends.
 
@@ -1170,7 +1179,7 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | `expire_challenge` | Anyone | Applies timeout fallback |
 | `claim_tranche` | Beneficiary | Initiates eligible payment |
 | `on_tranche_transfer` | Private callback | Reconciles transfer |
-| `close_commitment` | Authorized participant | Closes eligible commitment |
+| `close_commitment` | Creator, maintainer, arbiter, sponsor, or beneficiary | Closes after pending work settles; non-beneficiary callers cannot close over an eligible tranche. The beneficiary may close voluntarily and forfeit it. |
 | `refund_remaining` | Sponsor | Refunds eligible residual escrow |
 
 ## 11.2 View methods
@@ -1184,7 +1193,7 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | `get_evaluation` | Specific evaluation |
 | `get_challenge` | Challenge status and optional exact completion timestamp |
 | `get_current_epoch` | Current budget epoch |
-| `can_claim_tranche` | Eligibility and blocking reason |
+| `can_claim_tranche` | Eligibility, blocking reason, current and claimable epochs, and whether a challenge-paused window resumed |
 | `get_escrow_status` | Funding and settlement accounting |
 
 ## 11.3 API conventions
@@ -1269,7 +1278,10 @@ It is a passing state-machine test suite.
 - Unauthorized arbiter rejected.
 - Uphold preserves valid evidence.
 - Invalidation removes financial eligibility.
-- Timeout blocks disputed evaluation.
+- Timeout dismisses the challenge, preserves accepted evidence, and resumes a reserved claim window.
+- Invalidation does not resume its reserved claim window.
+- New commitments reject an arbiter who is also maintainer, sponsor, or beneficiary.
+- Non-beneficiaries cannot close over an eligible tranche; the beneficiary can claim or explicitly forfeit it by closing.
 - Resolution does not authorize an expired evaluation.
 
 ## 12.5 Test execution layers
@@ -1415,7 +1427,7 @@ Implement:
 
 ## Milestone E — Recovery and challenge
 
-The source covers positive-evidence recovery, challenge opening/resolution, arbiter timeout, and invalidation of challenged evidence. Testnet confirms recovery from `Breached` to `Healthy`, challenge timeout, and live upheld and invalidated arbiter outcomes. Deterministic tests cover exact initial-evidence, freshness, grace, challenge-window, and timeout boundaries; commitment `21` also crossed its initial-evidence and grace boundaries at finalized NEAR times.
+The source covers positive-evidence recovery, challenge opening/resolution, arbiter timeout, and invalidation of challenged evidence. Earlier testnet runs exercised the prior timeout behavior, which invalidated evidence; the new dismissal and paused-window policy remains pending a core upgrade. Testnet also confirms recovery from `Breached` to `Healthy` and live upheld and invalidated arbiter outcomes. Deterministic test coverage includes exact initial-evidence, freshness, grace, challenge-window, and timeout boundaries; commitment `21` also crossed its initial-evidence and grace boundaries at finalized NEAR times.
 
 Implement:
 
@@ -1523,7 +1535,7 @@ The breached-claim rejection, healthy distinct-beneficiary payout/callback, clos
 
 **Task 010 — Complete breach and recovery validation — P0 ACCEPTANCE VERIFIED**
 
-Evidence expiry, breached-claim rejection, fresh-evidence recovery, challenge timeout, and upheld/invalidated arbiter outcomes were exercised on testnet. Exact local temporal boundaries have deterministic tests, and commitment `21` naturally transitioned to `AtRisk` and `Breached` at finalized timestamps. Additional playground observations are exploratory.
+Evidence expiry, breached-claim rejection, fresh-evidence recovery, the prior challenge-timeout behavior, and upheld/invalidated arbiter outcomes were exercised on testnet. The new timeout policy and closure safeguards require a testnet core upgrade and remain unverified. Exact local temporal boundaries have deterministic tests, and commitment `21` naturally transitioned to `AtRisk` and `Breached` at finalized timestamps. Additional playground observations are exploratory.
 
 **Task 011 — Improve commitment discovery — CONTRACT DEPLOYED; RPC AND BROWSER PAGINATION VERIFIED**
 

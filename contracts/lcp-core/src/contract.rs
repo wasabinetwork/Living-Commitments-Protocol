@@ -52,6 +52,7 @@ const MAX_REASON_CODE_BYTES: usize = 64;
 const OUTLAYER_REQUEST_GAS_TGAS: u64 = 100;
 const CALLBACK_GAS_TGAS: u64 = 20;
 const CHALLENGE_COMPLETION_STORAGE_PREFIX: &[u8] = b"lcp:challenge-completion:v1:";
+const CHALLENGE_RESERVED_EPOCH_STORAGE_PREFIX: &[u8] = b"lcp:challenge-reserved-epoch:v1:";
 const SERVICE_POLICY_STORAGE_PREFIX: &[u8] = b"lcp:service-policy:v3:";
 const SERVICE_SUMMARY_STORAGE_PREFIX: &[u8] = b"lcp:service-summary:v3:";
 const SERVICE_AMENDMENT_STORAGE_PREFIX: &[u8] = b"lcp:service-amendment:v1:";
@@ -2122,6 +2123,10 @@ impl Contract {
             "only the commitment maintainer or sponsor may challenge an evaluation"
         );
         require!(
+            caller != commitment.arbiter,
+            "the designated arbiter cannot challenge an evaluation"
+        );
+        require!(
             commitment.lifecycle == Lifecycle::Active,
             "only active commitments can be challenged"
         );
@@ -2192,6 +2197,8 @@ impl Contract {
             resolution_deadline_ns,
             status: ChallengeStatus::Open,
         };
+        let reserved_epoch =
+            self.challenge_claimable_epoch_at_open(&commitment, evaluation_id.0, now_ns);
         commitment.active_challenge_id = Some(challenge_id);
         commitment.challenge_count = commitment
             .challenge_count
@@ -2204,6 +2211,7 @@ impl Contract {
             .insert((commitment_id.0, evaluation_id.0), challenge_id);
         self.commitments.insert(commitment_id.0, commitment.clone());
         reserve_challenge_completion_timestamp(challenge_id);
+        reserve_challenge_epoch(challenge_id, reserved_epoch);
         self.challenges.flush();
         self.challenge_by_evaluation.flush();
         self.commitments.flush();
@@ -2586,7 +2594,8 @@ impl Contract {
             caller == commitment.creator
                 || caller == commitment.maintainer
                 || caller == commitment.arbiter
-                || caller == commitment.policy.budget.sponsor,
+                || caller == commitment.policy.budget.sponsor
+                || caller == commitment.policy.budget.beneficiary,
             "caller is not authorized to close this commitment"
         );
         require!(
@@ -2594,6 +2603,12 @@ impl Contract {
                 && commitment.active_challenge_id.is_none()
                 && commitment.pending_transfer_count == 0,
             "resolve pending evaluations, challenges, and transfers before closing"
+        );
+        let now_ns = env::block_timestamp();
+        require!(
+            !self.claim_eligibility(&commitment, now_ns).is_ok()
+                || caller == commitment.policy.budget.beneficiary,
+            "the beneficiary must claim or explicitly close a claimable tranche"
         );
         require!(
             commitment.lifecycle != Lifecycle::Closed,
@@ -2607,7 +2622,7 @@ impl Contract {
             json!({
                 "commitment_id": commitment_id.0.to_string(),
                 "closed_by": caller,
-                "closed_at_ns": env::block_timestamp().to_string(),
+                "closed_at_ns": now_ns.to_string(),
             }),
         );
     }
@@ -2722,10 +2737,22 @@ impl Contract {
         let commitment = self.commitments.get(&commitment_id.0)?;
         let now_ns = env::block_timestamp();
         let eligibility = self.claim_eligibility(commitment, now_ns);
+        let claimable_epoch = eligibility
+            .as_ref()
+            .ok()
+            .copied()
+            .map(|epoch| U64(u64::from(epoch)));
+        let claim_window_resumed = eligibility.as_ref().ok().copied().is_some_and(|epoch| {
+            self.preserved_claim_epoch(commitment, now_ns).is_some_and(
+                |(preserved_epoch, was_resumed)| preserved_epoch == epoch && was_resumed,
+            )
+        });
         Some(ClaimEligibilityView {
             eligible: eligibility.is_ok(),
             reason: eligibility.err().map(|reason| reason.to_string()),
             current_epoch: current_epoch_of(commitment, now_ns).map(U64),
+            claimable_epoch,
+            claim_window_resumed,
             amount_yocto: U128(commitment.policy.budget.tranche_yocto),
         })
     }
@@ -2907,6 +2934,12 @@ impl Contract {
                 && is_printable_ascii(&subject),
             "subject must be non-empty printable ASCII and at most 128 bytes"
         );
+        require!(
+            arbiter != maintainer
+                && arbiter != policy.budget.sponsor
+                && arbiter != policy.budget.beneficiary,
+            "arbiter must be distinct from the maintainer, sponsor, and beneficiary"
+        );
         let creator = env::predecessor_account_id();
         let id = self
             .next_commitment_id
@@ -2988,11 +3021,14 @@ impl Contract {
         if commitment.pending_evaluation_id.is_some() {
             return Err("a pending evaluation prevents tranche claims");
         }
-        if health_of(commitment, now_ns) != Health::Healthy {
-            return Err("commitment health must be Healthy to claim");
-        }
         if commitment.active_challenge_id.is_some() {
             return Err("a blocking challenge prevents claims");
+        }
+        if let Some((epoch, _)) = self.preserved_claim_epoch(commitment, now_ns) {
+            return Ok(epoch);
+        }
+        if health_of(commitment, now_ns) != Health::Healthy {
+            return Err("commitment health must be Healthy to claim");
         }
         let Some(observation) = commitment.last_good.as_ref() else {
             return Err("a compliant observation is required to claim");
@@ -3048,6 +3084,139 @@ impl Contract {
             return Err("insufficient unallocated commitment escrow");
         }
         Ok(epoch)
+    }
+
+    fn challenge_claimable_epoch_at_open(
+        &self,
+        commitment: &Commitment,
+        evaluation_id: u64,
+        now_ns: u64,
+    ) -> Option<u32> {
+        if commitment.lifecycle != Lifecycle::Active
+            || commitment.pending_evaluation_id.is_some()
+            || commitment.active_challenge_id.is_some()
+            || health_of(commitment, now_ns) != Health::Healthy
+        {
+            return None;
+        }
+        let observation = commitment.last_good.as_ref()?;
+        if observation.evaluation_id != evaluation_id {
+            return None;
+        }
+        let epoch = u32::try_from(current_epoch_of(commitment, now_ns)?).ok()?;
+        if epoch >= commitment.policy.budget.max_epochs
+            || self.tranche_is_paid_or_pending(commitment.id, epoch)
+            || self.escrow_available_for_tranche(commitment)?
+                < commitment.policy.budget.tranche_yocto
+        {
+            return None;
+        }
+        let record = self
+            .evaluation_records
+            .get(&(commitment.id, evaluation_id))?;
+        if record.status != EvaluationStatus::Accepted
+            || record.verdict != Some(Verdict::Compliant)
+            || record.evidence_hash != observation.evidence_hash
+            || record.policy_hash != commitment.policy_hash
+        {
+            return None;
+        }
+        let (claim_start_ns, claim_end_ns) = claim_window_for_epoch(commitment, record, epoch)?;
+        (now_ns < claim_end_ns && claim_start_ns < claim_end_ns).then_some(epoch)
+    }
+
+    fn preserved_claim_epoch(&self, commitment: &Commitment, now_ns: u64) -> Option<(u32, bool)> {
+        let escrow_free = self.escrow_available_for_tranche(commitment)?;
+        if escrow_free < commitment.policy.budget.tranche_yocto {
+            return None;
+        }
+
+        // Evaluations and challenges are each capped at 64, so this history scan is bounded.
+        for evaluation_id in 1..commitment.next_evaluation_id {
+            let Some(challenge_id) = self
+                .challenge_by_evaluation
+                .get(&(commitment.id, evaluation_id))
+                .copied()
+            else {
+                continue;
+            };
+            let Some(challenge) = self.challenges.get(&challenge_id) else {
+                continue;
+            };
+            if !matches!(
+                challenge.status,
+                ChallengeStatus::Upheld | ChallengeStatus::TimedOut
+            ) {
+                continue;
+            }
+            let Some(epoch) = read_challenge_reserved_epoch(challenge_id) else {
+                continue;
+            };
+            if self.tranche_is_paid_or_pending(commitment.id, epoch) {
+                continue;
+            }
+            let Some(record) = self.evaluation_records.get(&(commitment.id, evaluation_id)) else {
+                continue;
+            };
+            if record.status != EvaluationStatus::Accepted
+                || record.verdict != Some(Verdict::Compliant)
+                || record.policy_hash != commitment.policy_hash
+            {
+                continue;
+            }
+            // A later substantive accepted result supersedes this paused claim opportunity.
+            let superseded = (evaluation_id + 1..commitment.next_evaluation_id).any(|later_id| {
+                self.evaluation_records
+                    .get(&(commitment.id, later_id))
+                    .is_some_and(|later| {
+                        later.status == EvaluationStatus::Accepted
+                            && later.verdict != Some(Verdict::Inconclusive)
+                    })
+            });
+            if superseded {
+                continue;
+            }
+            let Some(completed_at_ns) = read_challenge_completion_timestamp(challenge_id) else {
+                // Pre-upgrade challenges have no exact completion time and receive no extension.
+                continue;
+            };
+            let Some((claim_start_ns, claim_end_ns)) =
+                claim_window_for_epoch(commitment, record, epoch)
+            else {
+                continue;
+            };
+            if claim_end_ns <= claim_start_ns {
+                continue;
+            }
+            let pause_started_at_ns = challenge.opened_at_ns.max(claim_start_ns);
+            let (eligible_from_ns, eligible_until_ns) = if completed_at_ns > pause_started_at_ns {
+                let paused_duration_ns = completed_at_ns - pause_started_at_ns;
+                let resumed_until_ns = claim_end_ns
+                    .checked_add(paused_duration_ns)
+                    .unwrap_or(u64::MAX);
+                (completed_at_ns, resumed_until_ns)
+            } else {
+                (claim_start_ns, claim_end_ns)
+            };
+            if now_ns >= eligible_from_ns && now_ns < eligible_until_ns {
+                return Some((epoch, completed_at_ns > pause_started_at_ns));
+            }
+        }
+        None
+    }
+
+    fn tranche_is_paid_or_pending(&self, commitment_id: CommitmentId, epoch: u32) -> bool {
+        self.tranches
+            .get(&(commitment_id, epoch))
+            .is_some_and(|tranche| tranche.status != TrancheStatus::Failed)
+    }
+
+    fn escrow_available_for_tranche(&self, commitment: &Commitment) -> Option<u128> {
+        commitment
+            .escrow_funded_yocto
+            .checked_sub(commitment.escrow_paid_yocto)
+            .and_then(|amount| amount.checked_sub(commitment.escrow_refunded_yocto))
+            .and_then(|amount| amount.checked_sub(commitment.escrow_pending_yocto))
     }
 
     fn finish_evaluation(
@@ -3154,8 +3323,9 @@ impl Contract {
         // New challenges reserve this fixed-size slot when opened. Older open challenges from
         // before this field existed have no slot, so leave those outcomes without an exact time.
         record_challenge_completion_timestamp(challenge.id, now_ns);
-        let invalidates_evidence =
-            status == ChallengeStatus::Invalidated || status == ChallengeStatus::TimedOut;
+        let timeout_policy_is_new = challenge_timeout_preserves_evidence(challenge.id);
+        let invalidates_evidence = status == ChallengeStatus::Invalidated
+            || (status == ChallengeStatus::TimedOut && !timeout_policy_is_new);
         if invalidates_evidence {
             if health_of(commitment, now_ns) == Health::Breached
                 && !commitment.policy.temporal.recovery_allowed
@@ -3195,6 +3365,8 @@ impl Contract {
                 "challenge_id": challenge.id.to_string(),
                 "evaluation_id": challenge.evaluation_id.to_string(),
                 "status": status,
+                "evidence_preserved": !invalidates_evidence,
+                "reserved_claim_epoch": read_challenge_reserved_epoch(challenge.id),
                 "completed_at_ns": now_ns.to_string(),
             }),
         );
@@ -3203,6 +3375,7 @@ impl Contract {
     fn challenge_view(&self, challenge: &Challenge) -> ChallengeView {
         let mut view = ChallengeView::from(challenge);
         view.completed_at_ns = read_challenge_completion_timestamp(challenge.id).map(U64);
+        view.timeout_preserves_evidence = challenge_timeout_preserves_evidence(challenge.id);
         view
     }
 }
@@ -3234,6 +3407,32 @@ fn read_challenge_completion_timestamp(challenge_id: u64) -> Option<u64> {
     let bytes: [u8; 8] = value.as_slice().try_into().ok()?;
     let timestamp = u64::from_le_bytes(bytes);
     (timestamp > 0).then_some(timestamp)
+}
+
+fn challenge_reserved_epoch_storage_key(challenge_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(CHALLENGE_RESERVED_EPOCH_STORAGE_PREFIX.len() + 8);
+    key.extend_from_slice(CHALLENGE_RESERVED_EPOCH_STORAGE_PREFIX);
+    key.extend_from_slice(&challenge_id.to_le_bytes());
+    key
+}
+
+fn reserve_challenge_epoch(challenge_id: u64, epoch: Option<u32>) {
+    let key = challenge_reserved_epoch_storage_key(challenge_id);
+    if !env::storage_has_key(&key) {
+        env::storage_write(&key, &epoch.unwrap_or(u32::MAX).to_le_bytes());
+    }
+}
+
+fn read_challenge_reserved_epoch(challenge_id: u64) -> Option<u32> {
+    let key = challenge_reserved_epoch_storage_key(challenge_id);
+    let value = env::storage_read(&key)?;
+    let bytes: [u8; 4] = value.as_slice().try_into().ok()?;
+    let epoch = u32::from_le_bytes(bytes);
+    (epoch != u32::MAX).then_some(epoch)
+}
+
+fn challenge_timeout_preserves_evidence(challenge_id: u64) -> bool {
+    env::storage_has_key(&challenge_reserved_epoch_storage_key(challenge_id))
 }
 
 fn service_policy_storage_key(commitment_id: u64) -> Vec<u8> {
@@ -4094,6 +4293,27 @@ fn current_epoch_of(commitment: &Commitment, now_ns: u64) -> Option<u64> {
     Some(elapsed_ns / commitment.policy.budget.epoch_ns)
 }
 
+fn claim_window_for_epoch(
+    commitment: &Commitment,
+    evaluation: &EvaluationRecord,
+    epoch: u32,
+) -> Option<(u64, u64)> {
+    let activated_at_ns = commitment.activated_at_ns?;
+    let epoch_start_ns = activated_at_ns
+        .checked_add(u64::from(epoch).checked_mul(commitment.policy.budget.epoch_ns)?)?;
+    let epoch_end_ns = epoch_start_ns.checked_add(commitment.policy.budget.epoch_ns)?;
+    let challenge_window_end_ns = evaluation
+        .accepted_at_ns?
+        .checked_add(commitment.policy.temporal.challenge_window_ns)?;
+    let evidence_expiry_ns = evaluation
+        .observed_at_ns
+        .checked_add(commitment.policy.temporal.evidence_ttl_ns)?;
+    Some((
+        challenge_window_end_ns.max(epoch_start_ns),
+        epoch_end_ns.min(evidence_expiry_ns),
+    ))
+}
+
 fn emit_event(event_name: &str, data: Value) {
     let event = json!({
         "standard": "lcp",
@@ -4408,7 +4628,7 @@ mod tests {
         let mut args = service_commitment_args();
         args.subject = "LCP Operator Inbox QA 2026-11-11".to_string();
         args.maintainer = "wasabinetwork.testnet".parse().unwrap();
-        args.arbiter = "wasabinetwork.testnet".parse().unwrap();
+        args.arbiter = "lcparbiter.testnet".parse().unwrap();
         args.policy.temporal.initial_window_ns = U64(1_800_000_000_000);
         args.policy.temporal.evidence_ttl_ns = U64(900_000_000_000);
         args.policy.temporal.grace_ns = U64(120_000_000_000);
@@ -4736,6 +4956,9 @@ mod tests {
 
     fn add_open_challenge(contract: &mut Contract) {
         let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        let opened_at_ns = 1_000_000_050;
+        let reserved_epoch =
+            contract.challenge_claimable_epoch_at_open(&commitment, EVALUATION_ID, opened_at_ns);
         commitment.active_challenge_id = Some(TRANSFER_ID);
         commitment.challenge_count = 1;
         contract.commitments.insert(CONTRACT_ID, commitment);
@@ -4747,12 +4970,13 @@ mod tests {
                 evaluation_id: EVALUATION_ID,
                 challenger: accounts(1),
                 reason_hash: [8; 32],
-                opened_at_ns: NOW_NS - 10,
+                opened_at_ns,
                 resolution_deadline_ns: NOW_NS + 1_000,
                 status: ChallengeStatus::Open,
             },
         );
         reserve_challenge_completion_timestamp(TRANSFER_ID);
+        reserve_challenge_epoch(TRANSFER_ID, reserved_epoch);
         contract.commitments.flush();
         contract.challenges.flush();
     }
@@ -5560,8 +5784,12 @@ mod tests {
         assert_eq!(challenge.completed_at_ns, Some(U64(resolution_deadline_ns)));
         let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
         assert_eq!(commitment.active_challenge_id, None);
-        assert!(commitment.last_good.is_none());
-        assert_eq!(commitment.negative_since_ns, Some(resolution_deadline_ns));
+        assert!(commitment.last_good.is_some());
+        assert_eq!(commitment.negative_since_ns, None);
+        assert_eq!(
+            contract.claim_eligibility(&commitment, resolution_deadline_ns),
+            Ok(EPOCH)
+        );
     }
 
     #[test]

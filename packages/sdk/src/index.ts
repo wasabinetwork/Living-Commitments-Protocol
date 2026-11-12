@@ -474,6 +474,7 @@ export interface ChallengeView {
   opened_at_ns: Nanoseconds;
   resolution_deadline_ns: Nanoseconds;
   completed_at_ns: Nanoseconds | null;
+  timeout_preserves_evidence: boolean;
   status: ChallengeStatus;
 }
 
@@ -489,6 +490,8 @@ export interface ClaimEligibilityView {
   eligible: boolean;
   reason: string | null;
   current_epoch: DecimalString | null;
+  claimable_epoch: DecimalString | null;
+  claim_window_resumed: boolean;
   amount_yocto: YoctoNear;
 }
 
