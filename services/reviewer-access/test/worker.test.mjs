@@ -10,6 +10,7 @@ const baseEnv = {
   NETWORK: "testnet",
   CONTRACT_ID: "livingcommitmentsprotocol.testnet",
   NEAR_RPC_URL: "https://rpc.example.test",
+  NEAR_RPC_FALLBACK_URLS: "https://rpc2.example.test,https://rpc3.example.test",
   APP_ORIGINS: allowedOrigin,
   ACCESS_RECIPIENT: "console.example.test/reviewer-access",
   API_RATE_LIMITER: { async limit() { return { success: true }; } },
