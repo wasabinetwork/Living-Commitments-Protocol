@@ -4,8 +4,8 @@ This guide covers deterministic Rust checks, reproducible WASM builds, and the t
 
 ## Requirements
 
-- Rust 1.94 and Cargo; add the WASM targets with `rustup target add wasm32-unknown-unknown wasm32-wasip2`.
-- Docker and `cargo-near` 0.23.0 for reproducible contract artifacts. The contract manifests pin the Sourcescan image by both version and digest; its build toolchain is Rust 1.99.1.
+- Rust 1.94 and Cargo for workspace development; add the WASM targets with `rustup target add wasm32-unknown-unknown wasm32-wasip2`.
+- Rust 1.95 or newer, Docker, and `cargo-near` 0.23.0 for reproducible contract artifacts. The contract manifests pin the Sourcescan image by both version and digest; its build toolchain is Rust 1.99.1.
 - Node.js 22 and npm, selected by the root `.nvmrc`.
 - A testnet wallet only for manual on-chain actions.
 
@@ -35,7 +35,8 @@ These direct `cargo build` commands are development checks. They do not establis
 Install the pinned Cargo NEAR CLI, ensure the workspace source is committed, and run these commands from the repository root:
 
 ```sh
-cargo install --locked --version 0.23.0 cargo-near
+rustup toolchain install 1.95.0 --profile minimal
+cargo +1.95.0 install --locked --version 0.23.0 cargo-near
 cargo near build reproducible-wasm --manifest-path contracts/lcp-core/Cargo.toml --out-dir target/reproducible/lcp-core
 cargo near build reproducible-wasm --manifest-path contracts/bounded-payout-adapter/Cargo.toml --out-dir target/reproducible/bounded-payout-adapter
 shasum -a 256 target/reproducible/lcp-core/lcp_core.wasm target/reproducible/bounded-payout-adapter/lcp_bounded_payout_adapter.wasm
@@ -43,7 +44,7 @@ shasum -a 256 target/reproducible/lcp-core/lcp_core.wasm target/reproducible/bou
 
 Each contract manifest records the repository URL, image version and immutable image digest, and locked container build command required by NEP-330. ABI generation is disabled because the existing contract API types do not implement `JsonSchema`; the reproducible build still compiles optimized WASM with `--locked`. The `--no-abi` build does not embed ABI or NEP-330 source metadata in the contract bytes, so release verification compares an independent rebuild's code hash with the deployed code hash. `cargo near build reproducible-wasm` builds committed Git source inside the pinned image; it ignores uncommitted edits and requires the checked-in `Cargo.lock`. The repository is public, so independent reproduction is possible. Publish the source commit and resulting WASM hashes alongside a mainnet release so independent reviewers can repeat the build.
 
-**Verified on 2026-11-12 from source commit `dff30851ddb1b6756ab1ce4500265b54bdbc9142`:** the LCP core WASM is 674,997 bytes with SHA-256 `0769c96ac9779b5c7c722da1f7ef370fcfeb3063d44d9afe444adc408377811a`; the bounded payout adapter WASM is 144,203 bytes with SHA-256 `c33dbf40b581d87653f98a04bfcd763d195c69130db248ecaa4a22d1fef9c594`.
+**Verified on 2026-11-12 from source commit `0d7073b00ddf49920104bea5bff4f9c69c1d4075`:** the LCP core reproducible WASM is 679,397 bytes with SHA-256 `99d7c8b599fb8587b8aa31d4e92415a5f78990f7b01a9193da25295c74238f64`, built with `cargo-near 0.23.0` in the manifest-pinned `sourcescan/cargo-near:0.23.0-rust-1.99.1` image (`sha256:8013f039e8005627f10ae66b5519d1a6eeeed7d7aef4b5067d5e9a86c4302fcc`). The previous verified build from `dff30851ddb1b6756ab1ce4500265b54bdbc9142` produced core WASM of 674,997 bytes (`0769c96ac9779b5c7c722da1f7ef370fcfeb3063d44d9afe444adc408377811a`) and bounded payout adapter WASM of 144,203 bytes (`c33dbf40b581d87653f98a04bfcd763d195c69130db248ecaa4a22d1fef9c594`).
 
 **Mainnet release gate:** LCP v1 uses immutable contract accounts. Only after independent audit, reproducible builds, deployment, initialization, and deployed-code verification, remove every access key from the LCP core and each value-holding adapter account. Query finalized `view_access_key_list` for each account and confirm that no keys remain. Do not use this procedure on the development testnet accounts. There is no v1 owner, migration, or emergency upgrade method; a later release uses a new account, while existing commitments continue on v1 without automatic migration. Record the deployed code hash, source commit, reproducible WASM SHA-256, and finalized key-list evidence in the release record.
 
