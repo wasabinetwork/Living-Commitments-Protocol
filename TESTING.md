@@ -36,12 +36,12 @@ Install the pinned Cargo NEAR CLI, ensure the workspace source is committed, and
 
 ```sh
 cargo install --locked --version 0.23.0 cargo-near
-cargo near build reproducible-wasm --manifest-path contracts/lcp-core/Cargo.toml
-cargo near build reproducible-wasm --manifest-path contracts/bounded-payout-adapter/Cargo.toml
-shasum -a 256 target/near/lcp_core.wasm target/near/lcp_bounded_payout_adapter.wasm
+cargo near build reproducible-wasm --manifest-path contracts/lcp-core/Cargo.toml --out-dir target/reproducible/lcp-core
+cargo near build reproducible-wasm --manifest-path contracts/bounded-payout-adapter/Cargo.toml --out-dir target/reproducible/bounded-payout-adapter
+shasum -a 256 target/reproducible/lcp-core/contract.wasm target/reproducible/bounded-payout-adapter/contract.wasm
 ```
 
-Each contract manifest records the repository URL, image version, and immutable image digest required by NEP-330. `cargo near build reproducible-wasm` builds the committed Git source inside that image; it ignores uncommitted edits and requires the checked-in `Cargo.lock`. Publish the source commit and resulting WASM hashes alongside a mainnet release so independent reviewers can repeat the build. The source repository is currently private, so independent public reproduction becomes possible when the repository is published.
+Each contract manifest records the repository URL, image version and immutable image digest, and locked container build command required by NEP-330. `cargo near build reproducible-wasm` builds the committed Git source inside that image; it ignores uncommitted edits and requires the checked-in `Cargo.lock`. Publish the source commit and resulting WASM hashes alongside a mainnet release so independent reviewers can repeat the build. The source repository is currently private, so independent public reproduction becomes possible when the repository is published.
 
 **Mainnet release gate:** LCP v1 uses immutable contract accounts. Only after independent audit, reproducible builds, deployment, initialization, and deployed-code verification, remove every access key from the LCP core and each value-holding adapter account. Query finalized `view_access_key_list` for each account and confirm that no keys remain. Do not use this procedure on the development testnet accounts. There is no v1 owner, migration, or emergency upgrade method; a later release uses a new account, while existing commitments continue on v1 without automatic migration. Record the deployed code hash, source commit, reproducible WASM SHA-256, and finalized key-list evidence in the release record.
 
