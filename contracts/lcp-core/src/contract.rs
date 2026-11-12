@@ -5636,8 +5636,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "this authority grant already acted during the current epoch")]
-    fn bounded_authority_grant_cannot_execute_twice_in_one_epoch() {
+    #[should_panic(expected = "a previous authority action is still settling")]
+    fn bounded_authority_grant_cannot_execute_again_while_previous_action_settles() {
         let (mut contract, grant_id) = create_authority_grant();
         testing_env!(context(accounts(1), 0));
         let _ =
