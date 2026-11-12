@@ -8,7 +8,7 @@ repository = "https://github.com/wasabinetwork/Living-Commitments-Protocol"
 [package.metadata.near.reproducible_build]
 image = "sourcescan/cargo-near:0.23.0-rust-1.99.1"
 image_digest = "sha256:8013f039e8005627f10ae66b5519d1a6eeeed7d7aef4b5067d5e9a86c4302fcc"
-container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--locked"]
+container_build_command = ["cargo", "near", "build", "non-reproducible-wasm", "--no-abi", "--locked"]
 
 [lib]
 path = "src/lib.rs"
