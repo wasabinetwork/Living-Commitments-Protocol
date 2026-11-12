@@ -1,0 +1,6 @@
+[advisories]
+# This finding is in the NEAR unit-testing dependency graph only: near-sdk's
+# dev-only unit-testing feature -> near-vm-runner -> p256 0.13 -> crypto-bigint 0.5.
+# No compatible patched 0.5 release exists; remove this exception when NEAR's
+# test runtime moves to crypto-bigint >=0.7.6. Production WASM excludes this graph.
+ignore = ["RUSTSEC-2026-0387"]

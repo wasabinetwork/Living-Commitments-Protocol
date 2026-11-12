@@ -11,7 +11,7 @@ import {
 const BLOCK_HASH = "1".repeat(44);
 const BLOCK_HEIGHT = 277_000_000;
 const BLOCK_TIMESTAMP_NS = "1794192696952171274";
-const PROVIDERS = ["https://rpc1.example.test", "https://rpc2.example.test", "https://rpc3.example.test"];
+const PROVIDERS = ["https://rpc1.example.test/", "https://rpc2.example.test/", "https://rpc3.example.test/"];
 const env = {
   NEAR_RPC_URL: PROVIDERS[0],
   NEAR_RPC_FALLBACK_URLS: `${PROVIDERS[1]},${PROVIDERS[2]}`,

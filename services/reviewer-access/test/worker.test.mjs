@@ -6,14 +6,31 @@ import worker from "../dist/src/index.js";
 
 globalThis.crypto ??= webcrypto;
 const allowedOrigin = "https://console.example.test";
+const RPC_BLOCK_HASH = "1".repeat(44);
+const RPC_BLOCK_HEIGHT = 277_000_000;
 const baseEnv = {
   NETWORK: "testnet",
   CONTRACT_ID: "livingcommitmentsprotocol.testnet",
   NEAR_RPC_URL: "https://rpc.example.test",
+  NEAR_RPC_FALLBACK_URLS: "https://rpc2.example.test,https://rpc3.example.test",
   APP_ORIGINS: allowedOrigin,
   ACCESS_RECIPIENT: "console.example.test/reviewer-access",
   API_RATE_LIMITER: { async limit() { return { success: true }; } },
 };
+
+function rpcResponse(result) {
+  return Response.json({ jsonrpc: "2.0", id: "lcp-reviewer-access", result });
+}
+
+function finalizedBlock(timestampNs) {
+  return rpcResponse({
+    header: { hash: RPC_BLOCK_HASH, height: RPC_BLOCK_HEIGHT, timestamp_nanosec: timestampNs },
+  });
+}
+
+function finalizedQueryResult(result) {
+  return rpcResponse({ block_hash: RPC_BLOCK_HASH, block_height: RPC_BLOCK_HEIGHT, ...result });
+}
 
 function encodeBase58(bytes) {
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -143,14 +160,14 @@ test("reviewer request checks the wallet key and completed evaluation before sto
   globalThis.fetch = async (_url, init) => {
     const rpcRequest = JSON.parse(init.body);
     if (rpcRequest.method === "block") {
-      return Response.json({ result: { header: { timestamp_nanosec: nowNs } } });
+      return finalizedBlock(nowNs);
     }
     if (rpcRequest.method === "query" && rpcRequest.params.request_type === "view_access_key") {
-      return Response.json({ result: { permission: "FullAccess" } });
+      return finalizedQueryResult({ permission: "FullAccess" });
     }
     if (rpcRequest.method === "query" && rpcRequest.params.request_type === "call_function") {
       const view = { status: "Accepted", evidence_hash: "b".repeat(64) };
-      return Response.json({ result: { result: Array.from(new TextEncoder().encode(JSON.stringify(view))) } });
+      return finalizedQueryResult({ result: Array.from(new TextEncoder().encode(JSON.stringify(view))) });
     }
     throw new Error(`Unexpected NEAR RPC request: ${rpcRequest.method}`);
   };
@@ -221,13 +238,13 @@ test("grant creation keeps signed approval evidence and gates every write on one
   globalThis.fetch = async (_url, init) => {
     const rpcRequest = JSON.parse(init.body);
     if (rpcRequest.method === "block") {
-      return Response.json({ result: { header: { timestamp_nanosec: nowNs } } });
+      return finalizedBlock(nowNs);
     }
     if (rpcRequest.method === "query" && rpcRequest.params.request_type === "view_access_key") {
-      return Response.json({ result: { permission: "FullAccess" } });
+      return finalizedQueryResult({ permission: "FullAccess" });
     }
     if (rpcRequest.method === "query" && rpcRequest.params.request_type === "call_function") {
-      return Response.json({ result: { result: Array.from(new TextEncoder().encode(JSON.stringify({ maintainer: "maintainer.testnet" }))) } });
+      return finalizedQueryResult({ result: Array.from(new TextEncoder().encode(JSON.stringify({ maintainer: "maintainer.testnet" }))) });
     }
     throw new Error(`Unexpected NEAR RPC request: ${rpcRequest.method}`);
   };
@@ -302,7 +319,11 @@ test("scheduled cleanup retries expired and orphan ciphertext and removes termin
   };
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
-  globalThis.fetch = async () => Response.json({ result: { header: { timestamp_nanosec: nowNs } } });
+  globalThis.fetch = async (_url, init) => {
+    const rpcRequest = JSON.parse(init.body);
+    if (rpcRequest.method === "block") return finalizedBlock(nowNs);
+    throw new Error(`Unexpected NEAR RPC request: ${rpcRequest.method}`);
+  };
 
   await worker.scheduled({}, env);
 
