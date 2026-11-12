@@ -1448,7 +1448,7 @@ The user's Firefox validation covered the lifecycle across multiple fixtures: co
 
 ### Account-level upgrade authority
 
-Neither the LCP core nor the bounded payout adapter has an owner, migration, or self-upgrade method. However, a NEAR account `FullAccess` key can deploy replacement code, so a value-holding contract account that retains such a key is still upgradeable. The v1 mainnet policy is immutable deployment: independently audit and reproducibly build the release, deploy and verify code and initialization, then remove every access key from the core and each funded adapter account and verify the finalized key lists are empty. Testnet accounts remain upgradeable during development. V1 has no emergency upgrade path; future releases use new accounts, and existing commitments remain on the old contract without automatic migration. See [TESTING.md](TESTING.md) for the reproducible build and release gate.
+Neither the LCP core nor the bounded payout adapter has an owner, key-management, migration, or self-upgrade method. However, a NEAR account `FullAccess` key can deploy replacement code, so a value-holding contract account that retains such a key is still upgradeable. The v1 mainnet policy is immutable deployment: independently audit and reproducibly build the release, deploy and verify code and initialization, then remove every access key from the core and each funded adapter account and verify the finalized key lists are empty. Testnet accounts remain upgradeable during development. V1 has no emergency upgrade path; future releases use new accounts, and existing commitments remain on the old contract without automatic migration. See [TESTING.md](TESTING.md) for the reproducible build and release gate.
 
 Before deployment, verify:
 
