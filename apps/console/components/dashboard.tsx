@@ -42,15 +42,17 @@ import { AuthorityAdapterCard, ServicePolicyAmendmentCard } from "./governance-p
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 
-interface WalletAction {
-  type: "FunctionCall";
-  params: {
-    methodName: string;
-    args: Record<string, unknown>;
-    gas: string;
-    deposit: string;
-  };
-}
+type WalletAction =
+  | {
+      type: "FunctionCall";
+      params: {
+        methodName: string;
+        args: Record<string, unknown>;
+        gas: string;
+        deposit: string;
+      };
+    }
+  | { type: "DeployContract"; params: { code: Uint8Array } };
 
 interface NearWalletPort {
   signAndSendTransaction(input: {
@@ -418,6 +420,48 @@ export function Dashboard() {
       publicKey: signed.publicKey as NearEd25519PublicKey,
       fingerprint,
     };
+  }
+
+  async function deployBoundedPayoutAdapter(
+    adapterAccountId: string,
+    resourceAccountId: string,
+    poolManagerAccountId: string,
+    code: Uint8Array,
+  ) {
+    if (NEAR_NETWORK_ID !== "testnet") throw new Error("The adapter deployment helper is restricted to NEAR testnet.");
+    if (!CONTRACT_ID) throw new Error("The LCP contract account is not configured.");
+    if (accountId !== adapterAccountId) throw new Error(`Connect ${adapterAccountId} to deploy code to that account.`);
+    const account = await requestNearJsonRpc(RPC_URL, "query", {
+      request_type: "view_account",
+      finality: "final",
+      account_id: adapterAccountId,
+    });
+    if (!isRecord(account) || account.code_hash !== "11111111111111111111111111111111") {
+      throw new Error("This account already has deployed code. Refusing to replace it with the adapter.");
+    }
+    const connector = connectorRef.current;
+    if (!connector) throw new Error("Connect the adapter account wallet first.");
+    const wallet = await connector.wallet();
+    const outcome = await wallet.signAndSendTransaction({
+      receiverId: adapterAccountId,
+      actions: [
+        { type: "DeployContract", params: { code } },
+        {
+          type: "FunctionCall",
+          params: {
+            methodName: "new",
+            args: {
+              lcp_contract_id: CONTRACT_ID,
+              resource_account: resourceAccountId,
+              pool_manager: poolManagerAccountId,
+            },
+            gas: "100000000000000",
+            deposit: "0",
+          },
+        },
+      ],
+    });
+    decodeTransactionOutcome(outcome);
   }
 
   async function createCommitment(
@@ -1417,6 +1461,7 @@ export function Dashboard() {
                 accountId={accountId}
                 commitment={data.commitment}
                 contractId={CONTRACT_ID}
+                testnet={NEAR_NETWORK_ID === "testnet"}
                 policy={data.policy}
                 latestGrant={data.latestAuthorityGrant}
                 eligibility={data.eligibility}
@@ -1425,6 +1470,13 @@ export function Dashboard() {
                 onRefresh={() => loadCommitment(data.commitment.id)}
                 onLoadGrant={(grantId) => readClient().getBoundedPayoutAuthorityGrant(data.commitment.id, grantId)}
                 onLoadAdapterStatus={(adapterAccount) => readClient().getBoundedPayoutAdapterPoolStatus(adapterAccount)}
+                onDeployAdapter={deployBoundedPayoutAdapter}
+                onFundAdapterPool={async (adapterAccount, amountNear) => {
+                  await connectedWalletClient().fundBoundedPayoutAdapterPool(
+                    adapterAccount,
+                    parseNearToYocto(amountNear),
+                  );
+                }}
                 onWithdrawAdapterPool={(adapterAccount, recipient, amountNear) => connectedWalletClient().withdrawBoundedPayoutAdapterPool(
                   adapterAccount,
                   recipient,

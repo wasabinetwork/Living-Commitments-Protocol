@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 
 const YOCTO_PER_NEAR = 10n ** 24n;
 const NS_PER_HOUR = 60n * 60n * 1_000_000_000n;
+const BOUNDED_ADAPTER_WASM_SHA256 = "4e29182e075ff2ee94b0b1a67550e8741f5fa38b69d7fe8454dca8908fe17f86";
 
 interface AmendmentProps {
   accountId: string | null;
@@ -144,6 +145,7 @@ interface AuthorityProps {
   accountId: string | null;
   commitment: CommitmentView;
   contractId: string;
+  testnet: boolean;
   policy: CommitmentPolicyView;
   latestGrant: BoundedPayoutAuthorityGrantView | null;
   eligibility: ClaimEligibilityView | null;
@@ -152,6 +154,8 @@ interface AuthorityProps {
   onRefresh: () => Promise<boolean>;
   onLoadGrant: (grantId: string) => Promise<BoundedPayoutAuthorityGrantView | null>;
   onLoadAdapterStatus: (adapterAccount: string) => Promise<BoundedPayoutAdapterPoolStatusView | null>;
+  onDeployAdapter: (adapterAccount: string, resourceAccount: string, poolManagerAccount: string, code: Uint8Array) => Promise<void>;
+  onFundAdapterPool: (adapterAccount: string, amountNear: string) => Promise<void>;
   onWithdrawAdapterPool: (adapterAccount: string, recipient: string, amountNear: string) => Promise<void>;
   onCreateGrant: (grantId: string, adapter: string, resource: string, perAction: string, cumulative: string, expiresAtNs: string) => Promise<string>;
   onRevokeGrant: (grantId: string) => Promise<void>;
@@ -161,6 +165,9 @@ interface AuthorityProps {
 export function AuthorityAdapterCard(props: AuthorityProps) {
   const [adapterAccount, setAdapterAccount] = useState("");
   const [resourceAccount, setResourceAccount] = useState(props.policy.budget.beneficiary);
+  const [poolManagerAccount, setPoolManagerAccount] = useState(props.policy.budget.sponsor);
+  const [adapterWasmFile, setAdapterWasmFile] = useState<File | null>(null);
+  const [adapterWasmSha256, setAdapterWasmSha256] = useState("");
   const [perAction, setPerAction] = useState(() => yoctoToNearInput(props.policy.budget.tranche_yocto));
   const [cumulative, setCumulative] = useState(() => yoctoToNearInput((BigInt(props.policy.budget.tranche_yocto) * BigInt(props.policy.budget.max_epochs)).toString()));
   const [expiryMinutes, setExpiryMinutes] = useState("60");
@@ -170,6 +177,7 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
   const [adapterStatusAccount, setAdapterStatusAccount] = useState<string | null>(null);
   const [adapterStatusError, setAdapterStatusError] = useState("");
   const [loadingAdapterStatus, setLoadingAdapterStatus] = useState(false);
+  const [poolFundingAmount, setPoolFundingAmount] = useState("0.05");
   const [actionAmount, setActionAmount] = useState(() => yoctoToNearInput(props.policy.budget.tranche_yocto));
   const [withdrawalAmount, setWithdrawalAmount] = useState("");
   const [busy, setBusy] = useState(false);
@@ -236,6 +244,38 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
     await props.onRefresh();
   }
 
+  async function deployAdapter() {
+    if (!props.testnet) throw new Error("The adapter deployment helper is restricted to NEAR testnet.");
+    if (!props.accountId || props.accountId !== adapterAccount) {
+      throw new Error("Connect the adapter contract account wallet before deployment.");
+    }
+    if (!validAccount(resourceAccount) || !validAccount(poolManagerAccount)) {
+      throw new Error("Enter valid fixed-recipient and pool-manager NEAR account IDs.");
+    }
+    if (!adapterWasmFile || adapterWasmSha256 !== BOUNDED_ADAPTER_WASM_SHA256) {
+      throw new Error("Select the bounded adapter WASM built from this repository and verify its SHA-256 digest.");
+    }
+    await props.onDeployAdapter(
+      adapterAccount,
+      resourceAccount,
+      poolManagerAccount,
+      new Uint8Array(await adapterWasmFile.arrayBuffer()),
+    );
+    await refreshAdapterStatus(adapterAccount, resourceAccount);
+  }
+
+  async function selectAdapterWasm(file: File | null) {
+    setAdapterWasmFile(file);
+    setAdapterWasmSha256("");
+    if (!file) return;
+    if (file.size > 1024 * 1024 || !file.name.toLowerCase().endsWith(".wasm")) {
+      setAdapterWasmFile(null);
+      throw new Error("Select a WASM file no larger than 1 MiB.");
+    }
+    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    setAdapterWasmSha256(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""));
+  }
+
   async function loadGrant(grantId: string) {
     const loaded = await props.onLoadGrant(grantId.trim());
     if (!loaded) throw new Error("No authority grant was found for that ID and commitment.");
@@ -272,13 +312,19 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
   }
 
   async function withdrawAdapterPool() {
-    const selectedGrant = grant;
-    if (!selectedGrant || !adapterStatus || adapterStatusAccount !== selectedGrant.adapter_account) throw new Error("Refresh the adapter pool before requesting a withdrawal.");
+    if (!adapterStatus || adapterStatusAccount !== adapterAccount) throw new Error("Refresh the adapter pool before requesting a withdrawal.");
     if (!props.accountId || props.accountId !== adapterStatus.pool_manager) throw new Error("Connect the adapter pool manager wallet to withdraw its available balance.");
     const amount = parseNearAmount(withdrawalAmount);
     if (amount <= 0n || amount > BigInt(adapterStatus.available_yocto)) throw new Error("Enter a positive amount no greater than the adapter's available pool balance.");
-    await props.onWithdrawAdapterPool(selectedGrant.adapter_account, props.accountId, withdrawalAmount);
-    await refreshAdapterStatus(selectedGrant.adapter_account, selectedGrant.resource_account);
+    await props.onWithdrawAdapterPool(adapterAccount, props.accountId, withdrawalAmount);
+    await refreshAdapterStatus(adapterAccount, resourceAccount);
+  }
+
+  async function fundAdapterPool() {
+    const amount = parseNearAmount(poolFundingAmount);
+    if (amount <= 0n) throw new Error("Enter a positive amount to add to the adapter pool.");
+    await props.onFundAdapterPool(adapterAccount, poolFundingAmount);
+    await refreshAdapterStatus(adapterAccount, resourceAccount);
   }
 
   return (
@@ -299,6 +345,38 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
           <label>Cumulative limit · NEAR<input inputMode="decimal" value={cumulative} onChange={(event) => setCumulative(event.target.value)} /></label>
           <label>Grant lifetime · minutes<input type="number" min="1" max={maxExpiryMinutes || undefined} value={expiryMinutes} onChange={(event) => setExpiryMinutes(event.target.value)} /></label>
         </div>
+        {props.testnet && (
+          <details className="guided-advanced adapter-deployment-panel">
+            <summary>Deploy the testnet adapter with your NEAR wallet</summary>
+            <p>This one-time action deploys and initializes the checked adapter WASM on the adapter account. It will refuse accounts that already have code. The account’s full-access key can still replace the code, so use this testnet fixture only and secure its upgrade key before any production use.</p>
+            <div className="governance-timing-grid">
+              <label>Adapter pool manager<input value={poolManagerAccount} onChange={(event) => setPoolManagerAccount(event.target.value.trim())} /></label>
+              <label>Adapter contract WASM<input type="file" accept=".wasm,application/wasm" onChange={(event) => void selectAdapterWasm(event.target.files?.[0] ?? null).catch((cause) => setError(errorText(cause)))} /></label>
+            </div>
+            <div className="digest-row"><span>EXPECTED WASM SHA-256</span><code>{BOUNDED_ADAPTER_WASM_SHA256}</code></div>
+            {adapterWasmFile && <div className="digest-row"><span>SELECTED FILE</span><code>{adapterWasmFile.name} · SHA-256 {adapterWasmSha256 || "checking…"}</code></div>}
+            <button type="button" className="browser-button" disabled={busy || !props.contractSupported || !props.accountId || props.accountId !== adapterAccount || !adapterWasmFile || adapterWasmSha256 !== BOUNDED_ADAPTER_WASM_SHA256} onClick={() => void run(deployAdapter, "Adapter deployment and initialization were submitted to NEAR.")}>Deploy and initialize adapter</button>
+            <small>The connected wallet must be the adapter account. This action sends a standard NEAR `DeployContract` action followed by the adapter’s `new` call.</small>
+          </details>
+        )}
+        <div className="governance-state">
+          <div className="reviewer-section-title"><strong>Adapter pool</strong><button type="button" className="browser-text-button" disabled={busy || loadingAdapterStatus || !validAccount(adapterAccount)} onClick={() => void refreshAdapterStatus(adapterAccount, resourceAccount)}>{loadingAdapterStatus ? "Refreshing…" : "Refresh status"}</button></div>
+          {adapterStatus && adapterStatusAccount === adapterAccount
+            ? <div className="digest-row"><span>AVAILABLE / PENDING</span><code>{formatNear(adapterStatus.available_yocto)} / {formatNear(adapterStatus.pending_yocto)} NEAR{adapterStatus.pending_kind ? ` · ${adapterStatus.pending_kind.replaceAll("_", " ")} ${adapterStatus.pending_action_nonce ?? ""} settling` : ""}</code></div>
+            : <p className="empty-copy">Load pool status after deploying or entering an adapter account.</p>}
+          {adapterStatusError && <p className="reviewer-notice reviewer-notice-error" role="alert">{adapterStatusError}</p>}
+          <div className="reviewer-inline-actions governance-actions">
+            <label className="governance-amount">Fund adapter pool · NEAR<input inputMode="decimal" value={poolFundingAmount} onChange={(event) => setPoolFundingAmount(event.target.value)} /></label>
+            <button type="button" className="browser-button" disabled={busy || !props.accountId || !adapterStatus || adapterStatusAccount !== adapterAccount} onClick={() => void run(fundAdapterPool, "Adapter pool funding submitted to NEAR.")}>Fund pool</button>
+          </div>
+          {adapterStatus && adapterStatusAccount === adapterAccount && props.accountId === adapterStatus.pool_manager && (
+            <div className="reviewer-inline-actions governance-actions">
+              <label className="governance-amount">Withdraw available pool · NEAR<input inputMode="decimal" value={withdrawalAmount} onChange={(event) => setWithdrawalAmount(event.target.value)} /></label>
+              <button type="button" className="browser-text-button" disabled={busy || BigInt(adapterStatus.available_yocto) === 0n || BigInt(adapterStatus.pending_yocto) > 0n} onClick={() => void run(withdrawAdapterPool, "Adapter pool withdrawal submitted to the connected manager wallet.")}>Withdraw to manager wallet</button>
+            </div>
+          )}
+          <small>Anyone may fund the pool. Only the configured manager can withdraw its available balance; both transfers settle asynchronously.</small>
+        </div>
         <button type="button" className="browser-button" disabled={busy || !props.contractSupported || !canGrant || !props.chainTimeNs || maxExpiryMinutes < 1 || props.commitment.lifecycle !== "Active"} onClick={() => void run(createGrant, "Bounded payout authority recorded on NEAR.")}>Create wallet-signed grant</button>
         <small>Grant storage bond · 0.05 NEAR attached; the contract refunds excess. Deploy and fund the adapter separately before execution.</small>
       </div>
@@ -316,14 +394,6 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
               {props.accountId === grant.granting_account && !grant.revoked && <button type="button" className="browser-text-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onRevokeGrant(grant.grant_id); await props.onRefresh(); await loadGrant(grant.grant_id); }, "Authority grant revoked on NEAR.")}>Revoke grant</button>}
             </div>
             <small>Actions require the same eligibility as a tranche claim, including a closed challenge window. {props.eligibility?.eligible ? "The current tranche is eligible." : props.eligibility?.reason ?? "Refresh finalized commitment state to determine eligibility."} The adapter transfers only to its initialized recipient and can fail if its pool is empty.</small>
-            <div className="digest-row"><span>ADAPTER POOL</span><code>{adapterStatus && adapterStatusAccount === grant.adapter_account ? `${formatNear(adapterStatus.available_yocto)} NEAR available · ${formatNear(adapterStatus.pending_yocto)} NEAR pending${adapterStatus.pending_kind ? ` · ${adapterStatus.pending_kind.replaceAll("_", " ")} ${adapterStatus.pending_action_nonce ?? ""} settling` : ""}` : "status not loaded"}</code></div>
-            <div className="reviewer-inline-actions"><button type="button" className="browser-text-button" disabled={busy || loadingAdapterStatus} onClick={() => void refreshAdapterStatus(grant.adapter_account, grant.resource_account)}>{loadingAdapterStatus ? "Refreshing pool…" : "Refresh adapter pool"}</button>{adapterStatusError && <small>{adapterStatusError}</small>}</div>
-            {adapterStatus && adapterStatusAccount === grant.adapter_account && props.accountId === adapterStatus.pool_manager && (
-              <div className="reviewer-inline-actions governance-actions">
-                <label className="governance-amount">Withdraw available pool · NEAR<input inputMode="decimal" value={withdrawalAmount} onChange={(event) => setWithdrawalAmount(event.target.value)} /></label>
-                <button type="button" className="browser-text-button" disabled={busy || BigInt(adapterStatus.available_yocto) === 0n || BigInt(adapterStatus.pending_yocto) > 0n} onClick={() => void run(withdrawAdapterPool, "Adapter pool withdrawal submitted to the connected manager wallet.")}>Withdraw to manager wallet</button>
-              </div>
-            )}
             <small>Only the configured adapter pool manager can recover unspent pool funds. Withdrawals are asynchronous and failed transfers return to the available pool.</small>
           </>
         )}

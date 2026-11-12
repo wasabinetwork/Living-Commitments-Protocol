@@ -769,6 +769,13 @@ export class LcpClient {
     return this.transport.view<BoundedPayoutAdapterPoolStatusView | null>(adapterAccount, "get_pool_status", {});
   }
 
+  fundBoundedPayoutAdapterPool(adapterAccount: string, amountYocto: YoctoNear): Promise<YoctoNear> {
+    return this.transport.call<YoctoNear>(adapterAccount, "fund_pool", {}, {
+      attachedDepositYocto: amountYocto,
+      gas: "100000000000000",
+    });
+  }
+
   withdrawBoundedPayoutAdapterPool(adapterAccount: string, recipient: string, amountYocto: YoctoNear): Promise<void> {
     return this.transport.call<void>(adapterAccount, "withdraw_pool", {
       recipient,
