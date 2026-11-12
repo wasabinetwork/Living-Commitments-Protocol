@@ -8,7 +8,7 @@ const MAX_BLOCKS_PER_RUN_FALLBACK = 20;
 const SOURCE_REQUEST_INTERVAL_MS_FALLBACK = 1_000;
 const BLOCK_FETCH_CONCURRENCY = 4;
 
-type IndexerErrorCode = "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "INVALID_BLOCK" | "CHAIN_DISCONTINUITY" | "INVALID_CONFIGURATION" | "DATABASE_ERROR";
+type IndexerErrorCode = "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "INVALID_BLOCK" | "CHAIN_DISCONTINUITY" | "INVALID_CONFIGURATION" | "DATABASE_ERROR" | "RATE_LIMITER_UNAVAILABLE";
 
 class IndexerError extends Error {
   readonly code: IndexerErrorCode;
@@ -577,11 +577,24 @@ export default {
     try {
       if (request.method !== "GET") response = jsonResponse({ error: "method_not_allowed" }, 405);
       else if (url.pathname === "/health") response = await handleHealth(env);
-      else if (url.pathname === "/v1/events") response = await handleEvents(url, env);
+      else if (url.pathname === "/v1/events") {
+        const key = request.headers.get("CF-Connecting-IP") ?? "local-development";
+        let allowed: boolean;
+        try {
+          allowed = (await env.API_RATE_LIMITER.limit({ key })).success;
+        } catch {
+          throw new IndexerError("RATE_LIMITER_UNAVAILABLE", "Client request rate limiter unavailable.");
+        }
+        response = allowed
+          ? await handleEvents(url, env)
+          : jsonResponse({ error: "rate_limited" }, 429, { "Cache-Control": "no-store", "Retry-After": "60" });
+      }
       else response = jsonResponse({ error: "not_found" }, 404);
     } catch (error) {
       console.error(JSON.stringify({ event: "indexer_api_error", path: url.pathname, message: error instanceof Error ? error.message : "unknown" }));
-      response = jsonResponse({ error: "internal_error" }, 500);
+      response = error instanceof IndexerError && error.code === "RATE_LIMITER_UNAVAILABLE"
+        ? jsonResponse({ error: "service_unavailable" }, 503, { "Cache-Control": "no-store" })
+        : jsonResponse({ error: "internal_error" }, 500);
     }
     cors.forEach((value, key) => response.headers.set(key, value));
     return response;

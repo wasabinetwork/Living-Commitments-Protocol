@@ -6,10 +6,11 @@
   "scripts": {
     "types": "wrangler types worker-configuration.d.ts --config wrangler.jsonc --strict-vars false",
     "build:test": "tsc --project tsconfig.test.json",
-    "check": "tsc --noEmit -p tsconfig.json && wrangler deploy --dry-run --config wrangler.jsonc",
+    "check": "tsc --noEmit -p tsconfig.json && wrangler deploy --dry-run --config wrangler.jsonc && wrangler deploy --dry-run --config wrangler.preview.jsonc",
     "test": "npm run build:test && node --test test/*.test.mjs",
-    "dev": "wrangler dev --config wrangler.jsonc",
-    "deploy": "wrangler deploy --config wrangler.jsonc"
+    "dev": "wrangler dev --config wrangler.preview.jsonc --var APP_ORIGINS:http://localhost:3000",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "deploy:preview": "wrangler deploy --config wrangler.preview.jsonc"
   },
   "devDependencies": {
     "typescript": "6.0.3",

@@ -1,0 +1,57 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "lcp-reviewer-access",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-10",
+  "workers_dev": true,
+  "preview_urls": false,
+  "upload_source_maps": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+      "persist": true
+    }
+  },
+  "ratelimits": [
+    {
+      "name": "API_RATE_LIMITER",
+      "namespace_id": "1004",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    }
+  ],
+  "triggers": {
+    "crons": []
+  },
+  "r2_buckets": [
+    {
+      "binding": "PRIVATE_ARTIFACTS",
+      "bucket_name": "lcp-reviewer-private-artifacts"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lcp-reviewer-access",
+      "database_id": "db61970b-8e54-452c-bec3-07668e25828b",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "NETWORK": "testnet",
+    "CONTRACT_ID": "livingcommitmentsprotocol.testnet",
+    "NEAR_RPC_URL": "https://test.rpc.fastnear.com",
+    "NEAR_RPC_FALLBACK_URLS": "https://near-testnet.drpc.org,https://testnet-rpc.intea.rs",
+    "APP_ORIGINS": "https://preview.lcp-preview.pages.dev",
+    "ACCESS_RECIPIENT": "lcp.gama.works/reviewer-access",
+    "MAX_ARTIFACT_BYTES": "8388608",
+    "MAX_REQUESTS_PER_HOUR": "30",
+    "MAX_RPC_AUTH_REQUESTS_PER_MINUTE": "30",
+    "MAX_DOWNLOADS_PER_GRANT": "20"
+  }
+}

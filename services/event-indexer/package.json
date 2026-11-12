@@ -7,9 +7,10 @@
     "sdk:build": "npm --prefix ../../packages/sdk run build",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
     "types": "wrangler types worker-configuration.d.ts --config wrangler.jsonc --strict-vars false",
-    "check": "npm run sdk:build && tsc --noEmit -p tsconfig.json && wrangler deploy --dry-run --config wrangler.jsonc",
-    "dev": "npm run sdk:build && wrangler dev --config wrangler.jsonc",
-    "deploy": "npm run sdk:build && wrangler deploy --config wrangler.jsonc"
+    "check": "npm run sdk:build && tsc --noEmit -p tsconfig.json && wrangler deploy --dry-run --config wrangler.jsonc && wrangler deploy --dry-run --config wrangler.preview.jsonc",
+    "dev": "npm run sdk:build && wrangler dev --config wrangler.preview.jsonc --var ALLOWED_ORIGINS:http://localhost:3000",
+    "deploy": "npm run sdk:build && wrangler deploy --config wrangler.jsonc",
+    "deploy:preview": "npm run sdk:build && wrangler deploy --config wrangler.preview.jsonc"
   },
   "dependencies": {
     "@lcp/sdk": "0.1.0"

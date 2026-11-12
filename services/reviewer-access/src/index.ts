@@ -205,7 +205,6 @@ function parseSignedMessage(value: unknown): SignedWalletMessage {
 
 async function verifySignedPayload(
   env: Env,
-  near: NearReadSession,
   payload: Record<string, unknown>,
   signedValue: unknown,
   expectedAccount?: string,
@@ -224,14 +223,17 @@ async function verifySignedPayload(
   )) {
     throw new ApiError(401, "UNAUTHORIZED", "The NEP-413 signature is invalid or bound to a different request.");
   }
+  return signed;
+}
+
+async function requireCurrentAccessKey(near: NearReadSession, signed: SignedWalletMessage): Promise<void> {
   try {
-    await near.requireCurrentAccessKey(account, signed.public_key);
+    await near.requireCurrentAccessKey(signed.account_id, signed.public_key);
   } catch (error) {
     if (error instanceof NearUnavailableError) throw new ApiError(503, "NEAR_UNAVAILABLE", "Finalized NEAR access-key state is unavailable.");
     if (error instanceof NearReadError) throw new ApiError(403, "FORBIDDEN", error.message);
     throw error;
   }
-  return signed;
 }
 
 async function currentChainTime(near: NearReadSession): Promise<bigint> {
@@ -255,9 +257,7 @@ async function readCommitment(near: NearReadSession, commitmentId: string): Prom
   return commitment;
 }
 
-async function requireMaintainer(near: NearReadSession, commitmentId: string, accountId: string, publicKey: string): Promise<void> {
-  const commitment = await readCommitment(near, commitmentId);
-  if (commitment.maintainer !== accountId) throw new ApiError(403, "FORBIDDEN", "Only the current on-chain maintainer can approve or revoke access.");
+async function requireMaintainer(env: Env, near: NearReadSession, commitmentId: string, accountId: string, publicKey: string): Promise<void> {
   try {
     await near.requireFullAccessKey(accountId, publicKey);
   } catch (error) {
@@ -265,6 +265,9 @@ async function requireMaintainer(near: NearReadSession, commitmentId: string, ac
     if (!(error instanceof NearReadError)) throw error;
     throw new ApiError(403, "FORBIDDEN", "The signer is not a current full-access key for the maintainer account.");
   }
+  await rateLimitAccount(env, accountId);
+  const commitment = await readCommitment(near, commitmentId);
+  if (commitment.maintainer !== accountId) throw new ApiError(403, "FORBIDDEN", "Only the current on-chain maintainer can approve or revoke access.");
 }
 
 async function requireCompletedEvaluation(near: NearReadSession, commitmentId: string, evaluationId: string): Promise<void> {
@@ -300,17 +303,47 @@ function maxRequestsPerHour(env: Env): number {
   return Number.isSafeInteger(value) && value > 0 && value <= 500 ? value : 30;
 }
 
-async function rateLimit(env: Env, accountId: string, timeNs: bigint): Promise<void> {
-  const seconds = Number(timeNs / 1_000_000_000n);
-  const windowStart = Math.floor(seconds / ACCESS_WINDOW_SECONDS) * ACCESS_WINDOW_SECONDS;
+function maxRpcAuthRequestsPerMinute(env: Env): number {
+  const value = Number(env.MAX_RPC_AUTH_REQUESTS_PER_MINUTE);
+  return Number.isSafeInteger(value) && value > 0 && value <= 600 ? value : 30;
+}
+
+async function incrementRateWindow(env: Env, key: string, windowStart: number, limit: number): Promise<boolean> {
   const row = await env.DB.prepare(
     `INSERT INTO reviewer_access_windows (account_id, window_start_s, request_count)
      VALUES (?, ?, 1)
      ON CONFLICT(account_id, window_start_s) DO UPDATE SET request_count = request_count + 1
      WHERE request_count < ?
      RETURNING request_count`,
-  ).bind(accountId, windowStart, maxRequestsPerHour(env)).first<{ request_count: number }>();
-  if (!row) throw new ApiError(429, "RATE_LIMITED", "The signed access action limit has been reached for this hour.");
+  ).bind(key, windowStart, limit).first<{ request_count: number }>();
+  return row !== null;
+}
+
+async function rateLimitAccount(env: Env, accountId: string): Promise<void> {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const accountWindowStart = Math.floor(nowSeconds / ACCESS_WINDOW_SECONDS) * ACCESS_WINDOW_SECONDS;
+  if (!await incrementRateWindow(env, accountId, accountWindowStart, maxRequestsPerHour(env))) {
+    throw new ApiError(429, "RATE_LIMITED", "The signed access action limit has been reached for this hour.");
+  }
+}
+
+async function rateLimitGlobalAuth(env: Env): Promise<void> {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const rpcWindowStart = Math.floor(nowSeconds / 60) * 60;
+  if (!await incrementRateWindow(env, "!global-near-rpc", rpcWindowStart, maxRpcAuthRequestsPerMinute(env))) {
+    throw new ApiError(429, "RATE_LIMITED", "The service-wide NEAR authorization read limit has been reached for this minute.");
+  }
+}
+
+async function rateLimitByIp(request: Request, env: Env): Promise<void> {
+  const key = request.headers.get("CF-Connecting-IP") ?? "local-development";
+  let allowed: boolean;
+  try {
+    allowed = (await env.API_RATE_LIMITER.limit({ key })).success;
+  } catch {
+    throw new ApiError(503, "STORAGE_UNAVAILABLE", "The request rate limiter is unavailable; retry shortly.");
+  }
+  if (!allowed) throw new ApiError(429, "RATE_LIMITED", "Too many requests from this network. Retry in a minute.");
 }
 
 async function createRequest(env: Env, near: NearReadSession, body: unknown): Promise<Response> {
@@ -344,13 +377,15 @@ async function createRequest(env: Env, near: NearReadSession, body: unknown): Pr
   if (await sha256Hex(encryptionKey) !== fingerprint) throw new ApiError(400, "BAD_REQUEST", "The encryption-key fingerprint does not match the submitted public key.");
   const scopes = parseScopes(request.scopes);
   const expiresAt = BigInt(requireDecimal(request.expires_at_ns, "expires_at_ns"));
-  const signed = await verifySignedPayload(env, near, request, root.signed_message, reviewer);
+  const signed = await verifySignedPayload(env, request, root.signed_message, reviewer);
+  await rateLimitGlobalAuth(env);
+  await requireCurrentAccessKey(near, signed);
+  await rateLimitAccount(env, reviewer);
   const now = await currentChainTime(near);
   if (expiresAt <= now || expiresAt > now + MAX_GRANT_LIFETIME_NS) {
     throw new ApiError(400, "BAD_REQUEST", "The access request expiry must be in the future and no more than 14 days away.");
   }
   await requireCompletedEvaluation(near, commitmentId, evaluationId);
-  await rateLimit(env, reviewer, now);
   await env.DB.prepare(
     `UPDATE reviewer_requests SET status = 'expired', resolved_at_ns = ?
      WHERE network = ? AND contract_id = ? AND status = 'pending' AND expires_at_ns <= ?`,
@@ -397,10 +432,10 @@ async function listRequests(env: Env, near: NearReadSession, body: unknown): Pro
     throw new ApiError(400, "BAD_REQUEST", "Expected a signed reviewer request-list query.");
   }
   const commitmentId = requireDecimal(payload.commitment_id, "commitment_id");
-  const signed = await verifySignedPayload(env, near, payload, root.signed_message);
-  await requireMaintainer(near, commitmentId, signed.account_id, signed.public_key);
+  const signed = await verifySignedPayload(env, payload, root.signed_message);
+  await rateLimitGlobalAuth(env);
+  await requireMaintainer(env, near, commitmentId, signed.account_id, signed.public_key);
   const now = await currentChainTime(near);
-  await rateLimit(env, signed.account_id, now);
   await useNonce(env, signed.account_id, "list-requests", signed.nonce_hex, now);
   await env.DB.prepare(
     `UPDATE reviewer_requests SET status = 'expired', resolved_at_ns = ?
@@ -432,10 +467,10 @@ async function rejectRequest(env: Env, near: NearReadSession, requestId: string,
     .first<{ request_id: string; commitment_id: string; status: string }>();
   if (!request) throw new ApiError(404, "NOT_FOUND", "The reviewer request was not found.");
   if (request.status !== "pending") throw new ApiError(409, "CONFLICT", "The reviewer request is no longer pending.");
-  const signed = await verifySignedPayload(env, near, payload, root.signed_message);
-  await requireMaintainer(near, request.commitment_id, signed.account_id, signed.public_key);
+  const signed = await verifySignedPayload(env, payload, root.signed_message);
+  await rateLimitGlobalAuth(env);
+  await requireMaintainer(env, near, request.commitment_id, signed.account_id, signed.public_key);
   const now = await currentChainTime(near);
-  await rateLimit(env, signed.account_id, now);
   await useNonce(env, signed.account_id, "reject-request", signed.nonce_hex, now);
   const result = await env.DB.prepare(
     `UPDATE reviewer_requests
@@ -520,13 +555,13 @@ async function createGrant(env: Env, near: NearReadSession, body: unknown): Prom
     expires_at_ns: expiresAt.toString(),
     nonce_hex: grant.nonce_hex,
   };
-  const signed = await verifySignedPayload(env, near, requestPayload, root.signed_message);
-  await requireMaintainer(near, requestRow.commitment_id, signed.account_id, signed.public_key);
+  const signed = await verifySignedPayload(env, requestPayload, root.signed_message);
+  await rateLimitGlobalAuth(env);
+  await requireMaintainer(env, near, requestRow.commitment_id, signed.account_id, signed.public_key);
   const now = await currentChainTime(near);
   if (expiresAt <= now || expiresAt > now + MAX_GRANT_LIFETIME_NS) {
     throw new ApiError(400, "BAD_REQUEST", "Grant expiry must be in the future and no more than 14 days away.");
   }
-  await rateLimit(env, signed.account_id, now);
   const grantId = crypto.randomUUID();
   const artifactId = crypto.randomUUID();
   const objectKey = crypto.randomUUID();
@@ -607,11 +642,13 @@ async function listGrants(env: Env, near: NearReadSession, body: unknown): Promi
     throw new ApiError(400, "BAD_REQUEST", "Expected a signed reviewer grant-list query.");
   }
   const commitmentId = requireDecimal(payload.commitment_id, "commitment_id");
-  const signed = await verifySignedPayload(env, near, payload, root.signed_message);
+  const signed = await verifySignedPayload(env, payload, root.signed_message);
+  await rateLimitGlobalAuth(env);
+  await requireCurrentAccessKey(near, signed);
+  await rateLimitAccount(env, signed.account_id);
   const now = await currentChainTime(near);
   const commitment = await readCommitment(near, commitmentId);
   const isMaintainer = commitment.maintainer === signed.account_id;
-  await rateLimit(env, signed.account_id, now);
   await useNonce(env, signed.account_id, "list-grants", signed.nonce_hex, now);
   const result = await env.DB.prepare(
     `SELECT g.grant_id, g.request_id, g.reviewer_account, g.scopes_json, g.expires_at_ns,
@@ -628,7 +665,6 @@ async function listGrants(env: Env, near: NearReadSession, body: unknown): Promi
 async function consumeGrantDownload(env: Env, grant: GrantRow, signed: SignedWalletMessage, now: bigint): Promise<void> {
   const maxDownloadsValue = Number(env.MAX_DOWNLOADS_PER_GRANT);
   const maxDownloads = Number.isSafeInteger(maxDownloadsValue) && maxDownloadsValue > 0 ? Math.min(maxDownloadsValue, 100) : 20;
-  await rateLimit(env, signed.account_id, now);
   await useNonce(env, signed.account_id, "download", signed.nonce_hex, now);
   const results = await env.DB.batch([
     env.DB.prepare(
@@ -671,8 +707,11 @@ async function downloadGrant(env: Env, near: NearReadSession, grantId: string, b
   if (!exactKeys(payload, ["schema", "grant_id", "nonce_hex"]) || payload.schema !== expectedPayload.schema || payload.grant_id !== grantId) {
     throw new ApiError(400, "BAD_REQUEST", "The download authorization has an invalid shape.");
   }
-  const signed = await verifySignedPayload(env, near, expectedPayload, root.signed_message, grant.reviewer_account);
+  const signed = await verifySignedPayload(env, expectedPayload, root.signed_message, grant.reviewer_account);
   if (signed.nonce_hex !== expectedPayload.nonce_hex) throw new ApiError(400, "BAD_REQUEST", "The signature nonce does not match the signed download request.");
+  await rateLimitGlobalAuth(env);
+  await requireCurrentAccessKey(near, signed);
+  await rateLimitAccount(env, signed.account_id);
   const now = await currentChainTime(near);
   if (grant.revoked_at_ns !== null || BigInt(grant.expires_at_ns) <= now) {
     throw new ApiError(403, "FORBIDDEN", "This reviewer grant is revoked or expired.");
@@ -717,10 +756,10 @@ async function revokeGrant(env: Env, near: NearReadSession, grantId: string, bod
   ).bind(grantId, env.NETWORK, env.CONTRACT_ID).first<{ grant_id: string; revoked_at_ns: string | null; object_key: string; commitment_id: string }>();
   if (!grant) throw new ApiError(404, "NOT_FOUND", "The reviewer grant was not found.");
   if (grant.revoked_at_ns !== null) throw new ApiError(409, "CONFLICT", "The reviewer grant has already been revoked.");
-  const signed = await verifySignedPayload(env, near, payload, root.signed_message);
-  await requireMaintainer(near, grant.commitment_id, signed.account_id, signed.public_key);
+  const signed = await verifySignedPayload(env, payload, root.signed_message);
+  await rateLimitGlobalAuth(env);
+  await requireMaintainer(env, near, grant.commitment_id, signed.account_id, signed.public_key);
   const now = await currentChainTime(near);
-  await rateLimit(env, signed.account_id, now);
   await useNonce(env, signed.account_id, "revoke", signed.nonce_hex, now);
   const results = await env.DB.batch([
     env.DB.prepare("UPDATE reviewer_grants SET revoked_at_ns = ? WHERE grant_id = ? AND revoked_at_ns IS NULL")
@@ -771,6 +810,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (request.method !== "POST") throw new ApiError(404, "NOT_FOUND", "Route not found.");
   requireAllowedOrigin(request, env);
+  await rateLimitByIp(request, env);
   const body = await readJsonLimited(request);
   const near = createNearReadSession(env);
   if (url.pathname === "/v1/requests") return createRequest(env, near, body);

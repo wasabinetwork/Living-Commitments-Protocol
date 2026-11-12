@@ -1,9 +1,16 @@
 {
   "$schema": "https://unpkg.com/wrangler@4.129.0/config-schema.json",
-  "name": "lcp-event-indexer",
+  "name": "lcp-event-indexer-production",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-09",
-  "workers_dev": true,
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "indexer.lcp.gama.works",
+      "custom_domain": true
+    }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
@@ -17,6 +24,16 @@
     "cpu_ms": 30000,
     "subrequests": 1000
   },
+  "ratelimits": [
+    {
+      "name": "API_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ],
   "triggers": {
     "crons": ["*/1 * * * *"]
   },
@@ -36,6 +53,6 @@
     "MAX_BLOCKS_PER_RUN": "40",
     "MAX_BLOCK_BYTES": "16777216",
     "SOURCE_REQUEST_INTERVAL_MS": "1000",
-    "ALLOWED_ORIGINS": "http://localhost:3000,https://preview.lcp-preview.pages.dev,https://lcp.gama.works"
+    "ALLOWED_ORIGINS": "https://lcp.gama.works"
   }
 }

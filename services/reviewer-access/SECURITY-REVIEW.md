@@ -2,7 +2,7 @@
 
 ## Review status
 
-This brief prepares the reviewer-access Worker for independent review. A scoped internal source pass confirmed the implemented bounds and controls listed below; it is not an audit or production approval. The testnet Worker and private D1/R2 resources are deployed. Version `e06e33fb-2d6b-459c-a25f-c0d954be365f` includes the 2-of-3 RPC quorum; manual quorum behavior acceptance remains open. Do not enable production reviewer access until an independent reviewer has assessed the code, cryptographic flow, deployment configuration, and failure behavior.
+This brief prepares the reviewer-access Worker for independent review. A scoped internal source pass confirmed the implemented bounds and controls listed below; it is not an audit or production approval. The preview Worker is deployed at `lcp-reviewer-access.wasabinetwork.workers.dev` (version `706cc768-c279-4bcc-997f-563dd5bab211`); the testnet production hostname `reviewer-access.lcp.gama.works` is deployed as version `70a22bde-7362-4b5f-b408-ab900eea600d`. Both use private D1/R2 resources and the 2-of-3 RPC quorum. Manual quorum behavior acceptance remains open. Do not enable Console integration until an independent reviewer has assessed the code, cryptographic flow, deployment configuration, and failure behavior.
 
 ## Assets and trust boundaries
 
@@ -14,8 +14,8 @@ This brief prepares the reviewer-access Worker for independent review. A scoped 
 
 ## Controls present in the implementation
 
-- Exact configured browser origins; bounded JSON bodies (12 MiB) and encrypted artifacts (at most 8 MiB).
-- Canonical NEP-413 payload binding, current NEAR access-key checks, finalized maintainer role checks, unique nonces, expiry checks, and per-account request limits.
+- Exact configured browser origins; production uses its custom domain with `workers.dev` and version preview URLs disabled, while preview has its own exact Pages origin; bounded JSON bodies (12 MiB) and encrypted artifacts (at most 8 MiB).
+- Canonical NEP-413 payload binding, current NEAR access-key checks, finalized maintainer role checks, unique nonces, expiry checks, a 60/IP/minute edge limit, a shared 30/minute D1 cap before NEAR RPC, and a 30/account/hour limit after key validation.
 - The deployed Worker requires 2-of-3 agreement across three distinct HTTPS RPC origins for the finalized block and each authorization read; all contract, access-key, and chain-time reads within a request share the same block hash. Manual outage/conflict acceptance and independent review remain open.
 - Maintainer approval/rejection and revocation require a current FullAccess key. Reviewer downloads require a signature from the account named in the grant.
 - Private R2 binding, opaque random object keys, ciphertext digest checks, constrained scope, bounded download counts, and response cache protections.
@@ -24,7 +24,7 @@ This brief prepares the reviewer-access Worker for independent review. A scoped 
 
 ## Required independent review
 
-Review the Worker, `src/encoding.ts`, `src/nep413.ts`, the Console encryption/decryption path, D1 migrations, and `wrangler.jsonc`. In particular:
+Review the Worker, `src/encoding.ts`, `src/nep413.ts`, the Console encryption/decryption path, D1 migrations, and both `wrangler.jsonc` and `wrangler.preview.jsonc`. In particular:
 
 1. Independently validate NEP-413 byte serialization, Ed25519 verification, key parsing, AES-GCM/HPKE parameters, key-backup handling, and all metadata bindings.
 2. Test concurrent duplicate grant creation, replay races, revoke/download races, nonce retention, quota bypass across accounts, and D1 batch atomicity assumptions.

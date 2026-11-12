@@ -12,6 +12,7 @@ const baseEnv = {
   NEAR_RPC_URL: "https://rpc.example.test",
   APP_ORIGINS: allowedOrigin,
   ACCESS_RECIPIENT: "console.example.test/reviewer-access",
+  API_RATE_LIMITER: { async limit() { return { success: true }; } },
 };
 
 function encodeBase58(bytes) {
