@@ -105,13 +105,7 @@ mod tests {
         adapter.fund_pool();
 
         testing_env!(context(accounts(1), 0));
-        let _ = adapter.execute_authorized_action(
-            U64(1),
-            "a".repeat(64),
-            U64(7),
-            accounts(3),
-            U128(40),
-        );
+        let _ = adapter.execute_authorized_action(accounts(2), U64(7), accounts(3), U128(40));
         let pending = adapter.get_pool_status();
         assert_eq!(pending.available_yocto, U128(60));
         assert_eq!(pending.pending_kind.as_deref(), Some("authorized_payout"));
@@ -178,8 +172,7 @@ impl Contract {
 
     pub fn execute_authorized_action(
         &mut self,
-        _commitment_id: U64,
-        _grant_id: String,
+        granting_account: AccountId,
         action_nonce: U64,
         resource_account: AccountId,
         amount_yocto: U128,
@@ -187,6 +180,10 @@ impl Contract {
         require!(
             env::predecessor_account_id() == self.lcp_contract_id,
             "only the configured LCP contract can authorize a payout"
+        );
+        require!(
+            granting_account == self.pool_manager,
+            "only the configured pool manager can authorize a payout"
         );
         require!(
             resource_account == self.resource_account,

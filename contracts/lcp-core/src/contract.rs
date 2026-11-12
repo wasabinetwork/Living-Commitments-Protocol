@@ -796,8 +796,7 @@ impl Contract {
             }),
         );
         let adapter_args = near_sdk::serde_json::to_vec(&json!({
-            "commitment_id": commitment_id,
-            "grant_id": grant_id.clone(),
+            "granting_account": grant.granting_account.clone(),
             "action_nonce": action_nonce,
             "resource_account": grant.resource_account.clone(),
             "amount_yocto": amount_yocto,

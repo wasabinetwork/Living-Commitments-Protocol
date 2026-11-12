@@ -14,7 +14,7 @@ import { useEffect, useState } from "react";
 
 const YOCTO_PER_NEAR = 10n ** 24n;
 const NS_PER_HOUR = 60n * 60n * 1_000_000_000n;
-const BOUNDED_ADAPTER_WASM_SHA256 = "4e29182e075ff2ee94b0b1a67550e8741f5fa38b69d7fe8454dca8908fe17f86";
+const BOUNDED_ADAPTER_WASM_SHA256 = "f98a1361ad81c460ad694843926e8ce86334e21f641b052f11a8456d1c1b1e33";
 
 interface AmendmentProps {
   accountId: string | null;
@@ -183,18 +183,32 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const currentAdapterStatus = adapterStatus && adapterStatusAccount === adapterAccount ? adapterStatus : null;
+  const grantManagerIsCommitmentParty = Boolean(currentAdapterStatus
+    && [props.policy.budget.sponsor, props.policy.budget.beneficiary].includes(currentAdapterStatus.pool_manager));
+  const adapterRecipientMatches = Boolean(currentAdapterStatus
+    && currentAdapterStatus.resource_account === resourceAccount);
   const canGrant = Boolean(props.accountId && [props.policy.budget.sponsor, props.policy.budget.beneficiary].includes(props.accountId));
+  const canCreateGrant = Boolean(canGrant && currentAdapterStatus && adapterRecipientMatches && grantManagerIsCommitmentParty
+    && props.accountId === currentAdapterStatus.pool_manager);
   const canTrigger = Boolean(props.accountId && grant && [grant.granting_account, grant.adapter_account].includes(props.accountId));
+  const grantAdapterStatus = adapterStatus && grant && adapterStatusAccount === grant.adapter_account ? adapterStatus : null;
+  const grantManagerMatches = Boolean(grant && grantAdapterStatus
+    && grant.granting_account === grantAdapterStatus.pool_manager);
   const maxExpiryMinutes = maxAuthorityGrantMinutes(props.commitment, props.policy, props.chainTimeNs);
   const grantActive = Boolean(grant && props.chainTimeNs && !grant.revoked
     && BigInt(props.chainTimeNs) < BigInt(grant.expires_at_ns));
-  const canExecute = Boolean(canTrigger && props.contractSupported && props.eligibility?.eligible
+  const canExecute = Boolean(canTrigger && grantManagerMatches && props.contractSupported && props.eligibility?.eligible
     && props.commitment.lifecycle === "Active" && grantActive
     && props.commitment.effective_health === "Healthy");
 
   useEffect(() => {
     setGrant(props.latestGrant);
     setGrantIdInput(props.latestGrant?.grant_id ?? "");
+    if (props.latestGrant) {
+      setAdapterAccount(props.latestGrant.adapter_account);
+      setResourceAccount(props.latestGrant.resource_account);
+    }
   }, [props.latestGrant]);
 
   useEffect(() => {
@@ -219,7 +233,11 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
   }
 
   async function createGrant() {
-    if (!props.accountId || !canGrant) throw new Error("Connect the configured sponsor or beneficiary wallet to grant authority.");
+    if (!props.accountId || !canGrant) throw new Error("Connect the configured adapter manager wallet, which must also be this commitment's sponsor or beneficiary.");
+    if (!currentAdapterStatus) throw new Error("Refresh this adapter's pool status to verify the configured manager before creating a grant.");
+    if (!grantManagerIsCommitmentParty) throw new Error("The adapter pool manager must also be this commitment's sponsor or beneficiary to create an executable grant.");
+    if (!adapterRecipientMatches) throw new Error("The grant recipient must match the adapter's initialized recipient.");
+    if (props.accountId !== currentAdapterStatus.pool_manager) throw new Error("Connect the configured adapter pool manager wallet to create an executable grant.");
     if (!props.chainTimeNs) throw new Error("Refresh finalized NEAR time before creating a grant.");
     if (!validAccount(adapterAccount) || !validAccount(resourceAccount)) throw new Error("Enter valid NEAR adapter and resource account IDs.");
     const perActionYocto = parseNearAmount(perAction);
@@ -305,6 +323,8 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
 
   async function executeGrant() {
     if (!grant || !canTrigger) throw new Error("Connect the grantor or the named adapter wallet to trigger this grant.");
+    if (!grantAdapterStatus) throw new Error("Refresh this grant's adapter pool status before authorizing a payout.");
+    if (!grantManagerMatches) throw new Error("This grant's creator is not the configured adapter pool manager, so the adapter will reject its payout.");
     const nextNonce = (BigInt(grant.last_action_nonce) + 1n).toString();
     await props.onExecuteGrant(grant.grant_id, nextNonce, actionAmount);
     await props.onRefresh();
@@ -333,7 +353,7 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
         <div><p className="eyebrow">CONTRACT-GATED CONSEQUENCE</p><h3 id="authority-adapter-title">Bounded payout adapter</h3></div>
         <span className="card-index">06</span>
       </div>
-      <p className="governance-intro">The sponsor or beneficiary can authorize one named adapter to pay one fixed NEAR resource from funds deposited into that adapter. An action is available only when the same full tranche eligibility checks pass, including the challenge window.</p>
+      <p className="governance-intro">The sponsor or beneficiary can authorize one named adapter to pay one fixed NEAR resource from funds deposited into that adapter. The grant creator must also be that adapter's configured pool manager. An action is available only when the same full tranche eligibility checks pass, including the challenge window.</p>
       <p className="governance-caution">The grant controls only the adapter’s own prefunded pool. It never controls a wallet, account keys, or LCP escrow. Authorized amounts count against the grant when LCP calls the adapter, even if that adapter call fails.</p>
       <p className="governance-caution">Review the adapter code and its upgrade authority before granting access. The grant binds an account ID; it does not pin that account’s code hash.</p>
       {!props.contractSupported && <p className="reviewer-notice reviewer-notice-error">The selected contract does not expose bounded authority methods yet. Deploy the updated LCP contract before using this control.</p>}
@@ -377,8 +397,16 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
           )}
           <small>Anyone may fund the pool. Only the configured manager can withdraw its available balance; both transfers settle asynchronously.</small>
         </div>
-        <button type="button" className="browser-button" disabled={busy || !props.contractSupported || !canGrant || !props.chainTimeNs || maxExpiryMinutes < 1 || props.commitment.lifecycle !== "Active"} onClick={() => void run(createGrant, "Bounded payout authority recorded on NEAR.")}>Create wallet-signed grant</button>
-        <small>Grant storage bond · 0.05 NEAR attached; the contract refunds excess. Deploy and fund the adapter separately before execution.</small>
+        <button type="button" className="browser-button" disabled={busy || !props.contractSupported || !canCreateGrant || !props.chainTimeNs || maxExpiryMinutes < 1 || props.commitment.lifecycle !== "Active"} onClick={() => void run(createGrant, "Bounded payout authority recorded on NEAR.")}>Create wallet-signed grant</button>
+        <small>{!currentAdapterStatus
+          ? "Refresh the adapter pool status before creating a grant."
+          : !grantManagerIsCommitmentParty
+            ? "The adapter manager must also be this commitment's sponsor or beneficiary."
+            : !adapterRecipientMatches
+              ? "The grant recipient must match the adapter's initialized recipient. Refresh status after changing the recipient."
+            : props.accountId !== currentAdapterStatus.pool_manager
+              ? `Connect ${currentAdapterStatus.pool_manager}; only the adapter manager can create a grant that can spend this pool.`
+              : "The connected adapter manager can create this grant. Storage bond · 0.05 NEAR attached; excess is refunded. Deploy and fund the adapter separately before execution."}</small>
       </div>
       <div className="governance-state">
         <div className="reviewer-section-title"><strong>Inspect or operate a grant</strong><div className="reviewer-inline-actions"><input className="authority-grant-id-input" value={grantIdInput} onChange={(event) => setGrantIdInput(event.target.value.trim())} placeholder="Grant ID · 64 lowercase hex" /><button type="button" className="browser-text-button" disabled={busy || !props.contractSupported || !grantIdInput} onClick={() => void run(() => loadGrant(grantIdInput), "Authority grant state loaded from NEAR.")}>Load</button></div></div>
@@ -393,7 +421,10 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
               <button type="button" className="browser-button" disabled={busy || !canExecute} onClick={() => void run(executeGrant, "LCP authorized the bounded action; adapter settlement is asynchronous.")}>Authorize eligible epoch action</button>
               {props.accountId === grant.granting_account && !grant.revoked && <button type="button" className="browser-text-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onRevokeGrant(grant.grant_id); await props.onRefresh(); await loadGrant(grant.grant_id); }, "Authority grant revoked on NEAR.")}>Revoke grant</button>}
             </div>
-            <small>Actions require the same eligibility as a tranche claim, including a closed challenge window. {props.eligibility?.eligible ? "The current tranche is eligible." : props.eligibility?.reason ?? "Refresh finalized commitment state to determine eligibility."} The adapter transfers only to its initialized recipient and can fail if its pool is empty.</small>
+            <small>Actions require the same eligibility as a tranche claim, including a closed challenge window. {props.eligibility?.eligible ? "The current tranche is eligible." : props.eligibility?.reason ?? "Refresh finalized commitment state to determine eligibility."} The adapter also requires the grant creator to match its configured pool manager. It transfers only to its initialized recipient and can fail if its pool is empty.</small>
+            {!grantAdapterStatus
+              ? <small>Refresh this grant's adapter pool status to confirm its configured manager.</small>
+              : !grantManagerMatches && <small>This grant was created by a different account than the adapter pool manager, so its payout will be rejected.</small>}
             <small>Only the configured adapter pool manager can recover unspent pool funds. Withdrawals are asynchronous and failed transfers return to the available pool.</small>
           </>
         )}
