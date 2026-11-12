@@ -1,17 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  finalizedTimeNs,
+  createNearReadSession,
   NearReadError,
   NearUnavailableError,
   parseNearAccountId,
   parseSha256,
-  requireCurrentAccessKey,
-  requireFullAccessKey,
-  viewContract,
 } from "../dist/src/near.js";
 
-const env = { NEAR_RPC_URL: "https://rpc.example.test", CONTRACT_ID: "livingcommitmentsprotocol.testnet" };
+const BLOCK_HASH = "1".repeat(44);
+const BLOCK_HEIGHT = 277_000_000;
+const BLOCK_TIMESTAMP_NS = "1794192696952171274";
+const PROVIDERS = ["https://rpc1.example.test", "https://rpc2.example.test", "https://rpc3.example.test"];
+const env = {
+  NEAR_RPC_URL: PROVIDERS[0],
+  NEAR_RPC_FALLBACK_URLS: `${PROVIDERS[1]},${PROVIDERS[2]}`,
+  CONTRACT_ID: "livingcommitmentsprotocol.testnet",
+};
+
+function blockResult() {
+  return { header: { hash: BLOCK_HASH, height: BLOCK_HEIGHT, timestamp_nanosec: BLOCK_TIMESTAMP_NS } };
+}
+
+function queryResult(value) {
+  return { block_hash: BLOCK_HASH, block_height: BLOCK_HEIGHT, ...value };
+}
+
+function rpcResponse(result) {
+  return Response.json({ jsonrpc: "2.0", id: "lcp-reviewer-access", result });
+}
 
 test("account and digest parsers accept only canonical values", () => {
   assert.equal(parseNearAccountId("wasabinetwork.testnet"), "wasabinetwork.testnet");
@@ -21,60 +38,68 @@ test("account and digest parsers accept only canonical values", () => {
 });
 
 test("finalized block timestamp is read from NEAR RPC", async (t) => {
-  t.mock.method(globalThis, "fetch", async () => Response.json({ result: { header: { timestamp_nanosec: "1794192696952171274" } } }));
-  assert.equal(await finalizedTimeNs(env), 1_794_192_696_952_171_274n);
+  t.mock.method(globalThis, "fetch", async () => rpcResponse(blockResult()));
+  assert.equal(await createNearReadSession(env).finalizedTimeNs(), 1_794_192_696_952_171_274n);
 });
 
-test("reviewer authorization reads fall back when the primary RPC is unavailable", async (t) => {
+test("reviewer authorization reads tolerate one unavailable provider when two agree", async (t) => {
   const endpoints = [];
   t.mock.method(globalThis, "fetch", async (url) => {
     endpoints.push(url);
-    if (url.includes("primary")) return new Response("unavailable", { status: 503 });
-    return Response.json({ result: { header: { timestamp_nanosec: "1794192696952171274" } } });
+    if (url.includes("rpc1")) return new Response("unavailable", { status: 503 });
+    return rpcResponse(blockResult());
   });
 
-  assert.equal(await finalizedTimeNs({
-    ...env,
-    NEAR_RPC_URL: "https://primary.example.test",
-    NEAR_RPC_FALLBACK_URLS: "https://fallback.example.test",
-  }), 1_794_192_696_952_171_274n);
-  assert.deepEqual(endpoints, ["https://primary.example.test", "https://fallback.example.test"]);
+  assert.equal(await createNearReadSession(env).finalizedTimeNs(), 1_794_192_696_952_171_274n);
+  assert.deepEqual(endpoints, PROVIDERS);
 });
 
 test("network and malformed JSON responses map to retryable NEAR failures", async (t) => {
   t.mock.method(globalThis, "fetch", async () => new Response("{", { status: 200 }));
-  await assert.rejects(finalizedTimeNs(env), NearUnavailableError);
+  await assert.rejects(createNearReadSession(env).finalizedTimeNs(), NearUnavailableError);
 
   t.mock.restoreAll();
   t.mock.method(globalThis, "fetch", async () => { throw new Error("offline"); });
-  await assert.rejects(finalizedTimeNs(env), NearUnavailableError);
+  await assert.rejects(createNearReadSession(env).finalizedTimeNs(), NearUnavailableError);
 });
 
 test("contract views encode their JSON arguments and decode finalized JSON bytes", async (t) => {
-  let requestBody;
+  const requests = [];
   t.mock.method(globalThis, "fetch", async (_url, init) => {
-    requestBody = JSON.parse(init.body);
+    const requestBody = JSON.parse(init.body);
+    requests.push(requestBody);
+    if (requestBody.method === "block") return rpcResponse(blockResult());
     const result = new TextEncoder().encode(JSON.stringify({ maintainer: "wasabinetwork.testnet" }));
-    return Response.json({ result: { result: Array.from(result) } });
+    return rpcResponse(queryResult({ result: Array.from(result) }));
   });
 
-  assert.deepEqual(await viewContract(env, "get_commitment", { commitment_id: "24" }), {
+  assert.deepEqual(await createNearReadSession(env).viewContract("get_commitment", { commitment_id: "24" }), {
     maintainer: "wasabinetwork.testnet",
   });
-  assert.equal(requestBody.method, "query");
-  assert.equal(requestBody.params.finality, "final");
-  assert.equal(requestBody.params.method_name, "get_commitment");
-  assert.equal(atob(requestBody.params.args_base64), JSON.stringify({ commitment_id: "24" }));
+  const queryRequest = requests.find((request) => request.method === "query");
+  assert.equal(queryRequest.params.block_id, BLOCK_HASH);
+  assert.equal(queryRequest.params.method_name, "get_commitment");
+  assert.equal(atob(queryRequest.params.args_base64), JSON.stringify({ commitment_id: "24" }));
 });
 
 test("current access-key permissions are distinguished from missing permissions", async (t) => {
-  t.mock.method(globalThis, "fetch", async () => Response.json({ result: { permission: "FullAccess" } }));
-  await requireFullAccessKey(env, "maintainer.testnet", "ed25519:validtestkey");
+  let permission = "FullAccess";
+  t.mock.method(globalThis, "fetch", async (_url, init) => {
+    const requestBody = JSON.parse(init.body);
+    if (requestBody.method === "block") return rpcResponse(blockResult());
+    return rpcResponse(queryResult({ permission }));
+  });
+  await createNearReadSession(env).requireFullAccessKey("maintainer.testnet", "ed25519:validtestkey");
 
   t.mock.restoreAll();
-  t.mock.method(globalThis, "fetch", async () => Response.json({ result: { permission: null } }));
+  permission = null;
+  t.mock.method(globalThis, "fetch", async (_url, init) => {
+    const requestBody = JSON.parse(init.body);
+    if (requestBody.method === "block") return rpcResponse(blockResult());
+    return rpcResponse(queryResult({ permission }));
+  });
   await assert.rejects(
-    requireCurrentAccessKey(env, "maintainer.testnet", "ed25519:validtestkey"),
+    createNearReadSession(env).requireCurrentAccessKey("maintainer.testnet", "ed25519:validtestkey"),
     NearReadError,
   );
 });
