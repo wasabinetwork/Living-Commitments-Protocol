@@ -6,7 +6,7 @@ The product requirements document (`Living_Commitments_Protocol_[LCP]-PRD.md`), 
 
 ## Build, Test, and Development Commands
 
-Build the Rust workspace with `cargo build --workspace`; build the evaluator WASM with `cargo build -p maintenance-heartbeat -p service-availability-evaluator --target wasm32-wasip2 --release` and the contracts with `--target wasm32-unknown-unknown --release`. Install JavaScript workspaces with `npm install`, then build the SDK with `npm run build:sdk`. Run the LCP Console with `npm run dev --workspace=@lcp/console` after configuring `apps/console/.env.local` from `.env.example`. Run Workers locally with `npm run dev:indexer` or `npm run dev:reviewer-access`; apply D1 migrations with Wrangler. Run the Rust suite with `cargo test --workspace` and evaluator probe checks with `node --test evaluators/service-availability/test/probe.test.mjs`. Keep examples reproducible against NEAR testnet.
+Use the pinned Rust toolchain in `rust-toolchain.toml`. Build NEAR contracts with `cargo build -p lcp-core -p lcp-bounded-payout-adapter --target wasm32-unknown-unknown --release --locked` and evaluator WASM with `cargo build -p maintenance-heartbeat -p service-availability-evaluator --target wasm32-wasip2 --release --locked`. Install JavaScript workspaces with `npm ci`, then build the SDK with `npm run build:sdk`. Run the LCP Console with `npm run dev --workspace=@lcp/console` after configuring `apps/console/.env.local` from `.env.example`. Run Workers locally with `npm run dev:indexer` or `npm run dev:reviewer-access`; apply D1 migrations with Wrangler. Run the Rust suite with `cargo test --workspace`, evaluator probe checks with `node --test evaluators/service-availability/test/probe.test.mjs`, and local dependency audits with `cargo audit --file Cargo.lock` and `npm audit --audit-level=high`. Keep examples reproducible against NEAR testnet.
 
 ## Coding Style & Naming Conventions
 
@@ -15,6 +15,8 @@ For Markdown, use descriptive ATX headings, short paragraphs, and fenced code bl
 ## Testing Guidelines
 
 Add tests alongside each implementation module. Contract tests use NEAR's mock runtime and deterministic timestamps to cover state transitions, callback handling, authorization, and escrow accounting. Include exact temporal boundaries, stale or mismatched evaluation results, amendment consent, adapter limits, and transfer recovery. Worker and SDK changes should cover signed request binding, privacy retention, encryption, replay protection, and error handling. Report checks run and any that could not be run.
+
+GitHub Actions uses the pinned toolchain in `rust-toolchain.toml`; it runs Rust and JavaScript tests, WASM builds, Worker dry-run checks, `cargo audit`, and `npm audit`. Dependabot updates npm, Cargo, and workflow dependencies weekly.
 
 ## Commit & Pull Request Guidelines
 

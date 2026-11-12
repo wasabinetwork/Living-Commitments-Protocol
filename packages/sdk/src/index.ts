@@ -712,6 +712,11 @@ export class LcpClient {
     });
   }
 
+  getStorageRefundBalance(accountId: string): Promise<YoctoNear> {
+    return this.transport.view<YoctoNear>(this.contractId, "get_storage_refund_balance", { account_id: accountId })
+      .catch(() => this.getServiceReportRefundBalance(accountId));
+  }
+
   submitServiceReport(
     id: CommitmentId,
     report: ServiceProbeReport,
@@ -742,6 +747,11 @@ export class LcpClient {
   }
 
   withdrawServiceReportRefund(): Promise<void> {
+    return this.transport.call<void>(this.contractId, "withdraw_service_report_refund", {});
+  }
+
+  withdrawStorageRefund(): Promise<void> {
+    // Keep the existing method name so the Console remains usable before the core upgrade lands.
     return this.transport.call<void>(this.contractId, "withdraw_service_report_refund", {});
   }
 

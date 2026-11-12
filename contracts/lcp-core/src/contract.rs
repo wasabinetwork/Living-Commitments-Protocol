@@ -1166,18 +1166,18 @@ impl Contract {
             request_transaction_hash: Some([0; 32]),
             status: EvaluationStatus::Pending,
         };
-        // This maximum-sized placeholder reserves callback storage for bounded reason codes.
+        // Reserve reason-code and digest space, while keeping pending results semantically empty.
         let record = EvaluationRecord {
             request_id: evaluation_id,
             commitment_id: commitment_id.0,
             request_transaction_hash: Some([0; 32]),
             status: EvaluationStatus::Pending,
-            verdict: Some(Verdict::NonCompliant),
+            verdict: None,
             reason_codes: vec!["X".repeat(MAX_REASON_CODE_BYTES); MAX_REASON_CODES],
             input_hash,
             evidence_hash,
             observed_at_ns,
-            accepted_at_ns: Some(0),
+            accepted_at_ns: None,
             policy_hash: commitment.policy_hash,
             output_hash: Some([0; 32]),
         };
@@ -1194,7 +1194,7 @@ impl Contract {
         let storage_before = env::storage_usage();
         let key = (commitment_id.0, evaluation_id);
         self.evaluation_requests.insert(key, request);
-        self.evaluation_records.insert(key, record);
+        self.evaluation_records.insert(key, record.clone());
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.evaluation_requests.flush();
         self.evaluation_records.flush();
@@ -1218,10 +1218,24 @@ impl Contract {
         self.commitments.flush();
         let callback_state_usage = env::storage_usage();
 
+        // Measure the completed record separately so None values in pending state do not
+        // under-reserve storage for a later accepted callback.
+        let mut record_callback_reserve = record.clone();
+        record_callback_reserve.status = EvaluationStatus::Accepted;
+        record_callback_reserve.verdict = Some(Verdict::NonCompliant);
+        record_callback_reserve.accepted_at_ns = Some(now_ns);
+        self.evaluation_records.insert(key, record_callback_reserve);
+        self.evaluation_records.flush();
+        let record_callback_state_usage = env::storage_usage();
+        self.evaluation_records.insert(key, record.clone());
+        self.evaluation_records.flush();
+
         // Restore the actual pending state; the larger measured footprint remains the bond.
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.commitments.flush();
-        let peak_usage = request_state_usage.max(callback_state_usage);
+        let peak_usage = request_state_usage
+            .max(callback_state_usage)
+            .max(record_callback_state_usage);
         let storage_bytes = peak_usage
             .checked_sub(storage_before)
             .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
@@ -1563,6 +1577,10 @@ impl Contract {
         U128(read_service_report_refund_credit(&account_id).unwrap_or(0))
     }
 
+    pub fn get_storage_refund_balance(&self, account_id: near_sdk::AccountId) -> U128 {
+        U128(read_service_report_refund_credit(&account_id).unwrap_or(0))
+    }
+
     #[payable]
     pub fn request_service_evaluation_from_inbox(&mut self, commitment_id: U64) -> U64 {
         let commitment = self.load_commitment(commitment_id.0);
@@ -1663,10 +1681,18 @@ impl Contract {
     }
 
     pub fn withdraw_service_report_refund(&mut self) {
+        self.withdraw_storage_refund_for_caller();
+    }
+
+    pub fn withdraw_storage_refund(&mut self) {
+        self.withdraw_storage_refund_for_caller();
+    }
+
+    fn withdraw_storage_refund_for_caller(&mut self) {
         let caller = env::predecessor_account_id();
         let amount = read_service_report_refund_credit(&caller)
-            .unwrap_or_else(|| env::panic_str("no service report storage refund is available"));
-        require!(amount > 0, "no service report storage refund is available");
+            .unwrap_or_else(|| env::panic_str("no storage refund credit is available"));
+        require!(amount > 0, "no storage refund credit is available");
         env::storage_remove(&service_report_refund_storage_key(&caller));
         let callback_args = near_sdk::serde_json::to_vec(&json!({
             "account_id": caller,
@@ -1709,6 +1735,24 @@ impl Contract {
                 json!({"account_id": account_id, "amount_yocto": amount.0.to_string()}),
             );
         }
+    }
+
+    #[private]
+    pub fn on_excess_refund(&mut self, account_id: near_sdk::AccountId, amount: U128) {
+        let succeeded = env::promise_results_count() == 1
+            && match env::promise_result_checked(0, 0) {
+                Ok(_) | Err(PromiseError::TooLong(_)) => true,
+                Err(_) => false,
+            };
+        emit_event(
+            if succeeded {
+                "excess_storage_refund_sent"
+            } else {
+                increase_service_report_refund_credit(&account_id, amount.0);
+                "excess_storage_refund_failed"
+            },
+            json!({"account_id": account_id, "amount_yocto": amount.0.to_string()}),
+        );
     }
 
     #[payable]
@@ -1870,12 +1914,12 @@ impl Contract {
             commitment_id: commitment_id.0,
             request_transaction_hash: Some([0; 32]),
             status: EvaluationStatus::Pending,
-            verdict: Some(Verdict::NonCompliant),
+            verdict: None,
             reason_codes: vec!["X".repeat(MAX_REASON_CODE_BYTES); MAX_REASON_CODES],
             input_hash,
             evidence_hash,
             observed_at_ns: now_ns,
-            accepted_at_ns: Some(0),
+            accepted_at_ns: None,
             policy_hash: commitment.policy_hash,
             output_hash: Some([0; 32]),
         };
@@ -1892,7 +1936,7 @@ impl Contract {
         let storage_before = env::storage_usage();
         let key = (commitment_id.0, evaluation_id);
         self.evaluation_requests.insert(key, request);
-        self.evaluation_records.insert(key, record);
+        self.evaluation_records.insert(key, record.clone());
         self.commitments.insert(commitment_id.0, commitment.clone());
         reserve_service_summary(
             commitment_id.0,
@@ -1920,7 +1964,18 @@ impl Contract {
         let callback_state_usage = env::storage_usage();
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.commitments.flush();
-        let peak_usage = request_state_usage.max(callback_state_usage);
+        let mut record_callback_reserve = record.clone();
+        record_callback_reserve.status = EvaluationStatus::Accepted;
+        record_callback_reserve.verdict = Some(Verdict::NonCompliant);
+        record_callback_reserve.accepted_at_ns = Some(now_ns);
+        self.evaluation_records.insert(key, record_callback_reserve);
+        self.evaluation_records.flush();
+        let record_callback_state_usage = env::storage_usage();
+        self.evaluation_records.insert(key, record.clone());
+        self.evaluation_records.flush();
+        let peak_usage = request_state_usage
+            .max(callback_state_usage)
+            .max(record_callback_state_usage);
         let storage_bytes = peak_usage
             .checked_sub(storage_before)
             .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
@@ -4656,12 +4711,12 @@ mod tests {
             commitment_id: CONTRACT_ID,
             request_transaction_hash: Some([0; 32]),
             status: EvaluationStatus::Pending,
-            verdict: Some(Verdict::NonCompliant),
+            verdict: None,
             reason_codes: vec!["X".repeat(MAX_REASON_CODE_BYTES); MAX_REASON_CODES],
             input_hash: PENDING_EVALUATION_INPUT_HASH,
             evidence_hash: PENDING_EVALUATION_EVIDENCE_HASH,
             observed_at_ns: PENDING_EVALUATION_OBSERVED_AT_NS,
-            accepted_at_ns: Some(0),
+            accepted_at_ns: None,
             policy_hash: commitment.policy_hash,
             output_hash: Some([0; 32]),
         };
@@ -6310,9 +6365,19 @@ fn refund_excess(account_id: near_sdk::AccountId, attached: u128, required: u128
         .checked_sub(required)
         .unwrap_or_else(|| env::panic_str("storage deposit underpayment"));
     if excess > 0 {
-        Promise::new(account_id)
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "account_id": account_id,
+            "amount": U128(excess),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize excess refund callback"));
+        let _refund_promise = Promise::new(account_id.clone())
             .transfer(NearToken::from_yoctonear(excess))
-            .detach();
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_excess_refund".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
+            ));
     }
 }
 

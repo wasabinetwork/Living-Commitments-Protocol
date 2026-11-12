@@ -112,6 +112,7 @@ pub enum TrancheStatus {
 #[serde(crate = "near_sdk::serde")]
 pub enum ChallengeStatus {
     Open,
+    /// The arbiter upheld the original evaluation, so the challenge did not invalidate its evidence.
     Upheld,
     Invalidated,
     TimedOut,

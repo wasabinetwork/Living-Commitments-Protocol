@@ -82,7 +82,6 @@ interface CommitmentData {
   serviceAvailabilityPolicy: ServiceAvailabilityPolicyInput | null;
   serviceReportInbox: ServiceReportInboxView[];
   serviceReportInboxAvailable: boolean;
-  serviceReportRefundBalance: string;
   servicePolicyAmendment: ServicePolicyAmendmentView | null;
   latestAuthorityGrant: BoundedPayoutAuthorityGrantView | null;
   governanceMethodsAvailable: boolean;
@@ -141,6 +140,8 @@ export function Dashboard() {
   const [loadingCommitments, setLoadingCommitments] = useState(false);
   const [data, setData] = useState<CommitmentData | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
+  const [storageRefundBalance, setStorageRefundBalance] = useState("0");
+  const [withdrawingStorageRefund, setWithdrawingStorageRefund] = useState(false);
   const [walletRestoring, setWalletRestoring] = useState(true);
   const [loading, setLoading] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -148,7 +149,7 @@ export function Dashboard() {
   const [claiming, setClaiming] = useState(false);
   const [creating, setCreating] = useState(false);
   const [requestingEvaluation, setRequestingEvaluation] = useState(false);
-  const [serviceInboxAction, setServiceInboxAction] = useState<"submit" | "refund" | "reclaim" | null>(null);
+  const [serviceInboxAction, setServiceInboxAction] = useState<"submit" | "reclaim" | null>(null);
   const [expiringEvaluation, setExpiringEvaluation] = useState(false);
   const [challengeAction, setChallengeAction] = useState<ChallengeAction | null>(null);
   const [closureAction, setClosureAction] = useState<ClosureAction | null>(null);
@@ -203,6 +204,19 @@ export function Dashboard() {
     })();
     return () => { active = false; };
   }, [ensureConnector]);
+
+  useEffect(() => {
+    let active = true;
+    if (!accountId || !CONTRACT_ID) {
+      setStorageRefundBalance("0");
+      return () => { active = false; };
+    }
+    const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+    void client.getStorageRefundBalance(accountId)
+      .then((balance) => { if (active) setStorageRefundBalance(balance); })
+      .catch(() => { if (active) setStorageRefundBalance("0"); });
+    return () => { active = false; };
+  }, [accountId]);
 
   function toggleTheme() {
     const currentTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -292,7 +306,7 @@ export function Dashboard() {
       const authorityViewPromise = client.getLatestBoundedPayoutAuthorityGrant(normalizedId)
         .then((value) => ({ value, available: true }), () => ({ value: null, available: false }));
       const trancheEpoch = eligibility?.claimable_epoch ?? epoch;
-      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche, serviceAvailabilityPolicy, reportInboxState, serviceReportRefundBalance, amendmentView, amendmentRejectionSupported, authorityView] = await Promise.all([
+      const [evaluationHistory, challengeHistory, evaluationTimeoutNs, activeChallenge, tranche, serviceAvailabilityPolicy, reportInboxState, amendmentView, amendmentRejectionSupported, authorityView] = await Promise.all([
         Promise.all(evaluationIds.map((evaluationId) => client.getEvaluation(normalizedId, evaluationId)))
           .then((records) => records.filter((record): record is EvaluationRecordView => record !== null)),
         Promise.all(evaluationIds.map((evaluationId) => client.getChallengeForEvaluation(normalizedId, evaluationId)))
@@ -309,9 +323,6 @@ export function Dashboard() {
           ? client.getServiceReportInbox(normalizedId, commitment.next_evaluation_id)
             .then((value) => ({ value, available: true as const }), () => ({ value: [], available: false as const }))
           : Promise.resolve({ value: [], available: false as const }),
-        accountId && policy?.version === 3
-          ? client.getServiceReportRefundBalance(accountId).catch(() => "0")
-          : Promise.resolve("0"),
         amendmentViewPromise,
         amendmentRejectionSupportPromise,
         authorityViewPromise,
@@ -324,7 +335,7 @@ export function Dashboard() {
         allChallengeHistory.push(activeChallenge);
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
-      setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, serviceReportRefundBalance, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, amendmentRejectionSupported, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, amendmentRejectionSupported, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
       return true;
     } catch (cause) {
       if (!keepCurrentData) setData(null);
@@ -723,13 +734,23 @@ export function Dashboard() {
     }
   }
 
-  async function withdrawServiceReportRefund(): Promise<boolean> {
+  async function refreshStorageRefundBalance(): Promise<void> {
+    if (!accountId || !CONTRACT_ID) return;
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+      setStorageRefundBalance(await client.getStorageRefundBalance(accountId));
+    } catch {
+      setError("The storage refund balance could not be read from NEAR.");
+    }
+  }
+
+  async function withdrawStorageRefund(): Promise<void> {
     const connector = connectorRef.current;
     if (!connector || !accountId) {
-      setError("Connect the NEAR wallet that owns the report storage refund.");
-      return false;
+      setError("Connect the NEAR wallet that owns the storage refund.");
+      return;
     }
-    setServiceInboxAction("refund");
+    setWithdrawingStorageRefund(true);
     setError(null);
     setActionMessage(null);
     try {
@@ -737,15 +758,13 @@ export function Dashboard() {
         rpcUrl: RPC_URL,
         sendTransaction: createWalletSender(connector),
       }));
-      await client.withdrawServiceReportRefund();
-      if (data) await loadCommitment(data.commitment.id);
-      setActionMessage("Report storage refund requested. NEAR will reconcile the transfer; refresh the commitment to check its status.");
-      return true;
+      await client.withdrawStorageRefund();
+      await refreshStorageRefundBalance();
+      setActionMessage("Storage refund requested. NEAR will reconcile the transfer; refresh the balance if the transfer fails.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The report storage refund could not be requested.");
-      return false;
+      setError(cause instanceof Error ? cause.message : "The storage refund could not be requested.");
     } finally {
-      setServiceInboxAction(null);
+      setWithdrawingStorageRefund(false);
     }
   }
 
@@ -1114,6 +1133,16 @@ export function Dashboard() {
         </div>
       </header>
 
+      {accountId && BigInt(storageRefundBalance) > 0n && (
+        <section className="storage-refund-banner" aria-label="Withdrawable storage refunds">
+          <div><strong>Withdrawable storage refund</strong><span>{formatNear(storageRefundBalance)} NEAR · {accountId}</span></div>
+          <button className="copy-payload-button" type="button" onClick={() => void withdrawStorageRefund()} disabled={withdrawingStorageRefund}>
+            {withdrawingStorageRefund ? "Requesting refund…" : "Withdraw refund"}
+          </button>
+          <button className="browser-text-button" type="button" onClick={() => void refreshStorageRefundBalance()} disabled={withdrawingStorageRefund}>Refresh balance</button>
+        </section>
+      )}
+
       <section className="intro" id="top">
         <div className="intro-copy">
           <p className="eyebrow"><span className="eyebrow-line" />ONGOING PROMISES, MADE VERIFIABLE</p>
@@ -1268,7 +1297,6 @@ export function Dashboard() {
                   onExpire={expirePendingEvaluation}
                   onSubmit={submitServiceEvaluation}
                   onSubmitReport={submitServiceReport}
-                  onWithdrawRefund={withdrawServiceReportRefund}
                   onReclaimReport={reclaimServiceReport}
                   onSignMessage={signWalletMessage}
                 />
@@ -1605,8 +1633,14 @@ export function Dashboard() {
         </div>
         <nav className="footer-links" aria-label="Project links">
           <a href="https://gama.works/" target="_blank" rel="noopener noreferrer">Built by GAMA Works</a>
-          <a href="https://x.com/WasabiNetwork" target="_blank" rel="noopener noreferrer">Developed by @WasabiNetwork</a>
-          <a href="https://github.com/wasabinetwork/Living-Commitments-Protocol" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a className="footer-icon-link" href="https://x.com/WasabiNetwork" target="_blank" rel="noopener noreferrer">
+            <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M23.953 4.569a10 10 0 0 1-2.825.775 4.932 4.932 0 0 0 2.163-2.723 9.99 9.99 0 0 1-3.127 1.195 4.916 4.916 0 0 0-8.384 4.482A13.943 13.943 0 0 1 1.662 3.168a4.822 4.822 0 0 0-.665 2.475c0 1.708.87 3.216 2.188 4.099a4.904 4.904 0 0 1-2.228-.616v.06c0 2.386 1.698 4.374 3.95 4.826a4.936 4.936 0 0 1-2.224.084c.63 1.956 2.445 3.379 4.6 3.419A9.87 9.87 0 0 1 0 19.54a13.9 13.9 0 0 0 7.548 2.212c9.057 0 14.01-7.503 14.01-14.01 0-.213-.005-.425-.014-.636a10.012 10.012 0 0 0 2.46-2.548z" /></svg>
+            <span className="visually-hidden">Developed by @WasabiNetwork on Twitter</span>
+          </a>
+          <a className="footer-icon-link" href="https://github.com/wasabinetwork/Living-Commitments-Protocol" target="_blank" rel="noopener noreferrer">
+            <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M12 .297a12 12 0 0 0-3.79 23.39c.6.112.82-.258.82-.577v-2.234c-3.338.726-4.043-1.416-4.043-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.09-.745.083-.73.083-.73 1.205.084 1.84 1.237 1.84 1.237 1.07 1.835 2.807 1.305 3.492.998.107-.776.418-1.306.762-1.607-2.665-.304-5.467-1.333-5.467-5.932 0-1.31.468-2.381 1.236-3.221-.124-.303-.536-1.524.118-3.176 0 0 1.008-.323 3.301 1.23a11.52 11.52 0 0 1 6.008 0c2.293-1.553 3.3-1.23 3.3-1.23.655 1.652.243 2.873.12 3.176.77.84 1.234 1.911 1.234 3.221 0 4.61-2.807 5.625-5.48 5.922.43.37.814 1.102.814 2.222v3.296c0 .322.216.694.825.576A12 12 0 0 0 12 .297z" /></svg>
+            <span className="visually-hidden">Living Commitments Protocol on GitHub</span>
+          </a>
         </nav>
       </footer>
     </main>
@@ -1759,7 +1793,7 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
       });
     } else if (action.kind === "challenge-upheld" && action.challenge) {
       points.push({
-        label: "Challenge upheld · evidence retained",
+        label: "Evaluation upheld · evidence retained",
         detail: `The arbiter upheld evaluation #${action.challenge.evaluation_id}; its compliant evidence remains valid.`,
         atNs: action.atNs,
         source: "recorded",
@@ -2285,7 +2319,6 @@ function ServiceAvailabilityEvidenceCard({
   onExpire,
   onSubmit,
   onSubmitReport,
-  onWithdrawRefund,
   onReclaimReport,
   onSignMessage,
 }: {
@@ -2297,7 +2330,6 @@ function ServiceAvailabilityEvidenceCard({
   onExpire: () => Promise<void>;
   onSubmit: (reports: SignedProbeReport[] | null, storageDeposit: string) => Promise<void>;
   onSubmitReport: (report: ServiceProbeReport) => Promise<boolean>;
-  onWithdrawRefund: () => Promise<boolean>;
   onReclaimReport: (evaluationId: string, sourceId: string) => Promise<boolean>;
   onSignMessage: (message: string, nonce: Uint8Array, recipient: string, callbackUrl: string) => Promise<NearSignedMessage>;
 }) {
@@ -2691,12 +2723,6 @@ function ServiceAvailabilityEvidenceCard({
               <button type="button" className="lookup-button" onClick={() => void onSubmit(null, parseNearToYocto(DEFAULT_EVALUATION_STORAGE_DEPOSIT))} disabled={busy || blocked || !operationsReady}>
                 Request evaluation from {activeInboxReports.length} inbox report{activeInboxReports.length === 1 ? "" : "s"}
               </button>
-            </div>
-          )}
-          {data.serviceReportInboxAvailable && accountId && BigInt(data.serviceReportRefundBalance) > 0n && (
-            <div className="service-inbox-refund">
-              <p>Withdrawable report storage credit · {formatNear(data.serviceReportRefundBalance)} NEAR</p>
-              <button type="button" className="copy-payload-button" onClick={() => void onWithdrawRefund()} disabled={busy}>Withdraw storage refund</button>
             </div>
           )}
           <small>Operators pay a temporary storage bond when submitting. It becomes a withdrawable credit after evaluation, replacement, or expiry; failed refunds can be retried.</small>

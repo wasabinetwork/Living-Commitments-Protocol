@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { addFastNearApiKey, createRequestPacer, readNextCanonicalBlocks } from "../src/index.ts";
+import { fastNearAuthHeaders, createRequestPacer, readNextCanonicalBlocks } from "../src/index.ts";
 
 const CONTRACT_ID = "livingcommitmentsprotocol.testnet";
 const LAST_HASH = "last-indexed-hash";
@@ -99,11 +99,9 @@ test("paces concurrent source requests instead of releasing a burst", async () =
   }
 });
 
-test("adds an optional FastNear key as an encoded query parameter without changing URLs when absent", () => {
+test("sends a FastNear API key as a Bearer header instead of a URL parameter", () => {
   const url = "https://testnet.neardata.xyz/v0/block/123?source=test";
-  assert.equal(addFastNearApiKey(url, undefined), url);
-
-  const authenticated = new URL(addFastNearApiKey(url, "key with spaces"));
-  assert.equal(authenticated.searchParams.get("source"), "test");
-  assert.equal(authenticated.searchParams.get("apiKey"), "key with spaces");
+  assert.equal(new URL(url).searchParams.has("apiKey"), false);
+  assert.deepEqual(fastNearAuthHeaders(undefined), {});
+  assert.deepEqual(fastNearAuthHeaders("key with spaces"), { Authorization: "Bearer key with spaces" });
 });

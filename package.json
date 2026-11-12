@@ -15,5 +15,9 @@
     "build:indexer": "npm run check --workspace=@lcp/event-indexer",
     "test": "npm run test --workspace=@lcp/sdk && npm run test --workspace=@lcp/event-indexer && npm run test --workspace=@lcp/reviewer-access && node --test evaluators/service-availability/test/probe.test.mjs",
     "build": "npm run build --workspace=@lcp/console"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261110.1": true
   }
 }

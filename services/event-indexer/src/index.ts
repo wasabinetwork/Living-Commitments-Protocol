@@ -7,6 +7,7 @@ const MAX_RESPONSE_BYTES_FALLBACK = 16 * 1024 * 1024;
 const MAX_BLOCKS_PER_RUN_FALLBACK = 20;
 const SOURCE_REQUEST_INTERVAL_MS_FALLBACK = 1_000;
 const BLOCK_FETCH_CONCURRENCY = 4;
+const MAX_SOURCE_REDIRECTS = 3;
 
 type IndexerErrorCode = "SOURCE_UNAVAILABLE" | "SOURCE_RATE_LIMITED" | "INVALID_BLOCK" | "CHAIN_DISCONTINUITY" | "INVALID_CONFIGURATION" | "DATABASE_ERROR" | "RATE_LIMITER_UNAVAILABLE";
 
@@ -158,13 +159,64 @@ async function readJsonLimited(response: Response, maxBytes: number): Promise<un
   }
 }
 
-async function fetchBlock(url: string, maxBytes: number): Promise<unknown> {
-  let response: Response;
+function isFastNearHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "neardata.xyz"
+    || host.endsWith(".neardata.xyz")
+    || host === "fastnear.com"
+    || host.endsWith(".fastnear.com");
+}
+
+export function fastNearAuthHeaders(apiKey: string | undefined): HeadersInit {
+  const key = apiKey?.trim();
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
+async function fetchBlock(url: string, maxBytes: number, apiKey?: string): Promise<unknown> {
+  let sourceUrl: URL;
   try {
-    response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    sourceUrl = new URL(url);
   } catch {
-    throw new IndexerError("SOURCE_UNAVAILABLE", "The finalized block source could not be reached.");
+    throw new IndexerError("INVALID_CONFIGURATION", "The finalized block source URL is invalid.");
   }
+  if (sourceUrl.protocol !== "https:" || sourceUrl.username || sourceUrl.password) {
+    throw new IndexerError("INVALID_CONFIGURATION", "The finalized block source must use HTTPS without URL credentials.");
+  }
+  if (apiKey && !isFastNearHost(sourceUrl.hostname)) {
+    throw new IndexerError("INVALID_CONFIGURATION", "FastNear authentication requires a FastNear source host.");
+  }
+
+  let response: Response;
+  for (let redirects = 0; ; redirects += 1) {
+    try {
+      response = await fetch(sourceUrl.toString(), {
+        headers: fastNearAuthHeaders(apiKey),
+        redirect: "manual",
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch {
+      throw new IndexerError("SOURCE_UNAVAILABLE", "The finalized block source could not be reached.");
+    }
+
+    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+    const location = response.headers.get("Location");
+    await response.body?.cancel();
+    if (!location || redirects >= MAX_SOURCE_REDIRECTS) {
+      throw new IndexerError("SOURCE_UNAVAILABLE", "The finalized block source returned an invalid redirect.");
+    }
+    try {
+      sourceUrl = new URL(location, sourceUrl);
+    } catch {
+      throw new IndexerError("SOURCE_UNAVAILABLE", "The finalized block source returned an invalid redirect.");
+    }
+    if (sourceUrl.protocol !== "https:" || sourceUrl.username || sourceUrl.password) {
+      throw new IndexerError("SOURCE_UNAVAILABLE", "The finalized block source redirected to an invalid URL.");
+    }
+    if (apiKey && !isFastNearHost(sourceUrl.hostname)) {
+      throw new IndexerError("SOURCE_UNAVAILABLE", "The authenticated block source redirected outside FastNear.");
+    }
+  }
+
   if (!response.ok) {
     await response.body?.cancel();
     if (response.status === 429) {
@@ -300,13 +352,6 @@ export function createRequestPacer(intervalMs: number): () => Promise<void> {
   };
 }
 
-export function addFastNearApiKey(url: string, apiKey: string | undefined): string {
-  if (!apiKey) return url;
-  const authenticatedUrl = new URL(url);
-  authenticatedUrl.searchParams.set("apiKey", apiKey);
-  return authenticatedUrl.toString();
-}
-
 async function getState(env: Env): Promise<IndexerStateRow | null> {
   return env.DB.prepare(
     `SELECT next_block_height, last_processed_height, last_block_hash,
@@ -413,7 +458,7 @@ async function runIndexer(env: Env): Promise<{ processedBlocks: number; skippedH
   const waitForSourceSlot = createRequestPacer(sourceRequestIntervalMs);
   const requestBlock = async (url: string, maxBytes: number): Promise<unknown> => {
     await waitForSourceSlot();
-    return fetchBlock(addFastNearApiKey(url, fastNearApiKey), maxBytes);
+    return fetchBlock(url, maxBytes, fastNearApiKey);
   };
   const stateTableReady = await env.DB.prepare(
     `INSERT OR IGNORE INTO indexer_state (
