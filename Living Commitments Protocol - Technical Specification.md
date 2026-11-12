@@ -1446,6 +1446,10 @@ The user's Firefox validation covered the lifecycle across multiple fixtures: co
 
 # 15. Security Review Checklist
 
+### Account-level upgrade authority
+
+Neither the LCP core nor the bounded payout adapter has an owner, migration, or self-upgrade method. However, a NEAR account `FullAccess` key can deploy replacement code, so a value-holding contract account that retains such a key is still upgradeable. The v1 mainnet policy is immutable deployment: independently audit and reproducibly build the release, deploy and verify code and initialization, then remove every access key from the core and each funded adapter account and verify the finalized key lists are empty. Testnet accounts remain upgradeable during development. V1 has no emergency upgrade path; future releases use new accounts, and existing commitments remain on the old contract without automatic migration. See [TESTING.md](TESTING.md) for the reproducible build and release gate.
+
 Before deployment, verify:
 
 - Every external callback is appropriately restricted.
@@ -1463,6 +1467,9 @@ Before deployment, verify:
 - All financial arithmetic is checked.
 - No administrator can withdraw escrow arbitrarily.
 - The deployed WASM hash matches the published source build.
+- The published source build is reproducible with the NEP-330 metadata and pinned image digest in both contract manifests.
+- Each mainnet LCP or funded adapter account has an empty finalized access-key list after code and initialization verification.
+- No mainnet release process later adds an access key or deploys replacement code to a v1 account.
 - The evaluator's exact input/output can be independently inspected.
 - The trust model is documented accurately.
 

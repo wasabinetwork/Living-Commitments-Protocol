@@ -20,6 +20,12 @@ The `evaluators/maintenance-heartbeat` crate reads one canonical JSON request, v
 
 Additional P1 paths include v3 service-policy amendments, a bounded payout adapter, and the consent-based reviewer-access Worker. The testnet reviewer Worker and private Cloudflare storage are deployed, but Console access remains gated pending independent security review. A testnet-only Console flow now deploys and initializes the checked adapter WASM, funds its pool, and reads pool status through a connected NEAR wallet. Amendment and adapter lifecycle validation on testnet remains pending, as does the reviewer security review. Private evaluator retrieval remains gated on a separately verified OutLayer secret flow. See [P1-ARCHITECTURE.md](P1-ARCHITECTURE.md) for their boundaries, and [SECURITY-REVIEW.md](services/reviewer-access/SECURITY-REVIEW.md) for the reviewer-access audit scope.
 
+## Contract upgrade authority and mainnet policy
+
+The LCP core and bounded payout adapter do not expose owner, migration, or self-upgrade methods. NEAR account-level `FullAccess` keys still control code deployment; a key holder could replace a value-holding contract's code. For v1 mainnet, the chosen policy is **immutable deployment**: after independent audit and reproducible build verification, deploy the core and each value-holding adapter, verify code and initialization, remove every access key from those contract accounts, and confirm their finalized access-key lists are empty. This gate has not been performed; testnet accounts remain upgradeable for development.
+
+There will be no administrator or emergency upgrade path for v1. A future protocol release must use a new account and version; existing v1 commitments remain on the original contract and are not migrated automatically. This trades emergency repair flexibility for eliminating account-key code replacement after launch. The mainnet release checklist and exact build commands are in [TESTING.md](TESTING.md).
+
 The contract currently pins `near-sdk` 5.29.1 and declares Rust 1.94. The Borsh policy layout stays fixed: v1 stores the raw public key, while v2 uses its existing 32-byte key slot for the SHA-256 fingerprint of a typed NEAR public key. Evaluator input JSON has its own canonical byte digest. Follow [CONSOLE-GUIDE.md](CONSOLE-GUIDE.md) to tour the testnet fixtures and wallet flow.
 
 ## Development
@@ -31,6 +37,8 @@ cargo build -p lcp-core -p maintenance-heartbeat
 cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release
 cargo build -p service-availability-evaluator --target wasm32-wasip2 --release
 ```
+
+These ordinary Cargo commands are for local development. Use the [pinned reproducible build](TESTING.md#reproducible-contract-builds-and-mainnet-key-gate) for release artifacts.
 
 Install the JavaScript workspaces, then build the TypeScript SDK:
 
