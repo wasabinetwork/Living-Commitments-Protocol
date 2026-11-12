@@ -1121,7 +1121,7 @@ dependencies = [
 name = "lcp-core"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58 0.5.1",
  "near-sdk",
 ]
@@ -1166,7 +1166,7 @@ dependencies = [
 name = "maintenance-heartbeat"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58 0.5.1",
  "ed25519-dalek",
  "serde",
@@ -2064,7 +2064,7 @@ dependencies = [
 name = "service-availability-evaluator"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bs58 0.5.1",
  "ed25519-dalek",
  "serde",
