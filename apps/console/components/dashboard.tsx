@@ -1604,9 +1604,9 @@ export function Dashboard() {
           <p>Health is time-derived. The contract is the authority.</p>
         </div>
         <nav className="footer-links" aria-label="Project links">
-          <a href="https://gama.works/">Built by GAMA Works</a>
-          <a href="https://x.com/WasabiNetwork">Developed by @WasabiNetwork</a>
-          <a href="https://github.com/wasabinetwork/Living-Commitments-Protocol">GitHub</a>
+          <a href="https://gama.works/" target="_blank" rel="noopener noreferrer">Built by GAMA Works</a>
+          <a href="https://x.com/WasabiNetwork" target="_blank" rel="noopener noreferrer">Developed by @WasabiNetwork</a>
+          <a href="https://github.com/wasabinetwork/Living-Commitments-Protocol" target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
       </footer>
     </main>
@@ -2142,7 +2142,7 @@ function IndexedEventHistory({ commitmentId }: { commitmentId: string }) {
                 </div>
                 <time>{formatDate(item.block_timestamp_ns)}</time>
                 {item.transaction_hash && (
-                  <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${item.transaction_hash}`} target="_blank" rel="noreferrer">
+                  <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${item.transaction_hash}`} target="_blank" rel="noopener noreferrer">
                     NEAR transaction ↗
                   </a>
                 )}
@@ -4440,13 +4440,13 @@ function EvaluationProofReference({
   return (
     <div className="evaluation-proof">
       <div className="evaluation-proof-links">
-        <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${transactionHash}`} target="_blank" rel="noreferrer">
+        <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${transactionHash}`} target="_blank" rel="noopener noreferrer">
           NEAR transaction ↗
         </a>
         {attestation.kind === "found" && attestation.reportUrl ? (
-          <a href={attestation.reportUrl} target="_blank" rel="noreferrer">Open OutLayer report ↗</a>
+          <a href={attestation.reportUrl} target="_blank" rel="noopener noreferrer">Open OutLayer report ↗</a>
         ) : (
-          <a href="https://app.outlayer.ai/docs/trust-verification" target="_blank" rel="noreferrer">OutLayer verification guide ↗</a>
+          <a href="https://app.outlayer.ai/docs/trust-verification" target="_blank" rel="noopener noreferrer">OutLayer verification guide ↗</a>
         )}
       </div>
       <p className={`attestation-status attestation-${attestation.kind}`} role="status">
