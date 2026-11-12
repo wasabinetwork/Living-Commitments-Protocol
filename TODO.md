@@ -13,7 +13,8 @@
 - [x] **Finding 2 — upgrade policy and reproducible-build source changes:** selected immutable v1 mainnet accounts; added NEP-330 repository, pinned image/digest, and locked build command to both contract manifests; reproducible builds passed from source commit `dff3085` (hashes in `TESTING.md`); documented the key-removal gate and no-migration consequence.
 - [ ] **Finding 2 — mainnet release gate:** after audit and deployment, remove all access keys from the core and every value-holding adapter account, then record finalized empty key lists and deployed code hashes. Testnet accounts remain upgradeable.
 - [x] **Finding 3 — reviewer RPC quorum source remediation:** the Worker now requires 2-of-3 providers to agree on the same finalized block and on each pinned access-key or contract read. A single higher block without quorum, mismatched state, invalid provider configuration, or fewer than two responses fails closed. Provider URLs must use three distinct HTTPS origins.
-- [ ] **Finding 3 — testnet deployment and acceptance:** deploy the quorum build, then verify a single-provider outage still permits reads when the other two agree, and that conflicting block/state responses return `NEAR_UNAVAILABLE`. Independent review should confirm the providers are operated independently; distinct URLs alone do not prove independent infrastructure.
+- [x] **Finding 3 — testnet deployment:** deployed the quorum build to `lcp-reviewer-access` as version `e06e33fb-2d6b-459c-a25f-c0d954be365f` on 2026-11-12; `/health` returned HTTP 200.
+- [ ] **Finding 3 — quorum acceptance:** verify a single-provider outage still permits reads when the other two agree, and that conflicting block/state responses return `NEAR_UNAVAILABLE`. `/health` does not exercise RPC reads. Independent review should confirm the providers are operated independently; distinct URLs alone do not prove independent infrastructure.
 
 ## P0 public-readiness checklist
 

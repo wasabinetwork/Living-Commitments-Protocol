@@ -2,7 +2,7 @@
 
 ## Review status
 
-This brief prepares the reviewer-access Worker for independent review. A scoped internal source pass confirmed the implemented bounds and controls listed below; it is not an audit or production approval. A testnet Worker and private D1/R2 resources are deployed, but the deployed version predates the 2-of-3 RPC quorum remediation in the current source. Deploy and acceptance-check the quorum build before relying on the remediation. Do not enable production reviewer access until an independent reviewer has assessed the code, cryptographic flow, deployment configuration, and failure behavior.
+This brief prepares the reviewer-access Worker for independent review. A scoped internal source pass confirmed the implemented bounds and controls listed below; it is not an audit or production approval. The testnet Worker and private D1/R2 resources are deployed. Version `e06e33fb-2d6b-459c-a25f-c0d954be365f` includes the 2-of-3 RPC quorum; manual quorum behavior acceptance remains open. Do not enable production reviewer access until an independent reviewer has assessed the code, cryptographic flow, deployment configuration, and failure behavior.
 
 ## Assets and trust boundaries
 
@@ -16,7 +16,7 @@ This brief prepares the reviewer-access Worker for independent review. A scoped 
 
 - Exact configured browser origins; bounded JSON bodies (12 MiB) and encrypted artifacts (at most 8 MiB).
 - Canonical NEP-413 payload binding, current NEAR access-key checks, finalized maintainer role checks, unique nonces, expiry checks, and per-account request limits.
-- In current source, 2-of-3 agreement across three distinct HTTPS RPC origins for the finalized block and each authorization read; all contract, access-key, and chain-time reads within a request share the same block hash. The checked-in deployment still needs this update.
+- The deployed Worker requires 2-of-3 agreement across three distinct HTTPS RPC origins for the finalized block and each authorization read; all contract, access-key, and chain-time reads within a request share the same block hash. Manual outage/conflict acceptance and independent review remain open.
 - Maintainer approval/rejection and revocation require a current FullAccess key. Reviewer downloads require a signature from the account named in the grant.
 - Private R2 binding, opaque random object keys, ciphertext digest checks, constrained scope, bounded download counts, and response cache protections.
 - Scheduled expiry/revocation cleanup, orphan cleanup, retryable deletion state, and bounded retention for request, signature, and access metadata.

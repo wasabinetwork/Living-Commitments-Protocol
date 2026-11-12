@@ -6,7 +6,7 @@ The browser encrypts a selected artifact with a fresh AES-256-GCM key and wraps 
 
 ## Deployment status
 
-The testnet Worker is deployed at `https://lcp-reviewer-access.wasabinetwork.workers.dev`; its `/health` route returned HTTP 200 on 2026-11-11. It uses the dedicated `lcp-reviewer-access` D1 database and private `lcp-reviewer-private-artifacts` R2 bucket. The Console integration remains disabled pending independent security review. This test deployment does not authorize production use.
+The testnet Worker is deployed at `https://lcp-reviewer-access.wasabinetwork.workers.dev`; version `e06e33fb-2d6b-459c-a25f-c0d954be365f` includes the 2-of-3 RPC quorum and `/health` returned HTTP 200 on 2026-11-12. The health route confirms availability only; manual quorum behavior acceptance remains pending. It uses the dedicated `lcp-reviewer-access` D1 database and private `lcp-reviewer-private-artifacts` R2 bucket. Console integration remains disabled pending independent security review. This test deployment does not authorize production use.
 
 For a new environment, create a dedicated private R2 bucket and D1 database, set their names and IDs in Wrangler configuration, and apply the migrations. Do not enable public R2 access. Keep reviewer storage separate from public evaluator artifacts and the event indexer.
 
