@@ -3767,7 +3767,7 @@ function CreateCommitmentForm({
     maxInstructions: "1000000000",
     maxMemoryMb: "64",
     maxExecutionSeconds: "10",
-    requestTimeoutSeconds: "30",
+    requestTimeoutSeconds: "180",
     storageDepositNear: DEFAULT_STORAGE_DEPOSIT,
   });
   const [selectedTemplateId, setSelectedTemplateId] = useState(POLICY_TEMPLATES[0].id);
@@ -4048,7 +4048,7 @@ function CreateCommitmentForm({
           <FormField label="Maximum instructions"><input inputMode="numeric" value={fields.maxInstructions} onChange={(event) => update("maxInstructions", event.target.value)} required /></FormField>
           <FormField label="Memory limit · MB"><input type="number" min="1" max="4096" step="1" value={fields.maxMemoryMb} onChange={(event) => update("maxMemoryMb", event.target.value)} required /></FormField>
           <FormField label="Execution limit · sec"><input type="number" min="1" max="180" step="1" value={fields.maxExecutionSeconds} onChange={(event) => update("maxExecutionSeconds", event.target.value)} required /></FormField>
-          <FormField label="Evaluator response deadline · sec"><input type="number" min="1" step="1" value={fields.requestTimeoutSeconds} onChange={(event) => update("requestTimeoutSeconds", event.target.value)} required /></FormField>
+          <FormField label="OutLayer response deadline · sec"><input type="number" min="1" max="180" step="1" value={fields.requestTimeoutSeconds} onChange={(event) => update("requestTimeoutSeconds", event.target.value)} required /><small>Default 180 seconds covers OutLayer execution and its callback to NEAR. If the deadline passes, the request ends without a verdict.</small></FormField>
           <FormField label="Draft storage bond · NEAR"><input inputMode="decimal" value={fields.storageDepositNear} onChange={(event) => update("storageDepositNear", event.target.value)} readOnly={evidenceMode === "service_availability"} required /><small>{evidenceMode === "service_availability" ? "Service policies attach a conservative 0.05 NEAR bond; the contract returns the unused amount." : "Any excess is returned by the contract."}</small></FormField>
         </div>
       </details>
