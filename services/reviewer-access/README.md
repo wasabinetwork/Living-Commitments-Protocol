@@ -38,7 +38,7 @@ npm run deploy --workspace=@lcp/reviewer-access
 npm run deploy:preview --workspace=@lcp/reviewer-access
 ```
 
-Before deploying another environment, configure its exact Console origin and apply all three migrations remotely. Do not enable public R2 access. The production `*/15 * * * *` Worker trigger expires pending requests, deletes ciphertext for revoked or expired grants, and retries deletion of unlinked ciphertext left by an interrupted grant write. Active grant/request metadata is retained while access is valid; terminal grant and request metadata, including consent signatures, is deleted after 90 days from the later of closure and last access. Rejected/expired requests without grants are retained 90 days from resolution. Access-event rows are kept for 90 days; nonce and rate-limit rows are removed after their replay and throttle windows.
+Before deploying another environment, configure its exact Console origin and apply all four migrations remotely. Do not enable public R2 access. The production `*/15 * * * *` Worker trigger expires pending requests, deletes ciphertext for revoked or expired grants, and retries deletion of unlinked ciphertext left by an interrupted grant write. Active grant/request metadata is retained while access is valid; terminal grant and request metadata, including consent signatures, is deleted after 90 days from the later of closure and last access. Rejected/expired requests without grants are retained 90 days from resolution. Access-event rows are kept for 90 days; nonce and rate-limit rows are removed after their replay and throttle windows.
 
 ## Data boundary
 
