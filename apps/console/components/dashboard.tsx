@@ -1229,7 +1229,16 @@ export function Dashboard() {
         </div>
         <div className="intro-art" aria-hidden="true">
           <div className="art-orbit orbit-one" /><div className="art-orbit orbit-two" />
-          <div className="art-core"><span className="art-leaf">↗</span></div>
+          <div className="art-core">
+            <svg className="art-mark" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="40" cy="40" r="31" stroke="#C1D9C1" strokeWidth="2" strokeDasharray="1 6" strokeLinecap="round" />
+              <circle cx="40" cy="9" r="4" fill="#E1EEE0" />
+              <circle cx="67" cy="56" r="4" fill="#E1EEE0" />
+              <circle cx="13" cy="56" r="4" fill="#E1EEE0" />
+              <path d="M40 17 55 22.5v14c0 11-5.8 19.4-15 25.5-9.2-6.1-15-14.5-15-25.5v-14L40 17Z" stroke="#F4F8F2" strokeWidth="2.5" strokeLinejoin="round" />
+              <path d="m32.5 39.5 5 5L48 33" stroke="#F4F8F2" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
           <span className="art-label label-top">EVIDENCE</span>
           <span className="art-label label-right">TIME</span>
           <span className="art-label label-bottom">CONSEQUENCE</span>
