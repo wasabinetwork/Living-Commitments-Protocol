@@ -61,7 +61,7 @@ The LCP Console can inspect a commitment by ID or browse recent records in bound
 
 The testnet Console configuration enables the public indexed event archive at `https://lcp-event-indexer.wasabinetwork.workers.dev`. For local development, set `NEXT_PUBLIC_LCP_EVENT_INDEXER_URL=http://127.0.0.1:8787`, apply the local D1 migration, and start the Worker as described in [the event indexer guide](services/event-indexer/README.md). The archive is paginated and informational; the LCP Console continues to read health, eligibility, and settlement from NEAR.
 
-The testnet reviewer Worker is deployed with a separate private R2 bucket and D1 database, but its deployed version predates the nine local audit remediations. Keep the Console panel disabled until updated code and migration 0004 are deployed, acceptance passes, and follow-up review is complete. Follow [the reviewer-access guide](services/reviewer-access/README.md); do not set `NEXT_PUBLIC_LCP_REVIEWER_ACCESS_URL` or enable a public bucket before that gate closes.
+The reviewer Worker security remediations are deployed to production and preview, and migration 0004 is applied. Manual acceptance and independent follow-up review remain open, so keep the Console panel disabled and `NEXT_PUBLIC_LCP_REVIEWER_ACCESS_URL` blank. Preview and production currently share the private D1 database, its rate counters, and the R2 bucket; see the queued isolation decision in [TODO.md](TODO.md). Follow [the reviewer-access guide](services/reviewer-access/README.md); do not enable a public bucket.
 
 ### Cloudflare Pages
 
