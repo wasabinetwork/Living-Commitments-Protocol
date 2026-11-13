@@ -131,6 +131,8 @@ type ColorTheme = "light" | "dark";
 export function Dashboard() {
   const connectorRef = useRef<NearConnectorPort | null>(null);
   const connectorInitRef = useRef<Promise<NearConnectorPort> | null>(null);
+  const recordViewRef = useRef<HTMLDivElement | null>(null);
+  const displayedCommitmentIdRef = useRef<string | null>(null);
   const [theme, setTheme] = useState<ColorTheme | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
   const [commitments, setCommitments] = useState<CommitmentSummaryView[]>([]);
@@ -159,6 +161,7 @@ export function Dashboard() {
   const [activationStorageNear, setActivationStorageNear] = useState(DEFAULT_STORAGE_DEPOSIT);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const currentCommitmentId = data?.commitment.id ?? null;
 
   const ensureConnector = useCallback(async (): Promise<NearConnectorPort> => {
     if (connectorRef.current) return connectorRef.current;
@@ -217,6 +220,18 @@ export function Dashboard() {
       .catch(() => { if (active) setStorageRefundBalance("0"); });
     return () => { active = false; };
   }, [accountId]);
+
+  useEffect(() => {
+    if (!currentCommitmentId) {
+      displayedCommitmentIdRef.current = null;
+      return;
+    }
+    if (displayedCommitmentIdRef.current === currentCommitmentId) return;
+    displayedCommitmentIdRef.current = currentCommitmentId;
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    const frame = window.requestAnimationFrame(() => recordViewRef.current?.scrollIntoView({ behavior, block: "start" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentCommitmentId]);
 
   function toggleTheme() {
     const currentTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -1071,6 +1086,7 @@ export function Dashboard() {
   const canSubmitClaim = Boolean(data && claimAllowed && correctBeneficiary && !claiming);
   const claimableEpoch = data?.eligibility?.claimable_epoch ?? null;
   const currentClaimEpoch = data?.eligibility?.current_epoch ?? null;
+  const readyInboxReportCount = data?.serviceReportInbox.filter((report) => !report.expired).length ?? 0;
   const claimWindowWasPaused = Boolean(
     claimAllowed && (data?.eligibility?.claim_window_resumed === true
       || (claimableEpoch !== null
@@ -1090,6 +1106,60 @@ export function Dashboard() {
       evidenceExpiresAtNs ? `expires ${formatDate(evidenceExpiresAtNs)}` : "expiration unavailable",
     ].join(" · ")
     : "No accepted compliant evidence";
+  const activeJourneyStep = data
+    ? data.commitment.lifecycle === "Draft"
+      ? "setup"
+      : data.commitment.lifecycle === "Closed" || data.eligibility?.eligible
+        ? "payout"
+        : data.commitment.active_challenge_id
+          ? "review"
+          : data.commitment.pending_evaluation_id
+            ? "evidence"
+            : data.evaluation?.status === "Accepted"
+              ? "review"
+              : "evidence"
+    : null;
+  const setupStageStatus = data?.commitment.lifecycle === "Draft"
+    ? "Action needed"
+    : data?.commitment.lifecycle === "Closed" ? "Closed" : "Ready";
+  const evidenceStageStatus = data?.commitment.pending_evaluation_id
+    ? "Evaluation running"
+    : data?.evaluation?.status === "Accepted"
+      ? `Accepted · ${data.evaluation?.verdict ?? "No verdict"}`
+      : readyInboxReportCount > 0
+        ? `${readyInboxReportCount} report${readyInboxReportCount === 1 ? "" : "s"} ready`
+        : "Evidence needed";
+  const reviewStageStatus = data?.commitment.active_challenge_id
+    ? "Challenge open"
+    : data?.challenge?.status ?? (data?.evaluation?.status === "Accepted" ? "Challenge window" : "No challenge");
+  const payoutStageStatus = data?.eligibility?.eligible
+    ? "Ready to claim"
+    : data?.commitment.lifecycle === "Closed" ? "Closed" : "Waiting";
+  const connectedRoles = data && accountId
+    ? [
+      accountId === data.commitment.creator ? "Creator" : null,
+      accountId === data.commitment.maintainer ? "Maintainer" : null,
+      accountId === data.policy?.budget.sponsor ? "Sponsor" : null,
+      accountId === data.commitment.arbiter ? "Arbiter" : null,
+      accountId === data.policy?.budget.beneficiary ? "Beneficiary" : null,
+      data.serviceAvailabilityPolicy?.sources.some((source) => source.operator_id === accountId) ? "Operator" : null,
+    ].filter((role): role is string => role !== null)
+    : [];
+  const nextStepCopy = !data
+    ? "Select a commitment to see its next action."
+    : data.commitment.lifecycle === "Draft"
+      ? "Fund the escrow and evaluator, then activate the commitment."
+      : data.commitment.lifecycle === "Closed"
+        ? "The commitment is closed. Review settlement and any residual refund."
+        : data.commitment.active_challenge_id
+          ? "A challenge is open. The arbiter can resolve it before the deadline; anyone can expire it afterward."
+          : data.commitment.pending_evaluation_id
+            ? "The evaluator is working. Refresh after its callback to read the result."
+            : data.eligibility?.eligible
+              ? `Epoch ${data.eligibility.claimable_epoch ?? data.eligibility.current_epoch ?? "This tranche"} is eligible; the beneficiary can claim it now.`
+              : data.evaluation?.status === "Accepted"
+                ? "Evidence was accepted. Follow the policy clock until the next tranche becomes eligible."
+                : "Collect operator reports and request an evaluation when the configured quorum is ready.";
 
   return (
     <main className="app-shell">
@@ -1151,6 +1221,10 @@ export function Dashboard() {
             Commitments stay alive through fresh evidence. On NEAR, that evidence can unlock support while the promise is being kept.
           </p>
           <div className="intro-proof"><span className="proof-icon">↗</span><span>Health and eligibility are read from the contract.</span></div>
+          <div className="intro-actions">
+            <a className="lookup-button" href="#commitment-id">Inspect a commitment <span aria-hidden="true">↓</span></a>
+            <a className="browser-button" href="#create-commitment">Create a commitment</a>
+          </div>
         </div>
         <div className="intro-art" aria-hidden="true">
           <div className="art-orbit orbit-one" /><div className="art-orbit orbit-two" />
@@ -1245,7 +1319,7 @@ export function Dashboard() {
           )}
         </section>
 
-        <details className="create-commitment">
+        <details className="create-commitment" id="create-commitment">
           <summary><span className="create-plus">＋</span><span><strong>Create a commitment</strong><small>Set a policy and create a draft on NEAR Testnet</small></span><span className="summary-arrow">⌄</span></summary>
           <CreateCommitmentForm
             connectedAccountId={accountId}
@@ -1260,123 +1334,222 @@ export function Dashboard() {
         {actionMessage && <div className="notice notice-success" role="status"><span className="notice-icon">✓</span>{actionMessage}</div>}
 
         {data ? (
-          <div className="record-view">
-            {data.commitment.lifecycle === "Draft" && data.policy && (
-              <DraftSetupCard
-                data={data}
-                accountId={accountId}
-                escrowFundingNear={escrowFundingNear}
-                operationsFundingNear={operationsFundingNear}
-                activationStorageNear={activationStorageNear}
-                busyAction={setupAction}
-                onEscrowFundingChange={setEscrowFundingNear}
-                onOperationsFundingChange={setOperationsFundingNear}
-                onActivationStorageChange={setActivationStorageNear}
-                onAction={submitSetupAction}
-              />
-            )}
-            {data.commitment.lifecycle === "Active" && data.policy && (
-              <ActiveOperationsFundingCard
-                data={data}
-                accountId={accountId}
-                operationsFundingNear={operationsFundingNear}
-                busyAction={setupAction}
-                onOperationsFundingChange={setOperationsFundingNear}
-                onFund={submitSetupAction}
-              />
-            )}
-            {data.commitment.lifecycle === "Active" && data.policy && (data.policy.version === 3
-              ? (
-                <ServiceAvailabilityEvidenceCard
-                  key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+          <div className="record-view" ref={recordViewRef}>
+            <section className="journey-overview" id="journey-overview" aria-label="Commitment overview">
+              <section className={`health-panel health-${health?.toLowerCase() ?? "unknown"}`}>
+                <div className="health-panel-top">
+                  <div>
+                    <p className="eyebrow">EFFECTIVE HEALTH <span className="chain-source">NEAR · {data.commitment.lifecycle.toUpperCase()}</span></p>
+                    <div className="health-title-row"><span className="health-indicator" /><h3>{healthLabel(health)}</h3></div>
+                    <p className="health-copy">{healthDescription(health, data.eligibility)}</p>
+                  </div>
+                  <span className="commitment-number">#{data.commitment.id}</span>
+                </div>
+                <div className="health-divider" />
+                <div className="health-facts">
+                  <Fact label="SUBJECT" value={data.commitment.subject} />
+                  <Fact label="MAINTAINER" value={data.commitment.maintainer} mono />
+                  <Fact label="BENEFICIARY" value={data.policy?.budget.beneficiary ?? "Unknown"} mono />
+                  <Fact label="POLICY VERSION" value={`v${data.commitment.policy_version}`} mono />
+                </div>
+                {data.policy && [data.commitment.maintainer, data.policy.budget.sponsor, data.policy.budget.beneficiary].includes(data.commitment.arbiter) && (
+                  <div className="notice notice-warning" role="note">
+                    <span className="notice-icon">!</span>
+                    This commitment predates arbiter separation and assigns {data.commitment.arbiter} another direct role. The arbiter cannot open a challenge on this commitment, but can still resolve one. New commitments require an independent arbiter.
+                  </div>
+                )}
+              </section>
+              <div className="metrics-grid">
+                <MetricCard
+                  eyebrow="LAST COMPLIANT EVIDENCE"
+                  title={data.commitment.last_good_observed_at_ns ? formatDate(data.commitment.last_good_observed_at_ns) : "No accepted evidence"}
+                  detail={lastGoodEvidenceDetail}
+                  icon="◷"
+                />
+                <NextTrancheMetric data={data} />
+                <MetricCard
+                  eyebrow="AVAILABLE ESCROW"
+                  title={`${formatNear(data.escrow?.free_yocto ?? "0")} NEAR`}
+                  detail={`${formatNear(data.escrow?.paid_yocto ?? "0")} NEAR released so far`}
+                  icon="◈"
+                />
+              </div>
+            </section>
+
+            <div className="journey-next-step">
+              <div><span className="journey-next-eyebrow">NEXT IN THIS COMMITMENT</span><strong>{nextStepCopy}</strong>
+                <small className="journey-wallet-context">{accountId
+                  ? `Connected wallet · ${shortenAccount(accountId)}${connectedRoles.length > 0 ? ` · ${connectedRoles.join(" / ")}` : " · not assigned to a commitment role"}`
+                  : "No wallet connected · connect the account named in the next step when a transaction is needed."}</small>
+              </div>
+              {activeJourneyStep && <a href={`#journey-${activeJourneyStep}`}>Go to next step <span aria-hidden="true">↓</span></a>}
+            </div>
+
+            <nav className="commitment-journey-nav" aria-label="Commitment journey">
+              <a className={activeJourneyStep === "setup" ? "is-current" : undefined} href="#journey-setup" aria-current={activeJourneyStep === "setup" ? "step" : undefined}>
+                <span className="journey-nav-index">01</span><span className="journey-nav-copy"><strong>Setup</strong><small>{setupStageStatus}</small></span>
+              </a>
+              <a className={activeJourneyStep === "evidence" ? "is-current" : undefined} href="#journey-evidence" aria-current={activeJourneyStep === "evidence" ? "step" : undefined}>
+                <span className="journey-nav-index">02</span><span className="journey-nav-copy"><strong>Evidence</strong><small>{evidenceStageStatus}</small></span>
+              </a>
+              <a className={activeJourneyStep === "review" ? "is-current" : undefined} href="#journey-review" aria-current={activeJourneyStep === "review" ? "step" : undefined}>
+                <span className="journey-nav-index">03</span><span className="journey-nav-copy"><strong>Review</strong><small>{reviewStageStatus}</small></span>
+              </a>
+              <a className={activeJourneyStep === "payout" ? "is-current" : undefined} href="#journey-payout" aria-current={activeJourneyStep === "payout" ? "step" : undefined}>
+                <span className="journey-nav-index">04</span><span className="journey-nav-copy"><strong>Payout</strong><small>{payoutStageStatus}</small></span>
+              </a>
+              <a className="journey-nav-secondary" href="#commitment-id">Choose another</a>
+              <a className="journey-nav-secondary" href="#create-commitment">Create new</a>
+            </nav>
+
+            <section className={`journey-stage ${activeJourneyStep === "setup" ? "journey-stage-current" : ""}`} id="journey-setup" aria-labelledby="journey-setup-title">
+              <JourneyStageHeading number="01" title="Set up and fund" description="Prepare the commitment before operators submit evidence." status={setupStageStatus} current={activeJourneyStep === "setup"} titleId="journey-setup-title" />
+              {data.commitment.lifecycle === "Draft" && data.policy && (
+                <DraftSetupCard
                   data={data}
                   accountId={accountId}
-                  busy={requestingEvaluation || expiringEvaluation || serviceInboxAction !== null || loading}
-                  pendingTimeoutNs={data.evaluationTimeoutNs}
-                  onRefresh={() => loadCommitment(data.commitment.id)}
-                  onExpire={expirePendingEvaluation}
-                  onSubmit={submitServiceEvaluation}
-                  onSubmitReport={submitServiceReport}
-                  onReclaimReport={reclaimServiceReport}
-                  onSignMessage={signWalletMessage}
+                  escrowFundingNear={escrowFundingNear}
+                  operationsFundingNear={operationsFundingNear}
+                  activationStorageNear={activationStorageNear}
+                  busyAction={setupAction}
+                  onEscrowFundingChange={setEscrowFundingNear}
+                  onOperationsFundingChange={setOperationsFundingNear}
+                  onActivationStorageChange={setActivationStorageNear}
+                  onAction={submitSetupAction}
                 />
-              )
-              : (
-                <EvidenceSubmissionCard
-                  key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+              )}
+              {data.commitment.lifecycle === "Active" && data.policy && (
+                <ActiveOperationsFundingCard
                   data={data}
                   accountId={accountId}
-                  busy={requestingEvaluation || expiringEvaluation}
-                  pendingTimeoutNs={data.evaluationTimeoutNs}
-                  onExpire={expirePendingEvaluation}
-                  onSubmit={submitEvaluation}
-                  onSignMessage={signWalletMessage}
+                  operationsFundingNear={operationsFundingNear}
+                  busyAction={setupAction}
+                  onOperationsFundingChange={setOperationsFundingNear}
+                  onFund={submitSetupAction}
                 />
-              ))}
-            {data.commitment.lifecycle === "Active" && data.policy && (
-              <ChallengeControlsCard
-                data={data}
-                accountId={accountId}
-                busyAction={challengeAction}
-                onAction={submitChallengeAction}
-              />
-            )}
-            {data.policy && (
-              <ClosureControlsCard
-                data={data}
-                accountId={accountId}
-                busyAction={closureAction}
-                onAction={submitClosureAction}
-              />
-            )}
-            <section className={`health-panel health-${health?.toLowerCase() ?? "unknown"}`}>
-              <div className="health-panel-top">
-                <div>
-                  <p className="eyebrow">EFFECTIVE HEALTH <span className="chain-source">NEAR · {data.commitment.lifecycle.toUpperCase()}</span></p>
-                  <div className="health-title-row"><span className="health-indicator" /><h3>{healthLabel(health)}</h3></div>
-                  <p className="health-copy">{healthDescription(health, data.eligibility)}</p>
-                </div>
-                <span className="commitment-number">#{data.commitment.id}</span>
+              )}
+              {data.commitment.lifecycle === "Closed" && <p className="journey-stage-note">Setup is complete. This commitment is closed.</p>}
+            </section>
+
+            <section className={`journey-stage ${activeJourneyStep === "evidence" ? "journey-stage-current" : ""}`} id="journey-evidence" aria-labelledby="journey-evidence-title">
+              <JourneyStageHeading number="02" title="Collect and check evidence" description="Operators submit reports; the maintainer or sponsor requests an evaluation." status={evidenceStageStatus} current={activeJourneyStep === "evidence"} titleId="journey-evidence-title" />
+              {data.evaluation && (
+                <section className="journey-evaluation-summary" aria-label="Latest evaluation summary">
+                  <div><span className={`status-pill status-${data.evaluation.status.toLowerCase()}`}>{data.evaluation.status}</span><strong>Evaluation #{data.evaluation.evaluation_id} · {evaluationVerdictLabel(data.evaluation)}</strong></div>
+                  <p>{data.evaluation.service_availability
+                    ? `${data.evaluation.service_availability.source_counts.valid} of ${data.evaluation.service_availability.source_counts.configured} reports passed validation; ${(data.evaluation.service_availability.corroboration_bps / 100).toFixed(2)}% agreement coverage.`
+                    : evaluationExplanation(data.evaluation) ?? `Observed ${formatDate(data.evaluation.observed_at_ns)}.`}</p>
+                  <a href="#journey-details">Open full evaluation record and policy details ↘</a>
+                </section>
+              )}
+              {data.commitment.lifecycle === "Active" && data.policy && (data.policy.version === 3
+                ? (
+                  <ServiceAvailabilityEvidenceCard
+                    key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+                    data={data}
+                    accountId={accountId}
+                    busy={requestingEvaluation || expiringEvaluation || serviceInboxAction !== null || loading}
+                    pendingTimeoutNs={data.evaluationTimeoutNs}
+                    onRefresh={() => loadCommitment(data.commitment.id)}
+                    onExpire={expirePendingEvaluation}
+                    onSubmit={submitServiceEvaluation}
+                    onSubmitReport={submitServiceReport}
+                    onReclaimReport={reclaimServiceReport}
+                    onSignMessage={signWalletMessage}
+                  />
+                )
+                : (
+                  <EvidenceSubmissionCard
+                    key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+                    data={data}
+                    accountId={accountId}
+                    busy={requestingEvaluation || expiringEvaluation}
+                    pendingTimeoutNs={data.evaluationTimeoutNs}
+                    onExpire={expirePendingEvaluation}
+                    onSubmit={submitEvaluation}
+                    onSignMessage={signWalletMessage}
+                  />
+                ))}
+              {data.commitment.lifecycle !== "Active" && <p className="journey-stage-note">Evidence actions are available while the commitment is active.</p>}
+            </section>
+
+            <section className={`journey-stage ${activeJourneyStep === "review" ? "journey-stage-current" : ""}`} id="journey-review" aria-labelledby="journey-review-title">
+              <JourneyStageHeading number="03" title="Review and resolve" description="Challenges pause a claim until resolved or timed out. Follow the NEAR policy clock." status={reviewStageStatus} current={activeJourneyStep === "review"} titleId="journey-review-title" />
+              {data.commitment.lifecycle === "Active" && data.policy && (
+                <ChallengeControlsCard
+                  data={data}
+                  accountId={accountId}
+                  busyAction={challengeAction}
+                  onAction={submitChallengeAction}
+                />
+              )}
+              <details className="journey-timeline">
+                <summary>Health clock and recorded transitions</summary>
+                <HealthTimeline data={data} busy={loading} onRefresh={() => void loadCommitment(data.commitment.id)} />
+              </details>
+            </section>
+
+            <section className={`journey-stage ${activeJourneyStep === "payout" ? "journey-stage-current" : ""}`} id="journey-payout" aria-labelledby="journey-payout-title">
+              <JourneyStageHeading number="04" title="Claim or close" description="Only the beneficiary can claim an eligible tranche. Closing is final." status={payoutStageStatus} current={activeJourneyStep === "payout"} titleId="journey-payout-title" />
+              <div className="journey-payout-grid">
+                <section className="content-card consequence-card">
+                  <div className="card-heading">
+                    <div><p className="eyebrow">ESCROW · CONTRACT SETTLEMENT</p><h3>Recurring support</h3></div>
+                    <span className="card-index">04</span>
+                  </div>
+                  <div className="escrow-stats">
+                    <Fact label="FUNDED" value={`${formatNear(data.escrow?.funded_yocto ?? "0")} NEAR`} />
+                    <Fact label="PAID" value={`${formatNear(data.escrow?.paid_yocto ?? "0")} NEAR`} />
+                    <Fact label="PENDING" value={`${formatNear(data.escrow?.pending_yocto ?? "0")} NEAR`} />
+                    <Fact label="REFUNDED" value={`${formatNear(data.escrow?.refunded_yocto ?? "0")} NEAR`} />
+                  </div>
+                  <div className="claim-box">
+                    <div className="claim-copy">
+                      <span className={`eligibility-mark ${claimAllowed ? "is-eligible" : "is-blocked"}`}>{claimAllowed ? "✓" : "×"}</span>
+                      <div>
+                        <strong>{retryingFailedPayout ? "Previous payout failed; retry is available" : failedTranche ? "Previous payout failed; this epoch is currently blocked" : claimAllowed ? "A tranche can be claimed" : "A tranche is blocked"}</strong>
+                        <span>{retryingFailedPayout
+                          ? "The failed transfer was released back to escrow. Retry when the beneficiary account can receive funds."
+                          : claimWindowWasPaused
+                            ? `The claim window for epoch ${claimableEpoch} was paused while its challenge was unresolved. It resumes now.`
+                            : data.eligibility?.reason ?? "The contract has no current claim."}</span>
+                      </div>
+                    </div>
+                    {data.eligibility?.eligible && (
+                      <div className="claim-controls">
+                        <div className="claim-form-row">
+                          <div className="claim-storage-deposit"><span>CLAIM REQUEST STORAGE BOND</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
+                          <button className="claim-button" onClick={() => void claimTranche()} disabled={!canSubmitClaim}>
+                            {claiming ? "Submitting…" : !accountId ? "Connect to claim" : !correctBeneficiary ? "Beneficiary wallet required" : retryingFailedPayout ? "Retry payout" : "Claim tranche"}
+                            <span aria-hidden="true">↗</span>
+                          </button>
+                        </div>
+                        <p className="claim-disclaimer">The app attaches {DEFAULT_STORAGE_DEPOSIT} NEAR for claim storage, separate from the tranche payout. The contract calculates the required bond and returns any excess.</p>
+                      </div>
+                    )}
+                  </div>
+                  {data.tranche && <div className="tranche-line"><span>{claimAllowed ? "CLAIMABLE EPOCH" : "CURRENT EPOCH"} · {data.tranche.epoch}</span><strong>{data.tranche.status}</strong></div>}
+                </section>
               </div>
-              <div className="health-divider" />
-              <div className="health-facts">
-                <Fact label="SUBJECT" value={data.commitment.subject} />
-                <Fact label="MAINTAINER" value={data.commitment.maintainer} mono />
-                <Fact label="BENEFICIARY" value={data.policy?.budget.beneficiary ?? "Unknown"} mono />
-                <Fact label="POLICY VERSION" value={`v${data.commitment.policy_version}`} mono />
-              </div>
-              {data.policy && [data.commitment.maintainer, data.policy.budget.sponsor, data.policy.budget.beneficiary].includes(data.commitment.arbiter) && (
-                <div className="notice notice-warning" role="note">
-                  <span className="notice-icon">!</span>
-                  This commitment predates arbiter separation and assigns {data.commitment.arbiter} another direct role. The arbiter cannot open a challenge on this commitment, but can still resolve one. New commitments require an independent arbiter.
-                </div>
+              {data.policy && (
+                <ClosureControlsCard
+                  data={data}
+                  accountId={accountId}
+                  busyAction={closureAction}
+                  onAction={submitClosureAction}
+                />
               )}
             </section>
 
-            <HealthTimeline data={data} busy={loading} onRefresh={() => void loadCommitment(data.commitment.id)} />
-            {EVENT_INDEXER_URL && (
-              <IndexedEventHistory
-                key={data.commitment.id}
-                commitmentId={data.commitment.id}
-              />
-            )}
-
-            <div className="metrics-grid">
-              <MetricCard
-                eyebrow="LAST COMPLIANT EVIDENCE"
-                title={data.commitment.last_good_observed_at_ns ? formatDate(data.commitment.last_good_observed_at_ns) : "No accepted evidence"}
-                detail={lastGoodEvidenceDetail}
-                icon="◷"
-              />
-              <NextTrancheMetric data={data} />
-              <MetricCard
-                eyebrow="AVAILABLE ESCROW"
-                title={`${formatNear(data.escrow?.free_yocto ?? "0")} NEAR`}
-                detail={`${formatNear(data.escrow?.paid_yocto ?? "0")} NEAR released so far`}
-                icon="◈"
-              />
-            </div>
-
+            <details className="journey-advanced-details" id="journey-details">
+              <summary><span><strong>Policy, records, and advanced controls</strong><small>Full evaluation hashes, source rules, reviewer access, amendments, and payout adapters</small></span><span aria-hidden="true">⌄</span></summary>
+              <div className="journey-advanced-content">
+                {EVENT_INDEXER_URL && (
+                  <IndexedEventHistory
+                    key={data.commitment.id}
+                    commitmentId={data.commitment.id}
+                  />
+                )}
             <div className="details-grid">
               <section className="content-card policy-card">
                 <div className="card-heading">
@@ -1420,7 +1593,7 @@ export function Dashboard() {
                 ) : <p className="empty-copy">Policy details are unavailable for this commitment.</p>}
               </section>
 
-              <section className="content-card evaluation-card">
+              <section className="content-card evaluation-card" id="journey-evaluation-record">
                 <div className="card-heading">
                   <div><p className="eyebrow">EVIDENCE, CHECKED</p><h3>Latest evaluation</h3></div>
                   <span className="card-index">02</span>
@@ -1565,46 +1738,6 @@ export function Dashboard() {
               />
             )}
 
-            <div className="bottom-grid">
-              <section className="content-card consequence-card">
-                <div className="card-heading">
-                  <div><p className="eyebrow">CONSEQUENCE, NOT PROMISE</p><h3>Recurring support</h3></div>
-                  <span className="card-index">03</span>
-                </div>
-                <div className="escrow-stats">
-                  <Fact label="FUNDED" value={`${formatNear(data.escrow?.funded_yocto ?? "0")} NEAR`} />
-                  <Fact label="PAID" value={`${formatNear(data.escrow?.paid_yocto ?? "0")} NEAR`} />
-                  <Fact label="PENDING" value={`${formatNear(data.escrow?.pending_yocto ?? "0")} NEAR`} />
-                  <Fact label="REFUNDED" value={`${formatNear(data.escrow?.refunded_yocto ?? "0")} NEAR`} />
-                </div>
-                <div className="claim-box">
-                  <div className="claim-copy">
-                    <span className={`eligibility-mark ${claimAllowed ? "is-eligible" : "is-blocked"}`}>{claimAllowed ? "✓" : "×"}</span>
-                    <div>
-                      <strong>{retryingFailedPayout ? "Previous payout failed; retry is available" : failedTranche ? "Previous payout failed; this epoch is currently blocked" : claimAllowed ? "A tranche can be claimed" : "A tranche is blocked"}</strong>
-                      <span>{retryingFailedPayout
-                        ? "The failed transfer was released back to escrow. Retry when the beneficiary account can receive funds."
-                        : claimWindowWasPaused
-                          ? `The claim window for epoch ${claimableEpoch} was paused while its challenge was unresolved. It resumes now.`
-                          : data.eligibility?.reason ?? "The contract has no current claim."}</span>
-                    </div>
-                  </div>
-                  {data.eligibility?.eligible && (
-                    <div className="claim-controls">
-                      <div className="claim-form-row">
-                        <div className="claim-storage-deposit"><span>CLAIM REQUEST STORAGE BOND</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
-                        <button className="claim-button" onClick={() => void claimTranche()} disabled={!canSubmitClaim}>
-                          {claiming ? "Submitting…" : !accountId ? "Connect to claim" : !correctBeneficiary ? "Beneficiary wallet required" : retryingFailedPayout ? "Retry payout" : "Claim tranche"}
-                          <span aria-hidden="true">↗</span>
-                        </button>
-                      </div>
-                      <p className="claim-disclaimer">The app attaches {DEFAULT_STORAGE_DEPOSIT} NEAR for claim storage, separate from the tranche payout. The contract calculates the required bond and returns any excess.</p>
-                    </div>
-                  )}
-                </div>
-                {data.tranche && <div className="tranche-line"><span>{claimAllowed ? "CLAIMABLE EPOCH" : "CURRENT EPOCH"} · {data.tranche.epoch}</span><strong>{data.tranche.status}</strong></div>}
-              </section>
-
               <section className="content-card integrity-card">
                 <div className="card-heading">
                   <div><p className="eyebrow">WHAT THIS MEANS</p><h3>Evidence has limits.</h3></div>
@@ -1613,7 +1746,8 @@ export function Dashboard() {
                 <p className="integrity-copy">A valid signature binds submitted data to the configured key. Even an attested evaluator can show only that configured code checked that data; it cannot prove the evidence source tells the truth about real-world service quality.</p>
                 <div className="integrity-footer"><span className="integrity-dot" />POLICY ENFORCED ON NEAR</div>
               </section>
-            </div>
+              </div>
+            </details>
           </div>
         ) : (
           <section className="empty-state">
@@ -2198,6 +2332,34 @@ function IndexedEventHistory({ commitmentId }: { commitmentId: string }) {
   );
 }
 
+function JourneyStageHeading({
+  number,
+  title,
+  description,
+  status,
+  current,
+  titleId,
+}: {
+  number: string;
+  title: string;
+  description: string;
+  status: string;
+  current: boolean;
+  titleId: string;
+}) {
+  return (
+    <div className={`journey-stage-heading ${current ? "is-current" : ""}`}>
+      <span className="journey-stage-number" aria-hidden="true">{number}</span>
+      <div className="journey-stage-copy">
+        <p className="eyebrow">STEP {number}{current ? " · UP NEXT" : ""}</p>
+        <h3 id={titleId}>{title}</h3>
+        <p>{description}</p>
+      </div>
+      <span className="journey-stage-status">{status}</span>
+    </div>
+  );
+}
+
 function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: string; detail: ReactNode; icon: string }) {
   return (
     <section className="metric-card">
@@ -2336,6 +2498,7 @@ function ServiceAvailabilityEvidenceCard({
   const { commitment, policy, serviceAvailabilityPolicy } = data;
   const transactionAuthenticated = serviceAvailabilityPolicy?.schema === "lcp.service_availability.policy.v2";
   const connectedServiceSource = serviceAvailabilityPolicy?.sources.find((source) => source.operator_id === accountId) ?? null;
+  const [operatorReportOpen, setOperatorReportOpen] = useState(!transactionAuthenticated);
   const [reportsJson, setReportsJson] = useState("");
   const [selectedReportFiles, setSelectedReportFiles] = useState<string[]>([]);
   const [reportCount, setReportCount] = useState<number | null>(null);
@@ -2728,8 +2891,8 @@ function ServiceAvailabilityEvidenceCard({
           <small>Operators pay a temporary storage bond when submitting. It becomes a withdrawable credit after evaluation, replacement, or expiry; failed refunds can be retried.</small>
         </section>
       )}
-      <details className="operator-browser-probe" open>
-        <summary>{transactionAuthenticated ? "Submit an operator report" : "Create a signed report with a NEAR wallet"}</summary>
+      <details className="operator-browser-probe" open={operatorReportOpen} onToggle={(event) => setOperatorReportOpen(event.currentTarget.open)}>
+        <summary>{transactionAuthenticated ? "For operators: run and submit a report" : "Create a signed report with a NEAR wallet"}</summary>
         <p>{transactionAuthenticated
           ? "Operators participate independently. Open this commitment on your own device, connect the listed account, enter the authorized endpoint and private salt, then submit. Your NEAR transaction authorizes and records the report in one wallet approval."
           : "Connect a wallet listed as an operator in this policy. This browser-only check is limited to the same HTTPS origin as the Console, sends no credentials, follows no redirects, and reads no response body. Sign with NEP-413, then submit directly to the NEAR inbox."}</p>
@@ -3383,11 +3546,31 @@ function ChallengeControlsCard({
   const { commitment, policy, evaluation, challenge } = data;
   const [reason, setReason] = useState("");
   const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
+  const [clientNowMs, setClientNowMs] = useState<number | null>(null);
   const canChallenge = Boolean(accountId
     && accountId !== commitment.arbiter
     && (accountId === commitment.maintainer || accountId === policy?.budget.sponsor));
   const canResolve = accountId === commitment.arbiter;
   const latestCompliant = Boolean(evaluation?.status === "Accepted" && evaluation.verdict === "Compliant" && evaluation.accepted_at_ns);
+  const resolutionDeadlineNs = challenge?.status === "Open" ? BigInt(challenge.resolution_deadline_ns) : null;
+  const estimatedChainNowNs = data.chainTimeNs && clientNowMs !== null
+    ? BigInt(data.chainTimeNs) + BigInt(Math.max(0, clientNowMs - data.chainTimeCapturedAtMs)) * 1_000_000n
+    : null;
+  const resolutionRemainingNs = resolutionDeadlineNs !== null && estimatedChainNowNs !== null
+    ? resolutionDeadlineNs - estimatedChainNowNs
+    : null;
+  const canExpireChallenge = resolutionRemainingNs !== null && resolutionRemainingNs <= -2_000_000_000n;
+
+  useEffect(() => {
+    if (challenge?.status !== "Open") {
+      setClientNowMs(null);
+      return;
+    }
+    const updateClock = () => setClientNowMs(Date.now());
+    updateClock();
+    const timer = window.setInterval(updateClock, 1_000);
+    return () => window.clearInterval(timer);
+  }, [challenge?.id, challenge?.status]);
 
   if (!challenge && !latestCompliant) return null;
 
@@ -3406,12 +3589,41 @@ function ChallengeControlsCard({
         <>
           <p className="challenge-intro">Challenge #{challenge.id} contests evaluation #{challenge.evaluation_id}. The designated arbiter may resolve it before the deadline; anyone may expire it after the deadline.</p>
           <div className="digest-row"><span>REASON HASH</span><code>{challenge.reason_hash}</code></div>
-          <div className="digest-row"><span>RESOLUTION DEADLINE · NS</span><code>{challenge.resolution_deadline_ns}</code></div>
+          <div className="challenge-deadline-panel">
+            <span className="challenge-deadline-label">RESOLUTION DEADLINE</span>
+            <time dateTime={new Date(Number(resolutionDeadlineNs! / 1_000_000n)).toISOString()}>
+              {clientNowMs === null ? "Loading local time…" : formatDate(challenge.resolution_deadline_ns)}
+            </time>
+            <p className="challenge-deadline-status">
+              {resolutionRemainingNs === null
+                ? "NEAR block time is unavailable. Refresh this commitment to check when expiration becomes available."
+                : resolutionRemainingNs > 0n
+                  ? `Anyone can expire this challenge in ${formatCountdown(resolutionRemainingNs.toString())}.`
+                  : resolutionRemainingNs > -2_000_000_000n
+                    ? "The deadline has arrived. Confirming finalized NEAR time before enabling expiration…"
+                    : "The deadline has passed. Any account can now expire this challenge."}
+            </p>
+            <small className="challenge-deadline-note">The countdown uses the latest finalized NEAR block time. NEAR time is checked again when you submit expiration.</small>
+            <details className="challenge-deadline-technical">
+              <summary>Technical timestamp</summary>
+              <code>{challenge.resolution_deadline_ns} ns</code>
+            </details>
+          </div>
           {!canResolve && <p className="form-wallet-hint">Connect the arbiter wallet ({commitment.arbiter}) to resolve this challenge.</p>}
           <div className="challenge-actions">
             <button type="button" onClick={() => void onAction("uphold")} disabled={busyAction !== null || !canResolve}>{busyAction === "uphold" ? "Resolving…" : "Uphold evaluation"}</button>
             <button type="button" onClick={() => void onAction("invalidate")} disabled={busyAction !== null || !canResolve}>{busyAction === "invalidate" ? "Resolving…" : "Invalidate evidence"}</button>
-            <button className="challenge-expire" type="button" onClick={() => void onAction("expire")} disabled={busyAction !== null}>{busyAction === "expire" ? "Expiring…" : "Expire after deadline"}</button>
+            <button className="challenge-expire" type="button" onClick={() => void onAction("expire")} disabled={busyAction !== null || !canExpireChallenge}>
+              {busyAction === "expire"
+                ? "Expiring…"
+                : resolutionRemainingNs === null
+                  ? "Checking NEAR time…"
+                  : resolutionRemainingNs > 0n
+                    ? `Available in ${formatCountdown(resolutionRemainingNs.toString())}`
+                    : !canExpireChallenge
+                      ? "Confirming deadline…"
+                      : "Expire after deadline"}
+            </button>
           </div>
           <small className="challenge-help">Upholding or timing out keeps accepted evidence. A timeout dismisses the challenge; its paused claim window resumes. Explicit invalidation removes the challenged evidence and any reserved claim window.</small>
         </>
@@ -3910,7 +4122,7 @@ function CreateCommitmentForm({
     <form className="creation-form" noValidate onSubmit={(event) => void handleSubmit(event)}>
       <div className="creation-intro"><p>Choose a starter policy, confirm who is involved, and add the evaluator artifact. Timing and runtime tuning use safe defaults and stay under Advanced settings.</p><span>GUIDED SETUP</span></div>
       {formError && <div ref={errorNoticeRef} className="notice notice-error form-notice" role="alert" tabIndex={-1}><span className="notice-icon">!</span>{formError}</div>}
-      <div className="form-grid">
+      <div className="form-grid" id="creation-model">
         <FormField label="Starter policy template" wide>
           <select value={selectedTemplateId} onChange={(event) => applyPolicyTemplate(event.target.value)}>
             {POLICY_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
@@ -3918,6 +4130,13 @@ function CreateCommitmentForm({
         </FormField>
       </div>
       <p className="policy-template-note">{selectedTemplate?.description} The starter sets the schedule and budget defaults. Review the people, evidence, and total escrow before creating the draft.</p>
+      <nav className="creation-step-nav" aria-label="Creation form sections">
+        <a href="#creation-model">Policy &amp; sources</a>
+        <a href="#creation-people">People</a>
+        <a href="#creation-evidence">Evidence</a>
+        <a href="#creation-funding">Funding</a>
+        <a href="#creation-advanced">Advanced</a>
+      </nav>
       <div className="form-grid">
         <FormField label="Evidence model" wide>
           <select value={evidenceMode} onChange={(event) => {
@@ -3995,7 +4214,7 @@ function CreateCommitmentForm({
           </details>
         </section>
       )}
-      <div className="creation-section-heading"><span>01</span><div><h3>People and commitment</h3><small>Choose the accountable party, sponsor, reviewer, and beneficiary.</small></div></div>
+      <div className="creation-section-heading" id="creation-people"><span>01</span><div><h3>People and commitment</h3><small>Choose the accountable party, sponsor, reviewer, and beneficiary.</small></div></div>
       <p className="form-wallet-hint">The arbiter must be a separate account from the maintainer, sponsor, and beneficiary. NEAR enforces this before creating the commitment.</p>
       <div className="form-grid">
         <FormField label="Commitment subject" wide><input maxLength={128} value={fields.subject} onChange={(event) => update("subject", event.target.value)} placeholder="e.g. Maintain the community API" required /></FormField>
@@ -4005,7 +4224,7 @@ function CreateCommitmentForm({
         <FormField label="Beneficiary account"><input value={account(fields.beneficiary)} onChange={(event) => update("beneficiary", event.target.value)} placeholder="beneficiary.testnet" required /></FormField>
       </div>
 
-      <div className="creation-section-heading"><span>02</span><div><h3>Evidence and evaluator</h3><small>Pin the maintainer wallet and the exact evaluator artifact.</small></div></div>
+      <div className="creation-section-heading" id="creation-evidence"><span>02</span><div><h3>Evidence and evaluator</h3><small>Pin the maintainer wallet and the exact evaluator artifact.</small></div></div>
       <div className="form-grid">
         <div className="form-field form-field-wide">
           <label htmlFor="maintainer-wallet-key">Maintainer NEAR wallet key</label>
@@ -4022,14 +4241,14 @@ function CreateCommitmentForm({
         <FormField label="Evaluator WASM SHA-256 · 64 lowercase hex" wide><input className="mono-input" value={fields.wasmSha256} onChange={(event) => update("wasmSha256", event.target.value)} placeholder="Digest of the exact uploaded WASM file" required /></FormField>
       </div>
 
-      <div className="creation-section-heading"><span>03</span><div><h3>Funding schedule</h3><small>Set recurring support and review the full escrow target.</small></div></div>
+      <div className="creation-section-heading" id="creation-funding"><span>03</span><div><h3>Funding schedule</h3><small>Set recurring support and review the full escrow target.</small></div></div>
       <div className="form-grid form-grid-3">
         <FormField label="Payment interval · sec"><input type="number" min="1" step="1" value={fields.epochSeconds} onChange={(event) => update("epochSeconds", event.target.value)} required /></FormField>
         <FormField label="Number of payments"><input type="number" min="1" max="64" step="1" value={fields.maxEpochs} onChange={(event) => update("maxEpochs", event.target.value)} required /></FormField>
         <FormField label="Payment amount · NEAR"><input inputMode="decimal" value={fields.trancheNear} onChange={(event) => update("trancheNear", event.target.value)} required /></FormField>
       </div>
 
-      <details className="guided-advanced creation-advanced-settings">
+      <details className="guided-advanced creation-advanced-settings" id="creation-advanced">
         <summary>Advanced policy and evaluator settings</summary>
         <p>Defaults come from the starter policy. Change them only when the commitment needs different timing or evaluator limits.</p>
         <div className="creation-section-heading"><span>A</span><div><h3>Timing and recovery</h3><small>These rules determine when evidence expires and whether health can recover.</small></div></div>
