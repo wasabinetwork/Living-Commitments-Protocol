@@ -132,6 +132,7 @@ export function Dashboard() {
   const connectorRef = useRef<NearConnectorPort | null>(null);
   const connectorInitRef = useRef<Promise<NearConnectorPort> | null>(null);
   const recordViewRef = useRef<HTMLDivElement | null>(null);
+  const advancedDetailsRef = useRef<HTMLDetailsElement | null>(null);
   const displayedCommitmentIdRef = useRef<string | null>(null);
   const [theme, setTheme] = useState<ColorTheme | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
@@ -1439,7 +1440,13 @@ export function Dashboard() {
                   <p>{data.evaluation.service_availability
                     ? `${data.evaluation.service_availability.source_counts.valid} of ${data.evaluation.service_availability.source_counts.configured} reports passed validation; ${(data.evaluation.service_availability.corroboration_bps / 100).toFixed(2)}% agreement coverage.`
                     : evaluationExplanation(data.evaluation) ?? `Observed ${formatDate(data.evaluation.observed_at_ns)}.`}</p>
-                  <a href="#journey-details">Open full evaluation record and policy details ↘</a>
+                  <a
+                    href="#journey-evaluation-record"
+                    aria-controls="journey-evaluation-record"
+                    onClick={() => advancedDetailsRef.current?.setAttribute("open", "")}
+                  >
+                    Show full evaluation record and policy details ↓
+                  </a>
                 </section>
               )}
               {data.commitment.lifecycle === "Active" && data.policy && (data.policy.version === 3
@@ -1541,7 +1548,7 @@ export function Dashboard() {
               )}
             </section>
 
-            <details className="journey-advanced-details" id="journey-details">
+            <details className="journey-advanced-details" id="journey-details" ref={advancedDetailsRef}>
               <summary><span><strong>Policy, records, and advanced controls</strong><small>Full evaluation hashes, source rules, reviewer access, amendments, and payout adapters</small></span><span aria-hidden="true">⌄</span></summary>
               <div className="journey-advanced-content">
                 {EVENT_INDEXER_URL && (
@@ -1593,7 +1600,7 @@ export function Dashboard() {
                 ) : <p className="empty-copy">Policy details are unavailable for this commitment.</p>}
               </section>
 
-              <section className="content-card evaluation-card" id="journey-evaluation-record">
+              <section className="content-card evaluation-card" id="journey-evaluation-record" tabIndex={-1}>
                 <div className="card-heading">
                   <div><p className="eyebrow">EVIDENCE, CHECKED</p><h3>Latest evaluation</h3></div>
                   <span className="card-index">02</span>

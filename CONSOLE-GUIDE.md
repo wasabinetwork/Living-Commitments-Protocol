@@ -31,7 +31,7 @@ The independent event archive appears only when `NEXT_PUBLIC_LCP_EVENT_INDEXER_U
 
 ## Walk Through Wallet Transactions
 
-After loading a commitment, start with the overview and **NEXT IN THIS COMMITMENT** message. The sticky stage bar jumps between **Setup**, **Evidence**, **Review**, and **Payout**; each stage shows its current state. Use **Choose another** to return to the ID lookup, or **Create new** to open the creation form. Full hashes, evaluator records, source policy, reviewer access, and governance actions live under **Policy, records, and advanced controls**.
+After loading a commitment, start with the overview and **NEXT IN THIS COMMITMENT** message. The sticky stage bar jumps between **Setup**, **Evidence**, **Review**, and **Payout**; each stage shows its current state. Use **Choose another** to return to the ID lookup, or **Create new** to open the creation form. In Evidence, **Show full evaluation record and policy details** opens the advanced disclosure and jumps directly to the evaluation record. Source policy, reviewer access, and governance actions remain in that disclosure.
 
 Use a test commitment and the appropriate role wallet for each action:
 
