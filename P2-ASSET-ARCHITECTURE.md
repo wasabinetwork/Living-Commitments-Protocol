@@ -1,0 +1,52 @@
+# Multi-Asset Commitment Architecture
+
+**Status:** P2 implementation in progress. The local core, SDK, and Console now contain the first NEP-141/USDC path; it has not been testnet-deployed or accepted.
+**Decision:** Add native NEAR and NEP-141 settlement paths to LCP, with USDC as the first supported token. NEAR remains necessary for gas, contract storage, token registration, and evaluator operations.
+
+## Product and Asset Scope
+
+Each commitment selects one settlement asset before activation. That asset and its network-specific token contract account are immutable for the commitment and included in its policy digest. A commitment never mixes assets or converts between them. The initial Console catalog offers native NEAR and Circle USDC only.
+
+| Network | USDC contract | Decimals |
+| --- | --- | ---: |
+| NEAR testnet | `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` | 6 |
+| NEAR mainnet | `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` | 6 |
+
+On 2026-11-13, NearBlocks v3 metadata for both accounts returned `spec: ft-1.0.0`, `symbol: USDC`, and six decimals: [testnet token](https://testnet.nearblocks.io/tokens/3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af) and [mainnet token](https://nearblocks.io/tokens/17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1). Reconfirm both addresses against Circle's [multichain USDC registry](https://www.circle.com/multi-chain-usdc) and finalized on-chain metadata before deployment; explorer metadata is a consistency check, not asset authority.
+
+## Contract and Accounting Design
+
+- Add a generic NEP-141 settlement backend to LCP rather than deploying one adapter per fungible token. For the first release, permit only native NEAR and the verified Circle USDC account for the current network. Keep the token-account catalog versioned in source and the Console/SDK. A future governance-managed registry is deferred; adding an asset after immutable deployment may require a new core deployment.
+- Check the token contract account on every token callback. The commitment's asset and account are pinned; never trust a token symbol as identity.
+- Keep amounts in smallest units: yoctoNEAR for native payouts and atomic token units for NEP-141. User-facing conversion uses the pinned asset catalog and checked integer arithmetic; never use floating-point amounts.
+- Do not reinterpret existing fields such as `tranche_yocto` or `escrow_funded_yocto` as token units. Preserve existing Borsh layouts. Add versioned policy/asset and ledger sidecars keyed by commitment ID, treating a missing asset record as legacy native NEAR. Specify sidecar versioning and compatibility tests before implementation.
+- Domain-separate the policy digest and bind asset kind, NEP-141 contract account (when applicable), and raw tranche amount. Version events and views with explicit `asset` and `amount_raw` fields; retain existing NEAR fields for legacy readers. Update SDK and indexer parsers before Console rollout.
+- Native NEAR commitments keep the existing deposit and asynchronous payout/refund behavior. USDC funding arrives through `ft_transfer_call` and an LCP `ft_on_transfer` receiver. The sponsor attaches the NEP-141-required 1 yoctoNEAR security deposit to the token call, separately from the USDC amount and gas. The receiver checks the token contract, sender/sponsor, commitment state, and funding cap; it accepts only the amount needed and returns unused units so the NEP-141 resolver can refund them.
+- USDC claims and residual refunds use `ft_transfer` with a private LCP callback. Persist pending state first; reconcile paid/refunded totals only after callback success; restore retryable state after failure. Reserve the NEP-141-required 1 yoctoNEAR transfer deposit from the caller's NEAR attachment in addition to storage growth, and return any remaining excess. Keep transfer nonces and duplicate-callback protection equivalent to native settlement.
+- Keep `bounded-payout-adapter` NEAR-only in the first release. Reject or hide authority grants for USDC commitments until an asset-matched FT adapter has a separately reviewed design and tests.
+
+## Registration, Storage, and UX
+
+NEP-141 balances require token-contract storage registration. Compare each account's NEP-145 `total` against the token contract's current `storage_balance_bounds.min`; a non-null record alone is not enough. Before enabling USDC funding, verify the LCP account meets that minimum. Before payout or refund, perform the same check for the beneficiary or sponsor. Offer an in-app registration or top-up action, paying only the current shortfall in NEAR. Use `registration_only: false` for existing accounts because NEP-145 refunds deposits sent with `registration_only: true` to already registered accounts. Do not bake a storage price into policy. Explain that the commitment budget is USDC while gas and storage remain NEAR. Failed transfers must remain recoverable if registration changes between preflight and settlement.
+
+Show the asset selector before budget entry and display an example of the resulting total and tranche in the selected units. Pin the token account and decimals in the curated network catalog, show the full contract account in review, and link to its network explorer. Use token metadata only as a consistency check, not as authority to change decimals after a commitment is created.
+
+## Extensibility and Trust Boundaries
+
+The first extensibility point is a generic NEP-141 backend plus a typed, versioned asset catalog, not a governance-managed token module framework. Adding a well-reviewed NEP-141 asset should require a catalog entry, metadata/address verification, and testnet acceptance, not new per-token transfer code; the immutable core's on-chain allowlist still means a new core deployment may be needed. Tokens with nonstandard callbacks or standards require a new backend and security review. This separates ordinary asset additions from an upgradeable on-chain token registry.
+
+This design does not promise USDC redemption, a guaranteed dollar value, or issuer neutrality. Users must see the exact network and token contract they choose.
+
+## Delivery and Acceptance Sequence
+
+1. **Complete:** Freeze the first release scope as native NEAR plus verified Circle USDC; specify the versioned sidecar and migration approach. Defer an on-chain governance-managed asset registry.
+2. **Implemented locally; validation passed 2026-11-13:** The versioned asset sidecar, raw ledger, NEP-141 callbacks, legacy NEAR fields, and Borsh layouts are covered by contract tests. Tests verify asset-bound policy views/digests, rejection of an unapproved token, wrong-token/sender refunds, funding caps and activation gating, 1 yoctoNEAR transfer deposits, failed claim/refund recovery, and duplicate-callback idempotency. Rust 1.100.0 is pinned and declared as the minimum for local development, CI, and reproducible contract builds; `rust-toolchain.toml`, `Cargo.toml`, and both NEP-330 images agree. The official `cargo-near 0.23.0` prebuilt CLI was checksum-verified on this x86_64 macOS host. With Rust 1.100.0, formatting and all 75 Rust tests pass; both contracts pass `cargo near check --locked`, both evaluator WASM release builds pass, all 37 JavaScript tests pass, both Workers pass type checks and production/preview dry runs, the Console production build passes, and `npm audit --audit-level=high` reports zero vulnerabilities. An implementation-team source review on 2026-11-13 found no accounting defect in token allowlisting, sponsor-bound funding, funding caps/resolver refunds, pending payout/refund reservation, callback reconciliation, failed-transfer recovery, duplicate-callback handling, or integer amount conversion. This is not an independent audit or testnet acceptance; independent review and reproducible contract build remain required before deployment. The official `cargo-near 0.23.0` installer was checksum-verified and installed. After the Mac restart, Docker Engine 29.9.3 responds successfully. The reproducible artifacts still require a committed source state; the current worktree is uncommitted, and no reproducible artifact has been built from the local USDC changes.
+3. **Implemented locally:** SDK types and calls expose asset metadata and raw amounts. SDK tests assert the `ft_transfer_call` payload and 1 yoctoNEAR deposit, plus fresh-account registration and existing-account top-up arguments. The event indexer stores complete event JSON, so no D1 migration is needed for new asset fields. The Console supports asset selection, integer conversion, metadata checks, minimum-balance registration preflight, and NEAR-denominated registration/top-up costs. It displays the complete token account and network explorer link in creation and policy review.
+4. **Pending testnet acceptance:** Validate fresh registration and under-minimum storage top-ups, USDC funding, exact funding caps and resolver refunds, activation gate, eligible payment, failed/unregistered-recipient recovery, sponsor refund, duplicate callbacks, six-decimal precision, NEAR gas/storage costs, the sponsor's 1 yoctoNEAR `ft_transfer_call` deposit, and outgoing-transfer deposits reserved separately from storage growth. Re-run existing NEAR journeys as regression coverage. Finalized testnet reads at block `277542370` show 20 USDC in each of `lcpsponsor.testnet` and `lcpbeneficiary.testnet`; LCP's registration total exactly meets the token's minimum storage bound. Recheck before accepting transactions.
+5. Rebuild reproducibly and complete security review before any immutable mainnet deployment. Verify the Circle mainnet USDC contract independently at release time.
+
+## Standards References
+
+- [Circle multichain USDC](https://www.circle.com/multi-chain-usdc) lists NEP-141 and the NEAR mainnet/testnet token contracts.
+- [NEP-141 Fungible Token Standard](https://github.com/near/NEPs/blob/master/neps/nep-0141.md) defines `ft_transfer_call`, receiver callbacks, amount serialization, and unused-token resolution.
+- [NEP-145 Storage Management](https://github.com/near/NEPs/blob/master/neps/nep-0145.md) defines token-account storage registration and NEAR-denominated storage deposits.

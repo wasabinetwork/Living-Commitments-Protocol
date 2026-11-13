@@ -1,5 +1,4 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-#[cfg(feature = "testnet-transfer-failure-fixture")]
 use near_sdk::AccountId;
 use near_sdk::{
     borsh::{BorshDeserialize, BorshSerialize},
@@ -8,7 +7,7 @@ use near_sdk::{
     near, require,
     serde_json::{json, Value},
     store::LookupMap,
-    BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseError,
+    BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseError, PromiseOrValue,
 };
 
 use crate::{
@@ -24,10 +23,11 @@ use crate::{
         PolicyAmendmentStatus, ServiceAvailabilityEvaluationInput,
         ServiceAvailabilityEvaluationSummary, ServiceAvailabilityPolicy,
         ServiceAvailabilitySourceCounts, ServicePolicyAmendmentView, ServiceReportInboxView,
-        SignedHeartbeatEvidence, SignedProbeReport, Tranche, TrancheStatus, TrancheView,
-        TransferKind, Verdict, EVALUATION_REQUEST_SCHEMA, EVALUATION_VERDICT_SCHEMA,
-        HEARTBEAT_EVIDENCE_TYPE, HEARTBEAT_SCHEMA, SERVICE_AVAILABILITY_INBOX_REQUEST_SCHEMA,
-        SERVICE_AVAILABILITY_REQUEST_SCHEMA, SERVICE_AVAILABILITY_VERDICT_SCHEMA,
+        SettlementAsset, SettlementAssetArgs, SignedHeartbeatEvidence, SignedProbeReport, Tranche,
+        TrancheStatus, TrancheView, TransferKind, Verdict, EVALUATION_REQUEST_SCHEMA,
+        EVALUATION_VERDICT_SCHEMA, HEARTBEAT_EVIDENCE_TYPE, HEARTBEAT_SCHEMA,
+        SERVICE_AVAILABILITY_INBOX_REQUEST_SCHEMA, SERVICE_AVAILABILITY_REQUEST_SCHEMA,
+        SERVICE_AVAILABILITY_VERDICT_SCHEMA,
     },
     temporal::{validate_temporal_policy, Health, Lifecycle, TemporalPolicy},
 };
@@ -69,6 +69,16 @@ const SERVICE_REPORT_REFUND_RESERVE_BYTES: u64 = 256;
 const SERVICE_REPORT_STORAGE_OVERHEAD_BYTES: u64 = 256;
 const AUTHORITY_ADAPTER_GAS_TGAS: u64 = 25;
 const AUTHORITY_ADAPTER_CALLBACK_GAS_TGAS: u64 = 20;
+const FT_TRANSFER_GAS_TGAS: u64 = 25;
+const FT_CALLBACK_GAS_TGAS: u64 = 20;
+const FT_TRANSFER_DEPOSIT_YOCTO: u128 = 1;
+const SETTLEMENT_STATE_PREFIX: &[u8] = b"lcp:settlement-state:v1:";
+const SETTLEMENT_TRANSFER_PREFIX: &[u8] = b"lcp:settlement-transfer:v1:";
+const NEAR_MAINNET_USDC_ACCOUNT: &str =
+    "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
+const NEAR_TESTNET_USDC_ACCOUNT: &str =
+    "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
+const NEAR_USDC_DECIMALS: u8 = 6;
 /// Budget epochs are bounded to a small count, so the top bit can mark a pending adapter action.
 const AUTHORITY_PENDING_EPOCH_FLAG: u64 = 1 << 63;
 
@@ -96,6 +106,45 @@ struct ServiceReportInboxEntry {
     expires_at_ns: u64,
     storage_deposit_yocto: u128,
     report_json: Vec<u8>,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+struct SettlementState {
+    asset: SettlementAsset,
+    tranche_amount_raw: u128,
+    funded_raw: u128,
+    paid_raw: u128,
+    refunded_raw: u128,
+    pending_raw: u128,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+struct SettlementTransferAmount {
+    amount_raw: u128,
+}
+
+#[derive(Clone, Copy)]
+struct EscrowAmounts {
+    funded: u128,
+    paid: u128,
+    refunded: u128,
+    pending: u128,
+}
+
+#[derive(BorshSerialize)]
+#[borsh(crate = "near_sdk::borsh")]
+struct SettlementPolicyDigestInput {
+    asset: SettlementAsset,
+    tranche_amount_raw: u128,
+}
+
+#[derive(near_sdk::serde::Deserialize)]
+#[serde(crate = "near_sdk::serde", deny_unknown_fields)]
+struct TokenFundingMessage {
+    schema: String,
+    commitment_id: U64,
 }
 
 #[derive(BorshSerialize, BorshStorageKey)]
@@ -153,10 +202,8 @@ impl Contract {
 
     #[payable]
     pub fn create_commitment(&mut self, args: CreateCommitmentArgs) -> U64 {
-        let policy = build_policy(args.policy);
-        let policy_bytes = near_sdk::borsh::to_vec(&policy)
-            .unwrap_or_else(|_| env::panic_str("failed to serialize commitment policy"));
-        let policy_hash = env::sha256_array(&policy_bytes);
+        let (policy, settlement) = build_policy(args.policy);
+        let policy_hash = commitment_policy_digest(&policy, settlement.as_ref());
         self.insert_commitment(
             args.subject,
             args.maintainer,
@@ -164,6 +211,7 @@ impl Contract {
             policy,
             policy_hash,
             None,
+            settlement,
         )
     }
 
@@ -172,12 +220,20 @@ impl Contract {
         &mut self,
         args: CreateServiceAvailabilityCommitmentArgs,
     ) -> U64 {
+        self.create_service_availability_commitment_on_chain(args, &env::chain_id())
+    }
+
+    fn create_service_availability_commitment_on_chain(
+        &mut self,
+        args: CreateServiceAvailabilityCommitmentArgs,
+        chain_id: &str,
+    ) -> U64 {
         validate_service_availability_policy(&args.service_availability);
         require!(
             args.policy.evidence.signature_scheme.as_deref() == Some("near_nep413"),
             "service availability commitments require the near_nep413 maintainer policy"
         );
-        let mut policy = build_policy(args.policy);
+        let (mut policy, settlement) = build_policy_on_chain(args.policy, chain_id);
         require!(
             policy.version == 2,
             "service availability requires a NEP-413 policy"
@@ -189,7 +245,11 @@ impl Contract {
                     && lag <= policy.temporal.evidence_ttl_ns),
             "service source lag must fit the commitment temporal bounds"
         );
-        let policy_hash = service_availability_policy_digest(&policy, &args.service_availability);
+        let policy_hash = service_availability_asset_policy_digest(
+            &policy,
+            &args.service_availability,
+            settlement.as_ref(),
+        );
         self.insert_commitment(
             args.subject,
             args.maintainer,
@@ -197,6 +257,7 @@ impl Contract {
             policy,
             policy_hash,
             Some(args.service_availability),
+            settlement,
         )
     }
 
@@ -265,12 +326,21 @@ impl Contract {
         }
         let old_policy = read_service_policy(commitment_id.0)
             .unwrap_or_else(|| env::panic_str("service availability policy is missing"));
-        let old_policy_hash = service_availability_policy_digest(&commitment.policy, &old_policy);
+        let settlement = read_settlement_state(commitment_id.0);
+        let old_policy_hash = service_availability_asset_policy_digest(
+            &commitment.policy,
+            &old_policy,
+            settlement.as_ref(),
+        );
         require!(
             old_policy_hash == commitment.policy_hash,
             "active service policy digest does not match commitment state"
         );
-        let new_policy_hash = service_availability_policy_digest(&commitment.policy, &new_policy);
+        let new_policy_hash = service_availability_asset_policy_digest(
+            &commitment.policy,
+            &new_policy,
+            settlement.as_ref(),
+        );
         require!(
             new_policy_hash != old_policy_hash,
             "amendment must change the active policy digest"
@@ -655,6 +725,10 @@ impl Contract {
             "only the sponsor or beneficiary can grant bounded payout authority"
         );
         require!(
+            read_settlement_state(commitment_id.0).is_none(),
+            "the bounded payout adapter supports native NEAR commitments only"
+        );
+        require!(
             is_lower_hex_32(&grant_id),
             "grant ID must be 32-byte lowercase hexadecimal"
         );
@@ -939,6 +1013,10 @@ impl Contract {
     #[payable]
     pub fn fund_commitment(&mut self, commitment_id: U64) {
         let mut commitment = self.load_commitment(commitment_id.0);
+        require!(
+            read_settlement_state(commitment_id.0).is_none(),
+            "NEP-141 escrow must be funded with ft_transfer_call"
+        );
         let caller = env::predecessor_account_id();
         require!(
             caller == commitment.policy.budget.sponsor,
@@ -964,8 +1042,70 @@ impl Contract {
                 "commitment_id": commitment_id.0.to_string(),
                 "sponsor": caller,
                 "amount_yocto": amount.to_string(),
+                "amount_raw": amount.to_string(),
+                "settlement_asset": {"kind": "near"},
             }),
         );
+    }
+
+    /// NEP-141 receiver entry point. Invalid or excess transfers are returned by the token resolver.
+    #[payable]
+    pub fn ft_on_transfer(
+        &mut self,
+        sender_id: AccountId,
+        amount: U128,
+        msg: String,
+    ) -> PromiseOrValue<U128> {
+        let token_account_id = env::predecessor_account_id();
+        let parsed_message = near_sdk::serde_json::from_str::<TokenFundingMessage>(&msg).ok();
+        let Some(message) = parsed_message.filter(|value| value.schema == "lcp.funding.v1") else {
+            return PromiseOrValue::Value(amount);
+        };
+        let Some(commitment) = self.commitments.get(&message.commitment_id.0).cloned() else {
+            return PromiseOrValue::Value(amount);
+        };
+        let Some(mut settlement) = read_settlement_state(message.commitment_id.0) else {
+            return PromiseOrValue::Value(amount);
+        };
+        let SettlementAsset::Nep141 {
+            token_account_id: expected_token,
+            ..
+        } = &settlement.asset
+        else {
+            return PromiseOrValue::Value(amount);
+        };
+        if &token_account_id != expected_token
+            || sender_id != commitment.policy.budget.sponsor
+            || commitment.lifecycle == Lifecycle::Closed
+            || amount.0 == 0
+        {
+            return PromiseOrValue::Value(amount);
+        }
+
+        let required = u128::from(commitment.policy.budget.max_epochs)
+            .checked_mul(settlement.tranche_amount_raw)
+            .unwrap_or_else(|| env::panic_str("required escrow calculation overflow"));
+        let remaining = required.saturating_sub(settlement.funded_raw);
+        let accepted = amount.0.min(remaining);
+        if accepted == 0 {
+            return PromiseOrValue::Value(amount);
+        }
+        settlement.funded_raw = settlement
+            .funded_raw
+            .checked_add(accepted)
+            .unwrap_or_else(|| env::panic_str("token escrow funding overflow"));
+        write_settlement_state(message.commitment_id.0, &settlement);
+        emit_event(
+            "commitment_funded",
+            json!({
+                "commitment_id": message.commitment_id.0.to_string(),
+                "sponsor": sender_id,
+                "amount_raw": accepted.to_string(),
+                "settlement_asset": settlement.asset,
+                "token_account_id": token_account_id,
+            }),
+        );
+        PromiseOrValue::Value(U128(amount.0 - accepted))
     }
 
     #[payable]
@@ -1015,16 +1155,18 @@ impl Contract {
             "only draft commitments can be activated"
         );
 
+        let tranche_amount_raw = tranche_amount_raw_for(&commitment);
+        let escrow_amounts = escrow_amounts_for(&commitment);
         let required_escrow = u128::from(commitment.policy.budget.max_epochs)
-            .checked_mul(commitment.policy.budget.tranche_yocto)
+            .checked_mul(tranche_amount_raw)
             .unwrap_or_else(|| env::panic_str("required escrow calculation overflow"));
-        let already_allocated = commitment
-            .escrow_paid_yocto
-            .checked_add(commitment.escrow_refunded_yocto)
-            .and_then(|value| value.checked_add(commitment.escrow_pending_yocto))
+        let already_allocated = escrow_amounts
+            .paid
+            .checked_add(escrow_amounts.refunded)
+            .and_then(|value| value.checked_add(escrow_amounts.pending))
             .unwrap_or_else(|| env::panic_str("escrow allocation overflow"));
-        let escrow_available = commitment
-            .escrow_funded_yocto
+        let escrow_available = escrow_amounts
+            .funded
             .checked_sub(already_allocated)
             .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
         require!(
@@ -2523,8 +2665,10 @@ impl Contract {
             .claim_eligibility(&commitment, now_ns)
             .unwrap_or_else(|error| env::panic_str(error));
         let tranche_key = (commitment_id.0, epoch);
-
-        let tranche_amount = commitment.policy.budget.tranche_yocto;
+        let settlement = read_settlement_state(commitment_id.0);
+        let settlement_asset = settlement_asset_for(&commitment);
+        let is_native_near = settlement.is_none();
+        let tranche_amount = tranche_amount_raw_for(&commitment);
         #[cfg(feature = "testnet-transfer-failure-fixture")]
         let recipient = self
             .test_transfer_failure_recipients
@@ -2539,15 +2683,23 @@ impl Contract {
             .next_transfer_id
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
-        commitment.escrow_pending_yocto = commitment
-            .escrow_pending_yocto
-            .checked_add(tranche_amount)
-            .unwrap_or_else(|| env::panic_str("pending escrow overflow"));
+        if let Some(mut state) = settlement {
+            state.pending_raw = state
+                .pending_raw
+                .checked_add(tranche_amount)
+                .unwrap_or_else(|| env::panic_str("pending token escrow overflow"));
+            write_settlement_state(commitment_id.0, &state);
+        } else {
+            commitment.escrow_pending_yocto = commitment
+                .escrow_pending_yocto
+                .checked_add(tranche_amount)
+                .unwrap_or_else(|| env::panic_str("pending escrow overflow"));
+        }
 
         let tranche = Tranche {
             commitment_id: commitment_id.0,
             epoch,
-            amount_yocto: tranche_amount,
+            amount_yocto: if is_native_near { tranche_amount } else { 0 },
             status: TrancheStatus::Pending,
             transfer_id: Some(transfer_id),
         };
@@ -2557,7 +2709,7 @@ impl Contract {
             kind: TransferKind::Tranche,
             epoch: Some(epoch),
             recipient: recipient.clone(),
-            amount_yocto: tranche_amount,
+            amount_yocto: if is_native_near { tranche_amount } else { 0 },
         };
 
         commitment.pending_transfer_count = commitment
@@ -2568,6 +2720,9 @@ impl Contract {
         self.tranches.insert(tranche_key, tranche);
         self.pending_transfers
             .insert(transfer_id, pending_transfer.clone());
+        if !is_native_near {
+            write_settlement_transfer_amount(transfer_id, tranche_amount);
+        }
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.tranches.flush();
         self.pending_transfers.flush();
@@ -2576,10 +2731,13 @@ impl Contract {
             .checked_sub(storage_before)
             .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
         let required_storage_bond = storage_cost(storage_bytes);
+        let required_attached_deposit =
+            required_transfer_deposit(required_storage_bond, &settlement_asset)
+                .unwrap_or_else(|| env::panic_str("tranche deposit requirement overflow"));
         let attached = env::attached_deposit().as_yoctonear();
         require!(
-            attached >= required_storage_bond,
-            format!("attach at least {required_storage_bond} yoctoNEAR for tranche storage")
+            attached >= required_attached_deposit,
+            format!("attach at least {required_attached_deposit} yoctoNEAR for tranche storage and transfer")
         );
         commitment.storage_deposit_yocto = commitment
             .storage_deposit_yocto
@@ -2587,19 +2745,42 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller, attached, required_storage_bond);
+        refund_excess(caller, attached, required_attached_deposit);
 
         let callback_args = near_sdk::serde_json::to_vec(&json!({
             "transfer_id": U64(transfer_id),
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize tranche callback"));
-        let _transfer_promise = Promise::new(recipient)
-            .transfer(NearToken::from_yoctonear(pending_transfer.amount_yocto))
-            .then(Promise::new(env::current_account_id()).function_call(
+        let transfer_promise = match settlement_asset.clone() {
+            SettlementAsset::Near => {
+                Promise::new(recipient).transfer(NearToken::from_yoctonear(tranche_amount))
+            }
+            SettlementAsset::Nep141 {
+                token_account_id, ..
+            } => {
+                let args = near_sdk::serde_json::to_vec(&json!({
+                    "receiver_id": pending_transfer.recipient.clone(),
+                    "amount": tranche_amount.to_string(),
+                }))
+                .unwrap_or_else(|_| env::panic_str("failed to serialize NEP-141 transfer"));
+                Promise::new(token_account_id).function_call(
+                    "ft_transfer".to_string(),
+                    args,
+                    NearToken::from_yoctonear(1),
+                    Gas::from_tgas(FT_TRANSFER_GAS_TGAS),
+                )
+            }
+        };
+        let _transfer_promise =
+            transfer_promise.then(Promise::new(env::current_account_id()).function_call(
                 "on_tranche_transfer".to_string(),
                 callback_args,
                 NearToken::from_yoctonear(0),
-                Gas::from_tgas(CALLBACK_GAS_TGAS),
+                Gas::from_tgas(if is_native_near {
+                    CALLBACK_GAS_TGAS
+                } else {
+                    FT_CALLBACK_GAS_TGAS
+                }),
             ));
 
         self.next_transfer_id = transfer_id;
@@ -2610,7 +2791,9 @@ impl Contract {
                 "epoch": epoch,
                 "transfer_id": transfer_id.to_string(),
                 "beneficiary": pending_transfer.recipient,
-                "amount_yocto": tranche_amount.to_string(),
+                "amount_yocto": is_native_near.then(|| tranche_amount.to_string()),
+                "amount_raw": tranche_amount.to_string(),
+                "settlement_asset": settlement_asset,
             }),
         );
         U64(transfer_id)
@@ -2671,33 +2854,63 @@ impl Contract {
             return;
         }
         let mut commitment = self.load_commitment(transfer.commitment_id);
-        require!(
-            commitment.escrow_pending_yocto >= transfer.amount_yocto
-                && commitment.pending_transfer_count > 0,
-            "pending escrow accounting invariant violated"
-        );
+        let mut settlement = read_settlement_state(transfer.commitment_id);
+        let is_native_near = settlement.is_none();
+        let amount_raw = if is_native_near {
+            transfer.amount_yocto
+        } else if let Some(amount) = read_settlement_transfer_amount(transfer.id) {
+            amount
+        } else {
+            env::log_str("ignored token payout callback without its reserved amount");
+            return;
+        };
+        if commitment.pending_transfer_count == 0
+            || (is_native_near && commitment.escrow_pending_yocto < amount_raw)
+            || settlement
+                .as_ref()
+                .is_some_and(|state| state.pending_raw < amount_raw)
+        {
+            env::panic_str("pending escrow accounting invariant violated");
+        }
 
         let succeeded = env::promise_results_count() == 1
             && match env::promise_result_checked(0, 0) {
                 Ok(_) | Err(PromiseError::TooLong(_)) => true,
                 Err(_) => false,
             };
-        commitment.escrow_pending_yocto -= transfer.amount_yocto;
+        if let Some(state) = settlement.as_mut() {
+            state.pending_raw -= amount_raw;
+            if succeeded {
+                state.paid_raw = state
+                    .paid_raw
+                    .checked_add(amount_raw)
+                    .unwrap_or_else(|| env::panic_str("paid token escrow accounting overflow"));
+            }
+            write_settlement_state(transfer.commitment_id, state);
+        } else {
+            commitment.escrow_pending_yocto -= amount_raw;
+            if succeeded {
+                commitment.escrow_paid_yocto = commitment
+                    .escrow_paid_yocto
+                    .checked_add(amount_raw)
+                    .unwrap_or_else(|| env::panic_str("paid escrow accounting overflow"));
+            }
+        }
         if succeeded {
-            commitment.escrow_paid_yocto = commitment
-                .escrow_paid_yocto
-                .checked_add(transfer.amount_yocto)
-                .unwrap_or_else(|| env::panic_str("paid escrow accounting overflow"));
             tranche.status = TrancheStatus::Paid;
         } else {
             tranche.status = TrancheStatus::Failed;
         }
         tranche.transfer_id = None;
         commitment.pending_transfer_count -= 1;
+        let settlement_asset = settlement_asset_for(&commitment);
 
         self.commitments.insert(commitment.id, commitment);
         self.tranches.insert(tranche_key, tranche);
         self.pending_transfers.remove(&transfer_id.0);
+        if !is_native_near {
+            remove_settlement_transfer_amount(transfer.id);
+        }
         self.commitments.flush();
         self.tranches.flush();
         self.pending_transfers.flush();
@@ -2713,7 +2926,9 @@ impl Contract {
                 "epoch": epoch,
                 "transfer_id": transfer.id.to_string(),
                 "beneficiary": transfer.recipient,
-                "amount_yocto": transfer.amount_yocto.to_string(),
+                "amount_yocto": is_native_near.then(|| amount_raw.to_string()),
+                "amount_raw": amount_raw.to_string(),
+                "settlement_asset": settlement_asset,
             }),
         );
     }
@@ -2729,26 +2944,54 @@ impl Contract {
             return;
         }
         let mut commitment = self.load_commitment(transfer.commitment_id);
-        require!(
-            commitment.escrow_pending_yocto >= transfer.amount_yocto
-                && commitment.pending_transfer_count > 0,
-            "pending refund accounting invariant violated"
-        );
+        let mut settlement = read_settlement_state(transfer.commitment_id);
+        let is_native_near = settlement.is_none();
+        let amount_raw = if is_native_near {
+            transfer.amount_yocto
+        } else if let Some(amount) = read_settlement_transfer_amount(transfer.id) {
+            amount
+        } else {
+            env::log_str("ignored token refund callback without its reserved amount");
+            return;
+        };
+        if commitment.pending_transfer_count == 0
+            || (is_native_near && commitment.escrow_pending_yocto < amount_raw)
+            || settlement
+                .as_ref()
+                .is_some_and(|state| state.pending_raw < amount_raw)
+        {
+            env::panic_str("pending refund accounting invariant violated");
+        }
         let succeeded = env::promise_results_count() == 1
             && match env::promise_result_checked(0, 0) {
                 Ok(_) | Err(PromiseError::TooLong(_)) => true,
                 Err(_) => false,
             };
-        commitment.escrow_pending_yocto -= transfer.amount_yocto;
-        if succeeded {
-            commitment.escrow_refunded_yocto = commitment
-                .escrow_refunded_yocto
-                .checked_add(transfer.amount_yocto)
-                .unwrap_or_else(|| env::panic_str("refunded escrow accounting overflow"));
+        if let Some(state) = settlement.as_mut() {
+            state.pending_raw -= amount_raw;
+            if succeeded {
+                state.refunded_raw = state
+                    .refunded_raw
+                    .checked_add(amount_raw)
+                    .unwrap_or_else(|| env::panic_str("refunded token accounting overflow"));
+            }
+            write_settlement_state(transfer.commitment_id, state);
+        } else {
+            commitment.escrow_pending_yocto -= amount_raw;
+            if succeeded {
+                commitment.escrow_refunded_yocto = commitment
+                    .escrow_refunded_yocto
+                    .checked_add(amount_raw)
+                    .unwrap_or_else(|| env::panic_str("refunded escrow accounting overflow"));
+            }
         }
         commitment.pending_transfer_count -= 1;
+        let settlement_asset = settlement_asset_for(&commitment);
         self.commitments.insert(commitment.id, commitment);
         self.pending_transfers.remove(&transfer_id.0);
+        if !is_native_near {
+            remove_settlement_transfer_amount(transfer.id);
+        }
         self.commitments.flush();
         self.pending_transfers.flush();
 
@@ -2762,7 +3005,9 @@ impl Contract {
                 "commitment_id": transfer.commitment_id.to_string(),
                 "transfer_id": transfer.id.to_string(),
                 "sponsor": transfer.recipient,
-                "amount_yocto": transfer.amount_yocto.to_string(),
+                "amount_yocto": is_native_near.then(|| amount_raw.to_string()),
+                "amount_raw": amount_raw.to_string(),
+                "settlement_asset": settlement_asset,
             }),
         );
     }
@@ -2823,11 +3068,15 @@ impl Contract {
             commitment.pending_evaluation_id.is_none() && commitment.active_challenge_id.is_none(),
             "pending evaluations and challenges must be resolved before refund"
         );
-        let amount = commitment
-            .escrow_funded_yocto
-            .checked_sub(commitment.escrow_paid_yocto)
-            .and_then(|value| value.checked_sub(commitment.escrow_refunded_yocto))
-            .and_then(|value| value.checked_sub(commitment.escrow_pending_yocto))
+        let mut settlement = read_settlement_state(commitment_id.0);
+        let settlement_asset = settlement_asset_for(&commitment);
+        let is_native_near = settlement.is_none();
+        let escrow_amounts = escrow_amounts_for(&commitment);
+        let amount = escrow_amounts
+            .funded
+            .checked_sub(escrow_amounts.paid)
+            .and_then(|value| value.checked_sub(escrow_amounts.refunded))
+            .and_then(|value| value.checked_sub(escrow_amounts.pending))
             .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
         require!(amount > 0, "there is no remaining escrow to refund");
 
@@ -2835,10 +3084,18 @@ impl Contract {
             .next_transfer_id
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
-        commitment.escrow_pending_yocto = commitment
-            .escrow_pending_yocto
-            .checked_add(amount)
-            .unwrap_or_else(|| env::panic_str("pending escrow overflow"));
+        if let Some(state) = settlement.as_mut() {
+            state.pending_raw = state
+                .pending_raw
+                .checked_add(amount)
+                .unwrap_or_else(|| env::panic_str("pending token escrow overflow"));
+            write_settlement_state(commitment_id.0, state);
+        } else {
+            commitment.escrow_pending_yocto = commitment
+                .escrow_pending_yocto
+                .checked_add(amount)
+                .unwrap_or_else(|| env::panic_str("pending escrow overflow"));
+        }
         commitment.pending_transfer_count = commitment
             .pending_transfer_count
             .checked_add(1)
@@ -2849,12 +3106,15 @@ impl Contract {
             kind: TransferKind::Refund,
             epoch: None,
             recipient: commitment.policy.budget.sponsor.clone(),
-            amount_yocto: amount,
+            amount_yocto: if is_native_near { amount } else { 0 },
         };
 
         let storage_before = env::storage_usage();
         self.pending_transfers
             .insert(transfer_id, pending_transfer.clone());
+        if !is_native_near {
+            write_settlement_transfer_amount(transfer_id, amount);
+        }
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.pending_transfers.flush();
         self.commitments.flush();
@@ -2862,10 +3122,13 @@ impl Contract {
             .checked_sub(storage_before)
             .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
         let required_storage_bond = storage_cost(storage_bytes);
+        let required_attached_deposit =
+            required_transfer_deposit(required_storage_bond, &settlement_asset)
+                .unwrap_or_else(|| env::panic_str("refund deposit requirement overflow"));
         let attached = env::attached_deposit().as_yoctonear();
         require!(
-            attached >= required_storage_bond,
-            format!("attach at least {required_storage_bond} yoctoNEAR for refund storage")
+            attached >= required_attached_deposit,
+            format!("attach at least {required_attached_deposit} yoctoNEAR for refund storage and transfer")
         );
         commitment.storage_deposit_yocto = commitment
             .storage_deposit_yocto
@@ -2873,19 +3136,41 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller, attached, required_storage_bond);
+        refund_excess(caller, attached, required_attached_deposit);
 
         let callback_args = near_sdk::serde_json::to_vec(&json!({
             "transfer_id": U64(transfer_id),
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize refund callback"));
-        let _refund_promise = Promise::new(pending_transfer.recipient.clone())
-            .transfer(NearToken::from_yoctonear(amount))
-            .then(Promise::new(env::current_account_id()).function_call(
+        let refund_promise = match settlement_asset.clone() {
+            SettlementAsset::Near => Promise::new(pending_transfer.recipient.clone())
+                .transfer(NearToken::from_yoctonear(amount)),
+            SettlementAsset::Nep141 {
+                token_account_id, ..
+            } => {
+                let args = near_sdk::serde_json::to_vec(&json!({
+                    "receiver_id": pending_transfer.recipient.clone(),
+                    "amount": amount.to_string(),
+                }))
+                .unwrap_or_else(|_| env::panic_str("failed to serialize NEP-141 refund"));
+                Promise::new(token_account_id).function_call(
+                    "ft_transfer".to_string(),
+                    args,
+                    NearToken::from_yoctonear(1),
+                    Gas::from_tgas(FT_TRANSFER_GAS_TGAS),
+                )
+            }
+        };
+        let _refund_promise =
+            refund_promise.then(Promise::new(env::current_account_id()).function_call(
                 "on_refund_transfer".to_string(),
                 callback_args,
                 NearToken::from_yoctonear(0),
-                Gas::from_tgas(CALLBACK_GAS_TGAS),
+                Gas::from_tgas(if is_native_near {
+                    CALLBACK_GAS_TGAS
+                } else {
+                    FT_CALLBACK_GAS_TGAS
+                }),
             ));
         self.next_transfer_id = transfer_id;
         emit_event(
@@ -2894,7 +3179,9 @@ impl Contract {
                 "commitment_id": commitment_id.0.to_string(),
                 "transfer_id": transfer_id.to_string(),
                 "sponsor": pending_transfer.recipient,
-                "amount_yocto": amount.to_string(),
+                "amount_yocto": is_native_near.then(|| amount.to_string()),
+                "amount_raw": amount.to_string(),
+                "settlement_asset": settlement_asset,
             }),
         );
         U64(transfer_id)
@@ -2908,9 +3195,19 @@ impl Contract {
 
     pub fn get_tranche(&self, commitment_id: U64, epoch: U64) -> Option<TrancheView> {
         let epoch = u32::try_from(epoch.0).ok()?;
-        self.tranches
-            .get(&(commitment_id.0, epoch))
-            .map(TrancheView::from)
+        let tranche = self.tranches.get(&(commitment_id.0, epoch))?;
+        let commitment = self.commitments.get(&commitment_id.0)?;
+        let settlement = read_settlement_state(commitment_id.0);
+        let mut view = TrancheView::from(tranche);
+        view.settlement_asset = settlement
+            .as_ref()
+            .map(|state| state.asset.clone())
+            .unwrap_or(SettlementAsset::Near);
+        view.amount_raw = U128(tranche_amount_raw_for(commitment));
+        if settlement.is_some() {
+            view.amount_yocto = U128(0);
+        }
+        Some(view)
     }
 
     pub fn can_claim_tranche(&self, commitment_id: U64) -> Option<ClaimEligibilityView> {
@@ -2927,30 +3224,62 @@ impl Contract {
                 |(preserved_epoch, was_resumed)| preserved_epoch == epoch && was_resumed,
             )
         });
+        let settlement = read_settlement_state(commitment_id.0);
+        let amount_raw = tranche_amount_raw_for(commitment);
         Some(ClaimEligibilityView {
             eligible: eligibility.is_ok(),
             reason: eligibility.err().map(|reason| reason.to_string()),
             current_epoch: current_epoch_of(commitment, now_ns).map(U64),
             claimable_epoch,
             claim_window_resumed,
-            amount_yocto: U128(commitment.policy.budget.tranche_yocto),
+            amount_yocto: U128(if settlement.is_some() { 0 } else { amount_raw }),
+            settlement_asset: settlement
+                .map(|state| state.asset)
+                .unwrap_or(SettlementAsset::Near),
+            amount_raw: U128(amount_raw),
         })
     }
 
     pub fn get_escrow_status(&self, commitment_id: U64) -> Option<EscrowStatusView> {
         let commitment = self.commitments.get(&commitment_id.0)?;
-        let free_yocto = commitment
-            .escrow_funded_yocto
-            .checked_sub(commitment.escrow_paid_yocto)
-            .and_then(|amount| amount.checked_sub(commitment.escrow_refunded_yocto))
-            .and_then(|amount| amount.checked_sub(commitment.escrow_pending_yocto))
+        let amounts = escrow_amounts_for(commitment);
+        let free_raw = amounts
+            .funded
+            .checked_sub(amounts.paid)
+            .and_then(|amount| amount.checked_sub(amounts.refunded))
+            .and_then(|amount| amount.checked_sub(amounts.pending))
             .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
+        let settlement = read_settlement_state(commitment_id.0);
         Some(EscrowStatusView {
-            funded_yocto: U128(commitment.escrow_funded_yocto),
-            paid_yocto: U128(commitment.escrow_paid_yocto),
-            refunded_yocto: U128(commitment.escrow_refunded_yocto),
-            pending_yocto: U128(commitment.escrow_pending_yocto),
-            free_yocto: U128(free_yocto),
+            funded_yocto: U128(if settlement.is_some() {
+                0
+            } else {
+                amounts.funded
+            }),
+            paid_yocto: U128(if settlement.is_some() {
+                0
+            } else {
+                amounts.paid
+            }),
+            refunded_yocto: U128(if settlement.is_some() {
+                0
+            } else {
+                amounts.refunded
+            }),
+            pending_yocto: U128(if settlement.is_some() {
+                0
+            } else {
+                amounts.pending
+            }),
+            free_yocto: U128(if settlement.is_some() { 0 } else { free_raw }),
+            settlement_asset: settlement
+                .map(|state| state.asset)
+                .unwrap_or(SettlementAsset::Near),
+            funded_raw: U128(amounts.funded),
+            paid_raw: U128(amounts.paid),
+            refunded_raw: U128(amounts.refunded),
+            pending_raw: U128(amounts.pending),
+            free_raw: U128(free_raw),
         })
     }
 
@@ -2977,17 +3306,32 @@ impl Contract {
         (first_id..=upper_id)
             .rev()
             .filter_map(|id| {
-                self.commitments
-                    .get(&id)
-                    .map(|commitment| CommitmentSummaryView {
+                self.commitments.get(&id).map(|commitment| {
+                    let amounts = escrow_amounts_for(commitment);
+                    let settlement = read_settlement_state(commitment.id);
+                    CommitmentSummaryView {
                         id: U64(commitment.id),
                         subject: commitment.subject.clone(),
                         lifecycle: commitment.lifecycle,
                         effective_health: health_of(commitment, now_ns),
                         policy_version: commitment.policy.version,
-                        escrow_funded_yocto: U128(commitment.escrow_funded_yocto),
-                        escrow_paid_yocto: U128(commitment.escrow_paid_yocto),
-                    })
+                        escrow_funded_yocto: U128(if settlement.is_some() {
+                            0
+                        } else {
+                            amounts.funded
+                        }),
+                        escrow_paid_yocto: U128(if settlement.is_some() {
+                            0
+                        } else {
+                            amounts.paid
+                        }),
+                        settlement_asset: settlement
+                            .map(|state| state.asset)
+                            .unwrap_or(SettlementAsset::Near),
+                        escrow_funded_raw: U128(amounts.funded),
+                        escrow_paid_raw: U128(amounts.paid),
+                    }
+                })
             })
             .collect()
     }
@@ -2995,6 +3339,13 @@ impl Contract {
     pub fn get_commitment(&self, commitment_id: U64) -> Option<CommitmentView> {
         let commitment = self.commitments.get(&commitment_id.0)?;
         let health = health_of(commitment, env::block_timestamp());
+        let amounts = escrow_amounts_for(commitment);
+        let settlement = read_settlement_state(commitment.id);
+        let asset = settlement
+            .as_ref()
+            .map(|state| state.asset.clone())
+            .unwrap_or(SettlementAsset::Near);
+        let is_native_near = settlement.is_none();
 
         Some(CommitmentView {
             id: U64(commitment.id),
@@ -3016,10 +3367,16 @@ impl Contract {
                 .map(|observation| U64(observation.observed_at_ns)),
             negative_since_ns: commitment.negative_since_ns.map(U64),
             effective_health: health,
-            escrow_funded_yocto: U128(commitment.escrow_funded_yocto),
-            escrow_paid_yocto: U128(commitment.escrow_paid_yocto),
-            escrow_refunded_yocto: U128(commitment.escrow_refunded_yocto),
-            escrow_pending_yocto: U128(commitment.escrow_pending_yocto),
+            escrow_funded_yocto: U128(if is_native_near { amounts.funded } else { 0 }),
+            escrow_paid_yocto: U128(if is_native_near { amounts.paid } else { 0 }),
+            escrow_refunded_yocto: U128(if is_native_near { amounts.refunded } else { 0 }),
+            escrow_pending_yocto: U128(if is_native_near { amounts.pending } else { 0 }),
+            settlement_asset: asset,
+            escrow_funded_raw: U128(amounts.funded),
+            escrow_paid_raw: U128(amounts.paid),
+            escrow_refunded_raw: U128(amounts.refunded),
+            escrow_pending_raw: U128(amounts.pending),
+            tranche_amount_raw: U128(tranche_amount_raw_for(commitment)),
             operations_funded_yocto: U128(commitment.operations_funded_yocto),
             operations_authorized_spend_yocto: U128(commitment.operations_authorized_spend_yocto),
             storage_deposit_yocto: U128(commitment.storage_deposit_yocto),
@@ -3027,9 +3384,18 @@ impl Contract {
     }
 
     pub fn get_policy(&self, commitment_id: U64) -> Option<CommitmentPolicyView> {
-        self.commitments
-            .get(&commitment_id.0)
-            .map(|commitment| CommitmentPolicyView::from(&commitment.policy))
+        let commitment = self.commitments.get(&commitment_id.0)?;
+        let settlement = read_settlement_state(commitment_id.0);
+        let is_native_near = settlement.is_none();
+        let mut view = CommitmentPolicyView::from(&commitment.policy);
+        view.settlement_asset = settlement
+            .map(|state| state.asset)
+            .unwrap_or(SettlementAsset::Near);
+        view.tranche_amount_raw = U128(tranche_amount_raw_for(commitment));
+        if !is_native_near {
+            view.budget.tranche_yocto = U128(0);
+        }
+        Some(view)
     }
 
     pub fn get_service_availability_policy(
@@ -3113,6 +3479,7 @@ impl Contract {
         policy: CommitmentPolicy,
         policy_hash: [u8; 32],
         service_policy: Option<ServiceAvailabilityPolicy>,
+        settlement: Option<SettlementState>,
     ) -> U64 {
         require!(
             !subject.trim().is_empty()
@@ -3165,6 +3532,9 @@ impl Contract {
         self.commitments.flush();
         if let Some(service_policy) = &service_policy {
             write_service_policy(id, service_policy);
+        }
+        if let Some(settlement) = &settlement {
+            write_settlement_state(id, settlement);
         }
         let storage_bytes = env::storage_usage()
             .checked_sub(storage_before)
@@ -3258,15 +3628,10 @@ impl Contract {
         {
             return Err("this epoch is already paid or pending");
         }
-        let Some(escrow_free) = commitment
-            .escrow_funded_yocto
-            .checked_sub(commitment.escrow_paid_yocto)
-            .and_then(|amount| amount.checked_sub(commitment.escrow_refunded_yocto))
-            .and_then(|amount| amount.checked_sub(commitment.escrow_pending_yocto))
-        else {
+        let Some(escrow_free) = self.escrow_available_for_tranche(commitment) else {
             return Err("escrow accounting invariant violated");
         };
-        if escrow_free < commitment.policy.budget.tranche_yocto {
+        if escrow_free < tranche_amount_raw_for(commitment) {
             return Err("insufficient unallocated commitment escrow");
         }
         Ok(epoch)
@@ -3292,8 +3657,7 @@ impl Contract {
         let epoch = u32::try_from(current_epoch_of(commitment, now_ns)?).ok()?;
         if epoch >= commitment.policy.budget.max_epochs
             || self.tranche_is_paid_or_pending(commitment.id, epoch)
-            || self.escrow_available_for_tranche(commitment)?
-                < commitment.policy.budget.tranche_yocto
+            || self.escrow_available_for_tranche(commitment)? < tranche_amount_raw_for(commitment)
         {
             return None;
         }
@@ -3313,7 +3677,7 @@ impl Contract {
 
     fn preserved_claim_epoch(&self, commitment: &Commitment, now_ns: u64) -> Option<(u32, bool)> {
         let escrow_free = self.escrow_available_for_tranche(commitment)?;
-        if escrow_free < commitment.policy.budget.tranche_yocto {
+        if escrow_free < tranche_amount_raw_for(commitment) {
             return None;
         }
 
@@ -3398,11 +3762,12 @@ impl Contract {
     }
 
     fn escrow_available_for_tranche(&self, commitment: &Commitment) -> Option<u128> {
-        commitment
-            .escrow_funded_yocto
-            .checked_sub(commitment.escrow_paid_yocto)
-            .and_then(|amount| amount.checked_sub(commitment.escrow_refunded_yocto))
-            .and_then(|amount| amount.checked_sub(commitment.escrow_pending_yocto))
+        let amounts = escrow_amounts_for(commitment);
+        amounts
+            .funded
+            .checked_sub(amounts.paid)
+            .and_then(|amount| amount.checked_sub(amounts.refunded))
+            .and_then(|amount| amount.checked_sub(amounts.pending))
     }
 
     fn finish_evaluation(
@@ -3626,6 +3991,80 @@ fn service_policy_storage_key(commitment_id: u64) -> Vec<u8> {
     key.extend_from_slice(SERVICE_POLICY_STORAGE_PREFIX);
     key.extend_from_slice(&commitment_id.to_le_bytes());
     key
+}
+
+fn settlement_state_storage_key(commitment_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SETTLEMENT_STATE_PREFIX.len() + 8);
+    key.extend_from_slice(SETTLEMENT_STATE_PREFIX);
+    key.extend_from_slice(&commitment_id.to_le_bytes());
+    key
+}
+
+fn settlement_transfer_storage_key(transfer_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SETTLEMENT_TRANSFER_PREFIX.len() + 8);
+    key.extend_from_slice(SETTLEMENT_TRANSFER_PREFIX);
+    key.extend_from_slice(&transfer_id.to_le_bytes());
+    key
+}
+
+fn write_settlement_state(commitment_id: u64, state: &SettlementState) {
+    let bytes = near_sdk::borsh::to_vec(state)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize settlement state"));
+    env::storage_write(&settlement_state_storage_key(commitment_id), &bytes);
+}
+
+fn read_settlement_state(commitment_id: u64) -> Option<SettlementState> {
+    let bytes = env::storage_read(&settlement_state_storage_key(commitment_id))?;
+    Some(
+        near_sdk::borsh::from_slice(&bytes)
+            .unwrap_or_else(|_| env::panic_str("settlement sidecar is malformed")),
+    )
+}
+
+fn settlement_asset_for(commitment: &Commitment) -> SettlementAsset {
+    read_settlement_state(commitment.id)
+        .map(|state| state.asset)
+        .unwrap_or(SettlementAsset::Near)
+}
+
+fn tranche_amount_raw_for(commitment: &Commitment) -> u128 {
+    read_settlement_state(commitment.id)
+        .map(|state| state.tranche_amount_raw)
+        .unwrap_or(commitment.policy.budget.tranche_yocto)
+}
+
+fn escrow_amounts_for(commitment: &Commitment) -> EscrowAmounts {
+    read_settlement_state(commitment.id)
+        .map(|state| EscrowAmounts {
+            funded: state.funded_raw,
+            paid: state.paid_raw,
+            refunded: state.refunded_raw,
+            pending: state.pending_raw,
+        })
+        .unwrap_or(EscrowAmounts {
+            funded: commitment.escrow_funded_yocto,
+            paid: commitment.escrow_paid_yocto,
+            refunded: commitment.escrow_refunded_yocto,
+            pending: commitment.escrow_pending_yocto,
+        })
+}
+
+fn write_settlement_transfer_amount(transfer_id: u64, amount_raw: u128) {
+    let value = SettlementTransferAmount { amount_raw };
+    let bytes = near_sdk::borsh::to_vec(&value)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize token transfer amount"));
+    env::storage_write(&settlement_transfer_storage_key(transfer_id), &bytes);
+}
+
+fn read_settlement_transfer_amount(transfer_id: u64) -> Option<u128> {
+    let bytes = env::storage_read(&settlement_transfer_storage_key(transfer_id))?;
+    near_sdk::borsh::from_slice::<SettlementTransferAmount>(&bytes)
+        .ok()
+        .map(|transfer| transfer.amount_raw)
+}
+
+fn remove_settlement_transfer_amount(transfer_id: u64) {
+    env::storage_remove(&settlement_transfer_storage_key(transfer_id));
 }
 
 fn service_report_inbox_storage_key(
@@ -3883,6 +4322,59 @@ fn service_availability_policy_digest(
     digest_input.extend_from_slice(&policy_bytes);
     digest_input.extend_from_slice(&(source_bytes.len() as u32).to_le_bytes());
     digest_input.extend_from_slice(&source_bytes);
+    env::sha256_array(&digest_input)
+}
+
+fn commitment_policy_digest(
+    policy: &CommitmentPolicy,
+    settlement: Option<&SettlementState>,
+) -> [u8; 32] {
+    let policy_bytes = near_sdk::borsh::to_vec(policy)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize commitment policy"));
+    let Some(settlement) = settlement else {
+        // Preserve the historical digest for native-NEAR commitments.
+        return env::sha256_array(&policy_bytes);
+    };
+    let asset_input = SettlementPolicyDigestInput {
+        asset: settlement.asset.clone(),
+        tranche_amount_raw: settlement.tranche_amount_raw,
+    };
+    let asset_bytes = near_sdk::borsh::to_vec(&asset_input)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize settlement policy"));
+    let mut digest_input = b"LCP_COMMITMENT_POLICY_ASSET_V1\0".to_vec();
+    digest_input.extend_from_slice(&(policy_bytes.len() as u32).to_le_bytes());
+    digest_input.extend_from_slice(&policy_bytes);
+    digest_input.extend_from_slice(&(asset_bytes.len() as u32).to_le_bytes());
+    digest_input.extend_from_slice(&asset_bytes);
+    env::sha256_array(&digest_input)
+}
+
+fn service_availability_asset_policy_digest(
+    policy: &CommitmentPolicy,
+    service_policy: &ServiceAvailabilityPolicy,
+    settlement: Option<&SettlementState>,
+) -> [u8; 32] {
+    let Some(settlement) = settlement else {
+        // Preserve the historical digest for native-NEAR service commitments.
+        return service_availability_policy_digest(policy, service_policy);
+    };
+    let policy_bytes = near_sdk::borsh::to_vec(policy)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize commitment policy"));
+    let source_bytes = near_sdk::serde_json::to_vec(service_policy)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize service availability policy"));
+    let asset_input = SettlementPolicyDigestInput {
+        asset: settlement.asset.clone(),
+        tranche_amount_raw: settlement.tranche_amount_raw,
+    };
+    let asset_bytes = near_sdk::borsh::to_vec(&asset_input)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize settlement policy"));
+    let mut digest_input = b"LCP_COMMITMENT_POLICY_V3_ASSET_V1\0".to_vec();
+    digest_input.extend_from_slice(&(policy_bytes.len() as u32).to_le_bytes());
+    digest_input.extend_from_slice(&policy_bytes);
+    digest_input.extend_from_slice(&(source_bytes.len() as u32).to_le_bytes());
+    digest_input.extend_from_slice(&source_bytes);
+    digest_input.extend_from_slice(&(asset_bytes.len() as u32).to_le_bytes());
+    digest_input.extend_from_slice(&asset_bytes);
     env::sha256_array(&digest_input)
 }
 
@@ -4304,7 +4796,14 @@ fn decode_near_ed25519_public_key(value: &str) -> Option<Vec<u8>> {
     Some(decoded)
 }
 
-fn build_policy(args: CommitmentPolicyArgs) -> CommitmentPolicy {
+fn build_policy(args: CommitmentPolicyArgs) -> (CommitmentPolicy, Option<SettlementState>) {
+    build_policy_on_chain(args, &env::chain_id())
+}
+
+fn build_policy_on_chain(
+    args: CommitmentPolicyArgs,
+    chain_id: &str,
+) -> (CommitmentPolicy, Option<SettlementState>) {
     let temporal = TemporalPolicy {
         initial_window_ns: args.temporal.initial_window_ns.0,
         evidence_ttl_ns: args.temporal.evidence_ttl_ns.0,
@@ -4355,7 +4854,7 @@ fn build_policy(args: CommitmentPolicyArgs) -> CommitmentPolicy {
         maintainer_public_key: pinned_key,
     };
     let evaluator = build_evaluator_policy(args.evaluator);
-    let budget = build_budget_policy(args.budget);
+    let (budget, settlement) = build_budget_policy(args.budget, chain_id);
     let policy = CommitmentPolicy {
         version,
         temporal,
@@ -4364,7 +4863,7 @@ fn build_policy(args: CommitmentPolicyArgs) -> CommitmentPolicy {
         budget,
     };
     validate_commitment_policy(&policy);
-    policy
+    (policy, settlement)
 }
 
 fn build_evaluator_policy(args: EvaluatorPolicyArgs) -> EvaluatorPolicy {
@@ -4424,25 +4923,84 @@ fn build_evaluator_policy(args: EvaluatorPolicyArgs) -> EvaluatorPolicy {
     }
 }
 
-fn build_budget_policy(args: BudgetPolicyArgs) -> BudgetPolicy {
+fn build_budget_policy(
+    args: BudgetPolicyArgs,
+    chain_id: &str,
+) -> (BudgetPolicy, Option<SettlementState>) {
     require!(args.epoch_ns.0 > 0, "budget epoch must be positive");
     require!(args.max_epochs > 0, "max epochs must be positive");
     require!(
         args.max_epochs <= MAX_PROGRAM_EPOCHS,
         "max epochs cannot exceed the 64-epoch v0.1 limit"
     );
-    require!(args.tranche_yocto.0 > 0, "tranche amount must be positive");
+    let (tranche_yocto, settlement) = match args
+        .settlement_asset
+        .unwrap_or(SettlementAssetArgs::Near)
+    {
+        SettlementAssetArgs::Near => {
+            require!(
+                args.tranche_amount_raw.is_none(),
+                "native NEAR budgets use tranche_yocto"
+            );
+            require!(args.tranche_yocto.0 > 0, "tranche amount must be positive");
+            (args.tranche_yocto.0, None)
+        }
+        SettlementAssetArgs::Nep141 { token_account_id } => {
+            let token_id = token_account_id.as_str();
+            let expected_token = match chain_id {
+                "mainnet" => NEAR_MAINNET_USDC_ACCOUNT,
+                "testnet" => NEAR_TESTNET_USDC_ACCOUNT,
+                _ => {
+                    env::panic_str("USDC settlement is supported only on NEAR mainnet and testnet")
+                }
+            };
+            require!(
+                token_id == expected_token,
+                "use the verified Circle USDC contract for the current NEAR network"
+            );
+            require!(
+                args.tranche_yocto.0 == 0,
+                "NEP-141 budgets must set tranche_yocto to zero"
+            );
+            let tranche_amount_raw = args
+                .tranche_amount_raw
+                .map(|value| value.0)
+                .unwrap_or_else(|| env::panic_str("NEP-141 budgets require tranche_amount_raw"));
+            require!(tranche_amount_raw > 0, "tranche amount must be positive");
+            (
+                0,
+                Some(SettlementState {
+                    asset: SettlementAsset::Nep141 {
+                        token_account_id,
+                        decimals: NEAR_USDC_DECIMALS,
+                    },
+                    tranche_amount_raw,
+                    funded_raw: 0,
+                    paid_raw: 0,
+                    refunded_raw: 0,
+                    pending_raw: 0,
+                }),
+            )
+        }
+    };
+    let tranche_amount_raw = settlement
+        .as_ref()
+        .map(|state| state.tranche_amount_raw)
+        .unwrap_or(tranche_yocto);
     u128::from(args.max_epochs)
-        .checked_mul(args.tranche_yocto.0)
+        .checked_mul(tranche_amount_raw)
         .unwrap_or_else(|| env::panic_str("required escrow calculation overflow"));
 
-    BudgetPolicy {
-        sponsor: args.sponsor,
-        beneficiary: args.beneficiary,
-        epoch_ns: args.epoch_ns.0,
-        max_epochs: args.max_epochs,
-        tranche_yocto: args.tranche_yocto.0,
-    }
+    (
+        BudgetPolicy {
+            sponsor: args.sponsor,
+            beneficiary: args.beneficiary,
+            epoch_ns: args.epoch_ns.0,
+            max_epochs: args.max_epochs,
+            tranche_yocto,
+        },
+        settlement,
+    )
 }
 
 fn validate_commitment_policy(policy: &CommitmentPolicy) {
@@ -4519,6 +5077,17 @@ fn storage_cost(storage_bytes: u64) -> u128 {
         .as_yoctonear()
         .checked_mul(u128::from(storage_bytes))
         .unwrap_or_else(|| env::panic_str("storage deposit calculation overflow"))
+}
+
+fn required_transfer_deposit(
+    storage_bond: u128,
+    settlement_asset: &SettlementAsset,
+) -> Option<u128> {
+    let transfer_deposit = match settlement_asset {
+        SettlementAsset::Near => 0,
+        SettlementAsset::Nep141 { .. } => FT_TRANSFER_DEPOSIT_YOCTO,
+    };
+    storage_bond.checked_add(transfer_deposit)
 }
 
 #[cfg(test)]
@@ -4807,10 +5376,91 @@ mod tests {
                     epoch_ns: U64(1_000_000),
                     max_epochs: 3,
                     tranche_yocto: U128(TRANCHE_AMOUNT),
+                    settlement_asset: None,
+                    tranche_amount_raw: None,
                 },
             },
             service_availability: service_policy_fixture(),
         }
+    }
+
+    fn usdc_service_commitment_args() -> CreateServiceAvailabilityCommitmentArgs {
+        let mut args = service_commitment_args();
+        args.policy.budget.tranche_yocto = U128(0);
+        args.policy.budget.settlement_asset = Some(SettlementAssetArgs::Nep141 {
+            token_account_id: NEAR_TESTNET_USDC_ACCOUNT.parse().unwrap(),
+        });
+        args.policy.budget.tranche_amount_raw = Some(U128(1_500_000));
+        args
+    }
+
+    fn create_usdc_service_commitment() -> (Contract, U64) {
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = Contract::new();
+        let id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        (contract, id)
+    }
+
+    fn fund_and_activate_usdc_service_commitment(contract: &mut Contract, id: U64) {
+        let activated_at_ns = NOW_NS - 1_000;
+        let observed_at_ns = NOW_NS - 100;
+        let accepted_at_ns = NOW_NS - 200;
+        let evidence_hash = [23; 32];
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Active;
+        commitment.activated_at_ns = Some(activated_at_ns);
+        commitment.last_good = Some(GoodObservation {
+            evaluation_id: EVALUATION_ID,
+            evidence_hash,
+            observed_at_ns,
+            accepted_at_ns,
+        });
+        commitment.last_observed_at_ns = Some(observed_at_ns);
+        contract.commitments.insert(id.0, commitment.clone());
+        contract.commitments.flush();
+
+        let mut settlement = read_settlement_state(id.0).unwrap();
+        settlement.funded_raw =
+            u128::from(commitment.policy.budget.max_epochs) * settlement.tranche_amount_raw;
+        write_settlement_state(id.0, &settlement);
+        write_service_policy_health_start(id.0, activated_at_ns);
+        contract.evaluation_records.insert(
+            (id.0, EVALUATION_ID),
+            EvaluationRecord {
+                request_id: EVALUATION_ID,
+                commitment_id: id.0,
+                request_transaction_hash: None,
+                status: EvaluationStatus::Accepted,
+                verdict: Some(Verdict::Compliant),
+                reason_codes: vec!["TEST_FIXTURE".to_string()],
+                input_hash: [24; 32],
+                evidence_hash,
+                observed_at_ns,
+                accepted_at_ns: Some(accepted_at_ns),
+                policy_hash: commitment.policy_hash,
+                output_hash: Some([25; 32]),
+            },
+        );
+        contract.evaluation_records.flush();
+    }
+
+    fn assert_ft_transfer_deposit(expected_deposits: &[u128]) {
+        let deposits: Vec<u128> = near_sdk::test_utils::get_created_receipts()
+            .iter()
+            .flat_map(|receipt| receipt.actions.iter())
+            .filter_map(|action| match action {
+                near_sdk::mock::MockAction::FunctionCallWeight {
+                    method_name,
+                    attached_deposit,
+                    ..
+                } if method_name == b"ft_transfer" => Some(attached_deposit.as_yoctonear()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(deposits, expected_deposits);
     }
 
     fn transaction_authenticated_service_commitment_args() -> CreateServiceAvailabilityCommitmentArgs
@@ -4825,7 +5475,7 @@ mod tests {
         args.policy.temporal.max_source_lag_ns = U64(600_000_000_000);
         args.policy.temporal.challenge_window_ns = U64(60_000_000_000);
         args.policy.temporal.resolution_timeout_ns = U64(120_000_000_000);
-        args.policy.evaluator.wasm_url = "https://pub-abfff274369343cdb67806b37bfc9c4b.r2.dev/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm".to_string();
+        args.policy.evaluator.wasm_url = "https://artifacts.lcp.gama.works/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm".to_string();
         args.policy.evaluator.wasm_sha256_hex =
             "908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611".to_string();
         args.policy.evaluator.max_instructions = U64(1_000_000_000);
@@ -5278,6 +5928,282 @@ mod tests {
             near_sdk::borsh::to_vec(&Verdict::Inconclusive).unwrap(),
             vec![2]
         );
+    }
+
+    #[test]
+    fn usdc_service_commitment_pins_asset_and_raw_tranche_in_sidecar_and_digest() {
+        let (contract, id) = create_usdc_service_commitment();
+        let commitment = contract.commitments.get(&id.0).unwrap();
+        let settlement = read_settlement_state(id.0).expect("USDC sidecar should be stored");
+        let expected_asset = SettlementAsset::Nep141 {
+            token_account_id: NEAR_TESTNET_USDC_ACCOUNT.parse().unwrap(),
+            decimals: NEAR_USDC_DECIMALS,
+        };
+
+        assert_eq!(settlement.asset, expected_asset);
+        assert_eq!(settlement.tranche_amount_raw, 1_500_000);
+        assert_eq!(settlement.funded_raw, 0);
+        assert_eq!(
+            commitment.policy_hash,
+            service_availability_asset_policy_digest(
+                &commitment.policy,
+                &service_policy_fixture(),
+                Some(&settlement),
+            )
+        );
+
+        let policy = contract.get_policy(id).expect("policy should be queryable");
+        assert_eq!(policy.settlement_asset, expected_asset);
+        assert_eq!(policy.tranche_amount_raw.0, 1_500_000);
+        assert_eq!(policy.budget.tranche_yocto.0, 0);
+        assert_eq!(contract.get_escrow_status(id).unwrap().funded_raw.0, 0);
+        assert!(env::storage_has_key(&settlement_state_storage_key(id.0)));
+    }
+
+    #[test]
+    #[should_panic(expected = "use the verified Circle USDC contract")]
+    fn usdc_service_commitment_rejects_a_different_testnet_token_account() {
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = Contract::new();
+        let mut args = usdc_service_commitment_args();
+        args.policy.budget.settlement_asset = Some(SettlementAssetArgs::Nep141 {
+            token_account_id: "other-token.testnet".parse().unwrap(),
+        });
+        contract.create_service_availability_commitment_on_chain(args, "testnet");
+    }
+
+    #[test]
+    fn usdc_funding_rejects_wrong_token_and_sender_then_caps_and_returns_excess() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        let message = near_sdk::serde_json::to_string(&json!({
+            "schema": "lcp.funding.v1",
+            "commitment_id": id,
+        }))
+        .unwrap();
+        let token_account: AccountId = NEAR_TESTNET_USDC_ACCOUNT.parse().unwrap();
+        let amount = 8_000_000;
+
+        testing_env!(context(accounts(5), 0));
+        assert!(matches!(
+            contract.ft_on_transfer(accounts(1), U128(amount), message.clone()),
+            PromiseOrValue::Value(U128(refunded)) if refunded == amount
+        ));
+        testing_env!(context(token_account.clone(), 0));
+        assert!(matches!(
+            contract.ft_on_transfer(accounts(2), U128(amount), message.clone()),
+            PromiseOrValue::Value(U128(refunded)) if refunded == amount
+        ));
+        assert_eq!(contract.get_escrow_status(id).unwrap().funded_raw.0, 0);
+
+        assert!(matches!(
+            contract.ft_on_transfer(accounts(1), U128(2_000_000), message.clone()),
+            PromiseOrValue::Value(U128(refunded)) if refunded == 0
+        ));
+        assert!(matches!(
+            contract.ft_on_transfer(accounts(1), U128(3_000_000), message.clone()),
+            PromiseOrValue::Value(U128(refunded)) if refunded == 500_000
+        ));
+        assert!(matches!(
+            contract.ft_on_transfer(accounts(1), U128(1_000_000), message),
+            PromiseOrValue::Value(U128(refunded)) if refunded == 1_000_000
+        ));
+
+        let status = contract.get_escrow_status(id).unwrap();
+        assert_eq!(status.funded_raw.0, 4_500_000);
+        assert_eq!(status.free_raw.0, 4_500_000);
+        assert_eq!(status.pending_raw.0, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "commitment escrow is not fully funded")]
+    fn usdc_commitment_cannot_activate_before_full_token_escrow() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.operations_funded_yocto = commitment.policy.evaluator.execution_deposit_yocto;
+        contract.commitments.insert(id.0, commitment);
+        contract.commitments.flush();
+        let mut settlement = read_settlement_state(id.0).unwrap();
+        settlement.funded_raw = 4_500_000 - 1;
+        write_settlement_state(id.0, &settlement);
+
+        testing_env!(context(accounts(1), 0));
+        contract.activate_commitment(id);
+    }
+
+    #[test]
+    fn fully_funded_usdc_commitment_can_activate_with_near_operations_budget() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.operations_funded_yocto = commitment.policy.evaluator.execution_deposit_yocto;
+        contract.commitments.insert(id.0, commitment);
+        contract.commitments.flush();
+        let mut settlement = read_settlement_state(id.0).unwrap();
+        settlement.funded_raw = 4_500_000;
+        write_settlement_state(id.0, &settlement);
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        contract.activate_commitment(id);
+
+        let active = contract.commitments.get(&id.0).unwrap();
+        assert_eq!(active.lifecycle, Lifecycle::Active);
+        assert_eq!(active.activated_at_ns, Some(NOW_NS));
+        assert_eq!(
+            contract.get_escrow_status(id).unwrap().funded_raw.0,
+            4_500_000
+        );
+    }
+
+    #[test]
+    fn transfer_storage_deposit_reserves_one_yocto_only_for_nep141() {
+        assert_eq!(
+            required_transfer_deposit(42, &SettlementAsset::Near),
+            Some(42)
+        );
+        assert_eq!(
+            required_transfer_deposit(
+                42,
+                &SettlementAsset::Nep141 {
+                    token_account_id: NEAR_TESTNET_USDC_ACCOUNT.parse().unwrap(),
+                    decimals: NEAR_USDC_DECIMALS,
+                },
+            ),
+            Some(43)
+        );
+        assert_eq!(
+            required_transfer_deposit(
+                u128::MAX,
+                &SettlementAsset::Nep141 {
+                    token_account_id: NEAR_TESTNET_USDC_ACCOUNT.parse().unwrap(),
+                    decimals: NEAR_USDC_DECIMALS,
+                },
+            ),
+            None
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn usdc_claim_attaches_one_yocto_and_failed_transfer_is_retryable() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let storage_deposit_before = contract
+            .commitments
+            .get(&id.0)
+            .unwrap()
+            .storage_deposit_yocto;
+
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        let storage_usage_before = env::storage_usage();
+        let transfer_id = contract.claim_tranche(id);
+        let storage_bond = storage_cost(env::storage_usage() - storage_usage_before);
+        let storage_deposit_after = contract
+            .commitments
+            .get(&id.0)
+            .unwrap()
+            .storage_deposit_yocto;
+
+        assert_eq!(transfer_id.0, TRANSFER_ID);
+        assert!(storage_bond > 0);
+        assert_eq!(storage_deposit_after - storage_deposit_before, storage_bond);
+        assert_ft_transfer_deposit(&[FT_TRANSFER_DEPOSIT_YOCTO]);
+        let pending = contract.get_escrow_status(id).unwrap();
+        assert_eq!(pending.funded_raw.0, 4_500_000);
+        assert_eq!(pending.pending_raw.0, 1_500_000);
+        assert_eq!(pending.free_raw.0, 3_000_000);
+        assert_eq!(pending.pending_yocto.0, 0);
+
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        contract.on_tranche_transfer(transfer_id);
+        let after_failure = contract.get_escrow_status(id).unwrap();
+        assert_eq!(after_failure.pending_raw.0, 0);
+        assert_eq!(after_failure.paid_raw.0, 0);
+        assert_eq!(after_failure.free_raw.0, 4_500_000);
+        assert_eq!(
+            contract
+                .get_tranche(id, U64(u64::from(EPOCH)))
+                .unwrap()
+                .status,
+            TrancheStatus::Failed
+        );
+
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        let retry_id = contract.claim_tranche(id);
+        assert_eq!(retry_id.0, TRANSFER_ID + 1);
+        assert_ft_transfer_deposit(&[FT_TRANSFER_DEPOSIT_YOCTO]);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_tranche_transfer(retry_id);
+        contract.on_tranche_transfer(retry_id);
+
+        let settled = contract.get_escrow_status(id).unwrap();
+        assert_eq!(settled.pending_raw.0, 0);
+        assert_eq!(settled.paid_raw.0, 1_500_000);
+        assert_eq!(settled.free_raw.0, 3_000_000);
+        assert_eq!(
+            contract
+                .get_tranche(id, U64(u64::from(EPOCH)))
+                .unwrap()
+                .status,
+            TrancheStatus::Paid
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn usdc_residual_refund_attaches_one_yocto_and_reconciles_retry() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Closed;
+        contract.commitments.insert(id.0, commitment.clone());
+        contract.commitments.flush();
+        let mut settlement = read_settlement_state(id.0).unwrap();
+        settlement.funded_raw = 4_500_000;
+        write_settlement_state(id.0, &settlement);
+        let storage_deposit_before = commitment.storage_deposit_yocto;
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let storage_usage_before = env::storage_usage();
+        let transfer_id = contract.refund_remaining(id);
+        let storage_bond = storage_cost(env::storage_usage() - storage_usage_before);
+        let storage_deposit_after = contract
+            .commitments
+            .get(&id.0)
+            .unwrap()
+            .storage_deposit_yocto;
+
+        assert_eq!(transfer_id.0, TRANSFER_ID);
+        assert!(storage_bond > 0);
+        assert_eq!(storage_deposit_after - storage_deposit_before, storage_bond);
+        assert_ft_transfer_deposit(&[FT_TRANSFER_DEPOSIT_YOCTO]);
+        let pending = contract.get_escrow_status(id).unwrap();
+        assert_eq!(pending.pending_raw.0, 4_500_000);
+        assert_eq!(pending.free_raw.0, 0);
+        assert_eq!(pending.pending_yocto.0, 0);
+
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        contract.on_refund_transfer(transfer_id);
+        let after_failure = contract.get_escrow_status(id).unwrap();
+        assert_eq!(after_failure.pending_raw.0, 0);
+        assert_eq!(after_failure.refunded_raw.0, 0);
+        assert_eq!(after_failure.free_raw.0, 4_500_000);
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let retry_id = contract.refund_remaining(id);
+        assert_eq!(retry_id.0, TRANSFER_ID + 1);
+        assert_ft_transfer_deposit(&[FT_TRANSFER_DEPOSIT_YOCTO]);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_refund_transfer(retry_id);
+        contract.on_refund_transfer(retry_id);
+
+        let settled = contract.get_escrow_status(id).unwrap();
+        assert_eq!(settled.pending_raw.0, 0);
+        assert_eq!(settled.refunded_raw.0, 4_500_000);
+        assert_eq!(settled.free_raw.0, 0);
     }
 
     #[test]

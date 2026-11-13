@@ -1101,6 +1101,16 @@ Before initiating an external payment, verify that the outgoing amount does not 
 
 The exact solvency formula must be tested using actual NEAR runtime balances, including pending transfers and execution refunds.
 
+## 9.9 Multi-asset settlement (P2 implementation in progress)
+
+The deployed v0.1 accounting model and its `*_yocto` fields remain native-NEAR-only. Local source now adds a generic NEP-141 settlement backend, initially for Circle USDC, while preserving the native path for existing commitments. The new path is not yet deployed or accepted on testnet. Do not interpret stored yoctoNEAR fields as fungible-token atomic units or change existing Borsh layouts without an explicit versioned migration design.
+
+Each new commitment binds one asset kind, the NEP-141 contract account when applicable, and a raw integer tranche amount into its immutable policy digest. The local implementation uses versioned sidecars for asset and token-unit accounting, `ft_transfer_call` with a validating `ft_on_transfer` receiver for funding, and `ft_transfer` with persisted pending state and private callbacks for claims and refunds. The sponsor's `ft_transfer_call` and outgoing NEP-141 transfers each require a separate 1 yoctoNEAR security deposit. Both paths must preserve the same solvency, replay, callback-idempotency, failure-recovery, and no-double-payment invariants. NEAR remains required for execution gas, storage deposits, token storage registration, and OutLayer operations. Reserve outgoing-transfer deposits from the caller's NEAR attachment separately from storage growth and refund any remaining excess. These new flows remain unaccepted until focused validation and testnet deployment are complete.
+
+The initial USDC catalog entries are the Circle NEAR testnet account `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` and mainnet account `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1`, both with six decimals. Verify the addresses at release time against [Circle's network list](https://www.circle.com/multi-chain-usdc). NEP-141 transfers use integer amounts, and NEP-145 token registration uses NEAR-denominated storage deposits; never use floating-point arithmetic or assume recipients are registered.
+
+The NEAR-only bounded payout adapter rejects USDC commitments until an asset-matched adapter is designed. Local contract views/events, SDK types, and Console surfaces expose explicit asset identifiers and raw amounts while retaining compatibility for existing NEAR records. The event indexer stores complete event JSON, so no schema migration is required for these additional fields. Focused contract and SDK tests passed on 2026-11-13; independent invariant review, reproducible testnet deployment, live acceptance, and security review remain gates. The design and rollout are tracked in [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md).
+
 ---
 
 # 10. Challenges
@@ -1168,7 +1178,8 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | Method | Caller | Effect |
 |---|---|---|
 | `create_commitment` | Creator | Creates Draft |
-| `fund_commitment` | Sponsor | Deposits escrow |
+| `fund_commitment` | Sponsor | Deposits native NEAR escrow; NEP-141 funding is initiated with `ft_transfer_call` |
+| `ft_on_transfer` | Approved NEP-141 token contract | Validates token funding, accepts only the remaining budget, and returns unused units to the resolver |
 | `fund_operations` | Sponsor | Deposits evaluation budget |
 | `activate_commitment` | Authorized participant | Activates funded commitment |
 | `request_evaluation` | Sponsor or maintainer | Starts OutLayer execution |
@@ -1185,6 +1196,7 @@ The policy validator must require `max_source_lag_ns + challenge_window_ns < evi
 | `activate_service_policy_amendment` | Anyone after approval/effective time | Activates the approved v3 service policy |
 | `claim_tranche` | Beneficiary | Initiates eligible payment |
 | `on_tranche_transfer` | Private callback | Reconciles transfer |
+| `on_refund_transfer` | Private callback | Reconciles residual escrow refund |
 | `create_bounded_payout_authority_grant` | Sponsor or beneficiary | Grants a named adapter limited authority over its own pool and a fixed recipient |
 | `execute_authority_grant` | Grantor or named adapter | Reserves the nonce, epoch, and cumulative allowance while calling the adapter |
 | `on_authority_grant_action_settled` | Private callback | Keeps the allowance only on a `true` adapter result; restores its prior values on call failure or `false` |
@@ -1386,7 +1398,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (updated 2026-11-12):** The repository is public, and `TESTING.md` documents reproducible builds, deterministic tests, and testnet reproduction. Milestones A through F have working implementations for temporal state, OutLayer request/callback/timeout, bounded evaluation history, challenge resolution, health-gated claims, transfer reconciliation, closure/refunds, wallet journeys, and the LCP Console. The SDK provides typed contract calls and finalized NEAR JSON-RPC reads with an injected wallet sender. The dashboard shows recent health transitions and policy-derived deadlines; its OutLayer panel reports public-record availability and hash bindings while leaving quote verification to OutLayer's Verify report or standalone tool. The optional challenge completion timestamp uses a reserved raw-storage slot and does not change persisted contract state layout. The NEP-413-capable contract is deployed as `bK4nSCpE52DF4b2AbNunaEMy2FCfRDbsgwjZAVaWfDR`; prior commitment state was preserved. Testnet evidence covers a PROVEN OutLayer evaluation, evaluator failure modes, breach/recovery, failed-transfer retry, arbiter outcomes, payout/refund, and pagination. Key browser journeys were manually verified in Firefox; live status and receipts are in `TESTNET-E2E-STATUS.md`.
+**Repository status (updated 2026-11-13):** The repository is public, and `TESTING.md` documents deterministic tests, reproducible builds, and testnet/browser reproduction. Core milestones A through F have working implementations for temporal state, OutLayer callbacks, bounded evaluation history, challenges, health-gated claims, transfer reconciliation, closure/refunds, wallet journeys, and the Console. P1 source adds transaction-authenticated multi-operator reports, consent-based amendments, bounded authority grants, and private reviewer access. The reviewer-access audit remediations are local; deployment, D1 migration 0004, acceptance, and follow-up review remain release gates. P2 NEP-141/USDC support is implemented locally in the contract, SDK, and Console, but awaits independent invariant review, a reproducible build, and testnet acceptance. The SDK provides typed contract calls and finalized NEAR reads. The dashboard shows historical health transitions and policy-derived deadlines; OutLayer record and digest checks do not verify the TEE quote. Deployment receipts and the latest verified testnet states are maintained in `TESTNET-E2E-STATUS.md` and `TODO.md`.
 
 ## Milestone A — Pure engine
 
@@ -1440,7 +1452,7 @@ Implement:
 
 ## Milestone E — Recovery and challenge
 
-The source covers positive-evidence recovery, challenge opening/resolution, arbiter timeout, and invalidation of challenged evidence. Earlier testnet runs exercised the prior timeout behavior, which invalidated evidence; the new dismissal and paused-window policy remains pending a core upgrade. Testnet also confirms recovery from `Breached` to `Healthy` and live upheld and invalidated arbiter outcomes. Deterministic test coverage includes exact initial-evidence, freshness, grace, challenge-window, and timeout boundaries; commitment `21` also crossed its initial-evidence and grace boundaries at finalized NEAR times.
+The source covers positive-evidence recovery, challenge opening/resolution, arbiter timeout, and invalidation of challenged evidence. On the upgraded testnet contract, commitment `29` accepted evaluation `#1`; challenge `#5` timed out and preserved that evidence. The sponsor then closed the commitment before the tranche became eligible, so the test did not exercise non-beneficiary close protection over an eligible tranche. The resumed duration of a reserved claim window also remains to be verified. Earlier commitments retain their historical timeout outcomes, which may have invalidated evidence. Testnet also confirms recovery from `Breached` to `Healthy` and live upheld and invalidated arbiter outcomes. Deterministic tests cover exact initial-evidence, freshness, grace, challenge-window, and timeout boundaries; commitment `21` also crossed its initial-evidence and grace boundaries at finalized NEAR times.
 
 Implement:
 
@@ -1546,15 +1558,15 @@ No production-readiness claim may be made until these checks pass.
 
 The breached-claim rejection, healthy distinct-beneficiary payout/callback, closure, sponsor refund, and isolated failed-transfer recovery/retry all succeeded. Receipts are in `TESTNET-E2E-STATUS.md`.
 
-**Task 010 — Complete breach and recovery validation — P0 ACCEPTANCE VERIFIED**
+**Task 010 — Complete breach, recovery, and updated challenge validation — CORE PATH VERIFIED; CLAIM-WINDOW EDGE CASES OPEN**
 
-Evidence expiry, breached-claim rejection, fresh-evidence recovery, the prior challenge-timeout behavior, and upheld/invalidated arbiter outcomes were exercised on testnet. The new timeout policy and closure safeguards require a testnet core upgrade and remain unverified. Exact local temporal boundaries have deterministic tests, and commitment `21` naturally transitioned to `AtRisk` and `Breached` at finalized timestamps. Additional playground observations are exploratory.
+Evidence expiry, breached-claim rejection, fresh-evidence recovery, and upheld/invalidated arbiter outcomes were exercised on testnet. On the upgraded contract, commitment `29` also confirmed that a timed-out challenge preserves accepted evidence. Its sponsor closed the commitment before the tranche became eligible, so the test does not establish close protection or the exact reserved claim-window resumption. Exact local temporal boundaries have deterministic tests, and commitment `21` naturally transitioned to `AtRisk` and `Breached` at finalized timestamps. The remaining acceptance steps are tracked in `TODO.md`; other playground observations are exploratory.
 
 **Task 011 — Improve commitment discovery — CONTRACT DEPLOYED; RPC AND BROWSER PAGINATION VERIFIED**
 
 The contract exposes a capped newest-first listing by sequential commitment ID; the SDK wraps it and the Console provides ten-record pages with an exclusive cursor. Testnet RPC confirmed descending/exclusive pagination, and Firefox checks confirmed the older-page control across all 21 records.
 
-**Task 012 — Finish the public LCP Console journey — COMPLETE; REPOSITORY PUBLICATION PENDING**
+**Task 012 — Finish the public LCP Console journey — IMPLEMENTATION COMPLETE; ACCESSIBILITY ACCEPTANCE OPEN**
 
 The app reconstructs recent historical health transitions, shows policy-derived deadlines and countdowns, and reports OutLayer public-record availability and digest bindings. Firefox checks verified the historical timeline, wallet connect/disconnect, older-page control, create/fund/activate/evaluate/recover/close/refund flow, payout, and failed-transfer retry across the documented fixtures. The app does not claim to verify the TEE quote; OutLayer's report and standalone verifier remain the verification path. `CONSOLE-GUIDE.md` and `TESTING.md` document reproduction. The repository is public, satisfying the PRD's public-documentation gate.
 
