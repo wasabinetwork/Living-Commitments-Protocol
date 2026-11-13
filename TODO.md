@@ -2,7 +2,7 @@
 
 ## In progress
 
-- [x] **Cloudflare Pages preview:** deployed the transaction-authenticated operator inbox, wallet-session restoration, preview-only exact-replay control, ordered read-RPC fallback, single-line wallet badge, and testnet adapter deploy/fund controls to <https://f989c150.lcp-preview.pages.dev> on 2026-11-12; the stable alias <https://preview.lcp-preview.pages.dev> serves the same build. Both `/health` routes returned HTTP 200. Earlier Firefox runs verified two-operator evaluations, report replacement/refunds, expiry reclaim, wallet restoration, and explicit disconnect persistence. Manual Firefox review of the latest wallet and adapter controls is pending.
+- [x] **Cloudflare Pages preview:** deployed the current testnet Console to <https://b0b0479d.lcp-preview.pages.dev> with stable alias <https://preview.lcp-preview.pages.dev> on 2026-11-13. `/version.json` reports source revision `9f37f89cf56c26e6bf279627ee9529dd37212813`, `/health` returns `ok`, and the reviewer-access panel is disabled. Earlier Firefox runs verified two-operator evaluations, report replacement/refunds, expiry reclaim, wallet restoration, and explicit disconnect persistence. Manual Firefox review of the current footer source link and adapter digest prompt is pending.
 - [x] **Production domain:** `lcp.gama.works` is attached to the Git-integrated Cloudflare Pages production project, and the static `/health` JSON route is deployed there. The `lcp-preview` Direct Upload project remains separate for preview builds.
 
 ## Independent audit remediation
