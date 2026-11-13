@@ -205,6 +205,9 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
     && BigInt(props.chainTimeNs) < BigInt(grant.expires_at_ns));
   const canExecute = Boolean(canTrigger && grantManagerMatches && props.contractSupported && props.eligibility?.eligible
     && props.commitment.lifecycle === "Active" && grantActive);
+  const settlementAsset = props.commitment.settlement_asset
+    ?? props.policy.settlement_asset
+    ?? props.policy.budget.settlement_asset;
 
   useEffect(() => {
     setGrant(props.latestGrant);
@@ -221,6 +224,18 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
       setExpiryMinutes(String(maxExpiryMinutes));
     }
   }, [expiryMinutes, maxExpiryMinutes]);
+
+  if (settlementAsset?.kind === "nep141") {
+    return (
+      <section className="content-card governance-card" aria-labelledby="authority-adapter-title">
+        <div className="card-heading">
+          <div><p className="eyebrow">CONTRACT-GATED CONSEQUENCE</p><h3 id="authority-adapter-title">Bounded payout adapter</h3></div>
+          <span className="card-index">06</span>
+        </div>
+        <p className="reviewer-notice">This adapter currently supports native NEAR commitments only, so its controls are unavailable for this USDC commitment. USDC claims and refunds continue through the commitment’s token settlement flow.</p>
+      </section>
+    );
+  }
 
   async function run(action: () => Promise<void>, success: string) {
     setBusy(true);

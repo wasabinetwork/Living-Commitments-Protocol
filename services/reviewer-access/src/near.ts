@@ -1,4 +1,4 @@
-import { canonicalJson, decodeBase64, encodeBase64, utf8 } from "./encoding.js";
+import { canonicalJson, decodeBase58, decodeBase64, encodeBase64, utf8 } from "./encoding.js";
 
 const RPC_PROVIDER_COUNT = 3;
 const RPC_QUORUM = 2;
@@ -83,7 +83,7 @@ async function callProvider(url: string, method: string, params: unknown): Promi
     return null;
   }
 
-  let payload: { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: unknown };
+  let payload: unknown;
   try {
     const declaredLength = response.headers.get("Content-Length");
     if (declaredLength && /^[0-9]+$/.test(declaredLength) && Number(declaredLength) > MAX_RPC_RESPONSE_BYTES) {
@@ -114,19 +114,16 @@ async function callProvider(url: string, method: string, params: unknown): Promi
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as {
-      jsonrpc?: unknown;
-      id?: unknown;
-      result?: unknown;
-      error?: unknown;
-    };
+    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
   } catch {
     return null;
   }
-  if (payload.jsonrpc !== "2.0" || payload.id !== "lcp-reviewer-access") return null;
-  if (payload.result !== undefined && payload.error === undefined) return { kind: "success", result: payload.result };
-  if (payload.error !== undefined && payload.result === undefined && isRpcError(payload.error)) {
-    return { kind: "rpc_error", error: payload.error };
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+  const envelope = payload as Record<string, unknown>;
+  if (envelope.jsonrpc !== "2.0" || envelope.id !== "lcp-reviewer-access") return null;
+  if (envelope.result !== undefined && envelope.error === undefined) return { kind: "success", result: envelope.result };
+  if (envelope.error !== undefined && envelope.result === undefined && isRpcError(envelope.error)) {
+    return { kind: "rpc_error", error: envelope.error };
   }
   return null;
 }
@@ -145,12 +142,21 @@ function parseFinalizedSnapshot(value: unknown): FinalizedSnapshot | null {
   const blockHash = record.hash;
   const rawHeight = record.height;
   const rawTimestamp = record.timestamp_nanosec;
+  let validBlockHash = false;
+  if (typeof blockHash === "string") {
+    try {
+      decodeBase58(blockHash, 32);
+      validBlockHash = true;
+    } catch {
+      validBlockHash = false;
+    }
+  }
   const blockHeight = typeof rawHeight === "number"
     ? rawHeight
     : typeof rawHeight === "string" && /^[1-9][0-9]*$/.test(rawHeight)
       ? Number(rawHeight)
       : NaN;
-  if (typeof blockHash !== "string" || !/^[1-9A-HJ-NP-Za-km-z]{44}$/.test(blockHash)
+  if (typeof blockHash !== "string" || !validBlockHash
       || !Number.isSafeInteger(blockHeight) || blockHeight < 1
       || typeof rawTimestamp !== "string" || rawTimestamp.length > 20 || !/^[1-9][0-9]*$/.test(rawTimestamp)) {
     return null;
@@ -254,6 +260,12 @@ export function createNearReadSession(env: Env): NearReadSession {
     return parsePermissionResult(result);
   }
 
+  async function requireFullAccessPermission(accountId: string, publicKey: string): Promise<void> {
+    if (await readAccessKeyPermission(accountId, publicKey) !== "FullAccess") {
+      throw new NearReadError("NEP-413 signatures require a current full-access key for this NEAR account.");
+    }
+  }
+
   return {
     async finalizedTimeNs(): Promise<bigint> {
       return (await getSnapshot()).timestampNs;
@@ -276,15 +288,11 @@ export function createNearReadSession(env: Env): NearReadSession {
       }
     },
     async requireCurrentAccessKey(accountId: string, publicKey: string): Promise<void> {
-      const permission = await readAccessKeyPermission(accountId, publicKey);
-      if (permission !== "FullAccess" && (typeof permission !== "object" || permission === null || !("FunctionCall" in permission))) {
-        throw new NearReadError("The signing key is not a current access key for this NEAR account.");
-      }
+      // NEP-413 explicitly requires a FullAccess key; an active FunctionCall key is insufficient.
+      await requireFullAccessPermission(accountId, publicKey);
     },
     async requireFullAccessKey(accountId: string, publicKey: string): Promise<void> {
-      if (await readAccessKeyPermission(accountId, publicKey) !== "FullAccess") {
-        throw new NearReadError("The signing key is not a current full-access key for this NEAR account.");
-      }
+      await requireFullAccessPermission(accountId, publicKey);
     },
   };
 }

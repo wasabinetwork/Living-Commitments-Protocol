@@ -8,7 +8,7 @@ import {
   parseSha256,
 } from "../dist/src/near.js";
 
-const BLOCK_HASH = "1".repeat(44);
+const BLOCK_HASH = "GUCWTrBEyhUBNFsPFvDLRmxsSi5V3rmbDJafKUvrZ1zN";
 const BLOCK_HEIGHT = 277_000_000;
 const BLOCK_TIMESTAMP_NS = "1794192696952171274";
 const PROVIDERS = ["https://rpc1.example.test/", "https://rpc2.example.test/", "https://rpc3.example.test/"];

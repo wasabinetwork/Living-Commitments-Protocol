@@ -6,7 +6,7 @@ import worker from "../dist/src/index.js";
 
 globalThis.crypto ??= webcrypto;
 const allowedOrigin = "https://console.example.test";
-const RPC_BLOCK_HASH = "1".repeat(44);
+const RPC_BLOCK_HASH = "GUCWTrBEyhUBNFsPFvDLRmxsSi5V3rmbDJafKUvrZ1zN";
 const RPC_BLOCK_HEIGHT = 277_000_000;
 const baseEnv = {
   NETWORK: "testnet",

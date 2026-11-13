@@ -7,6 +7,9 @@ const MAX_SCOPES = ["download_ciphertext"] as const;
 const MAX_GRANT_LIFETIME_NS = 14n * 24n * 60n * 60n * 1_000_000_000n;
 const REVIEWER_METADATA_RETENTION_NS = 90n * 24n * 60n * 60n * 1_000_000_000n;
 const ACCESS_WINDOW_SECONDS = 3_600;
+const SIGNER_KEY_WINDOW_SECONDS = 60;
+const MAX_SIGNER_KEY_REQUESTS_PER_WINDOW = 10;
+const MAX_LIST_SIGNATURE_TTL_NS = 10n * 60n * 1_000_000_000n;
 
 type Scope = (typeof MAX_SCOPES)[number];
 type ApiErrorCode = "BAD_REQUEST" | "UNAUTHORIZED" | "FORBIDDEN" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMITED" | "NEAR_UNAVAILABLE" | "STORAGE_UNAVAILABLE";
@@ -223,6 +226,7 @@ async function verifySignedPayload(
   )) {
     throw new ApiError(401, "UNAUTHORIZED", "The NEP-413 signature is invalid or bound to a different request.");
   }
+  await rateLimitSignerKey(env, signed.public_key);
   return signed;
 }
 
@@ -268,6 +272,7 @@ async function requireMaintainer(env: Env, near: NearReadSession, commitmentId: 
   await rateLimitAccount(env, accountId);
   const commitment = await readCommitment(near, commitmentId);
   if (commitment.maintainer !== accountId) throw new ApiError(403, "FORBIDDEN", "Only the current on-chain maintainer can approve or revoke access.");
+  await rateLimitAuthorizedAction(env);
 }
 
 async function requireCompletedEvaluation(near: NearReadSession, commitmentId: string, evaluationId: string): Promise<void> {
@@ -303,9 +308,21 @@ function maxRequestsPerHour(env: Env): number {
   return Number.isSafeInteger(value) && value > 0 && value <= 500 ? value : 30;
 }
 
-function maxRpcAuthRequestsPerMinute(env: Env): number {
-  const value = Number(env.MAX_RPC_AUTH_REQUESTS_PER_MINUTE);
+function maxAuthorizedActionsPerMinute(env: Env): number {
+  const value = Number(env.MAX_AUTHORIZED_ACTIONS_PER_MINUTE);
   return Number.isSafeInteger(value) && value > 0 && value <= 600 ? value : 30;
+}
+
+function requireFreshListAuthorization(payload: Record<string, unknown>, nowNs: bigint): void {
+  let expiresAtNs: bigint;
+  try {
+    expiresAtNs = BigInt(requireDecimal(payload.auth_expires_at_ns, "auth_expires_at_ns"));
+  } catch {
+    throw new ApiError(400, "BAD_REQUEST", "The signed list authorization expiry is invalid.");
+  }
+  if (expiresAtNs <= nowNs || expiresAtNs > nowNs + MAX_LIST_SIGNATURE_TTL_NS) {
+    throw new ApiError(401, "UNAUTHORIZED", "The signed list authorization has expired or is valid for too long.");
+  }
 }
 
 async function incrementRateWindow(env: Env, key: string, windowStart: number, limit: number): Promise<boolean> {
@@ -327,11 +344,20 @@ async function rateLimitAccount(env: Env, accountId: string): Promise<void> {
   }
 }
 
-async function rateLimitGlobalAuth(env: Env): Promise<void> {
+async function rateLimitAuthorizedAction(env: Env): Promise<void> {
   const nowSeconds = Math.floor(Date.now() / 1_000);
-  const rpcWindowStart = Math.floor(nowSeconds / 60) * 60;
-  if (!await incrementRateWindow(env, "!global-near-rpc", rpcWindowStart, maxRpcAuthRequestsPerMinute(env))) {
-    throw new ApiError(429, "RATE_LIMITED", "The service-wide NEAR authorization read limit has been reached for this minute.");
+  const windowStart = Math.floor(nowSeconds / 60) * 60;
+  if (!await incrementRateWindow(env, "!global-authorized-actions", windowStart, maxAuthorizedActionsPerMinute(env))) {
+    throw new ApiError(429, "RATE_LIMITED", "The service-wide authorized-action limit has been reached for this minute.");
+  }
+}
+
+async function rateLimitSignerKey(env: Env, publicKey: string): Promise<void> {
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const windowStart = Math.floor(nowSeconds / SIGNER_KEY_WINDOW_SECONDS) * SIGNER_KEY_WINDOW_SECONDS;
+  const keyDigest = await sha256Hex(utf8(publicKey));
+  if (!await incrementRateWindow(env, `!nep413-key:${keyDigest}`, windowStart, MAX_SIGNER_KEY_REQUESTS_PER_WINDOW)) {
+    throw new ApiError(429, "RATE_LIMITED", "This signing key has reached its request limit for this minute.");
   }
 }
 
@@ -378,9 +404,9 @@ async function createRequest(env: Env, near: NearReadSession, body: unknown): Pr
   const scopes = parseScopes(request.scopes);
   const expiresAt = BigInt(requireDecimal(request.expires_at_ns, "expires_at_ns"));
   const signed = await verifySignedPayload(env, request, root.signed_message, reviewer);
-  await rateLimitGlobalAuth(env);
   await requireCurrentAccessKey(near, signed);
   await rateLimitAccount(env, reviewer);
+  await rateLimitAuthorizedAction(env);
   const now = await currentChainTime(near);
   if (expiresAt <= now || expiresAt > now + MAX_GRANT_LIFETIME_NS) {
     throw new ApiError(400, "BAD_REQUEST", "The access request expiry must be in the future and no more than 14 days away.");
@@ -398,8 +424,8 @@ async function createRequest(env: Env, near: NearReadSession, body: unknown): Pr
          request_id, network, contract_id, commitment_id, evaluation_id, evidence_digest,
          reviewer_account, encryption_public_key_b64, encryption_key_fingerprint,
          scopes_json, expires_at_ns, created_at_ns, status,
-         request_public_key, request_signature_b64, request_callback_url
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+         request_public_key, request_signature_b64, request_callback_url, request_signed_record_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
     ).bind(
       requestId,
       env.NETWORK,
@@ -416,6 +442,7 @@ async function createRequest(env: Env, near: NearReadSession, body: unknown): Pr
       signed.public_key,
       signed.signature,
       signed.callback_url ?? null,
+      canonicalJson({ payload: request, signed_message: signed }),
     ).run();
   } catch {
     throw new ApiError(409, "CONFLICT", "A request for this evidence and reviewer key already exists, or storage is unavailable.");
@@ -427,15 +454,15 @@ async function listRequests(env: Env, near: NearReadSession, body: unknown): Pro
   const root = asRecord(body);
   const payload = asRecord(root?.payload);
   if (!root || !payload || !exactKeys(root, ["payload", "signed_message"])
-      || !exactKeys(payload, ["schema", "commitment_id", "nonce_hex"])
+      || !exactKeys(payload, ["schema", "commitment_id", "auth_expires_at_ns", "nonce_hex"])
       || payload.schema !== "lcp.reviewer-request-list.v1") {
     throw new ApiError(400, "BAD_REQUEST", "Expected a signed reviewer request-list query.");
   }
   const commitmentId = requireDecimal(payload.commitment_id, "commitment_id");
   const signed = await verifySignedPayload(env, payload, root.signed_message);
-  await rateLimitGlobalAuth(env);
   await requireMaintainer(env, near, commitmentId, signed.account_id, signed.public_key);
   const now = await currentChainTime(near);
+  requireFreshListAuthorization(payload, now);
   await useNonce(env, signed.account_id, "list-requests", signed.nonce_hex, now);
   await env.DB.prepare(
     `UPDATE reviewer_requests SET status = 'expired', resolved_at_ns = ?
@@ -468,14 +495,14 @@ async function rejectRequest(env: Env, near: NearReadSession, requestId: string,
   if (!request) throw new ApiError(404, "NOT_FOUND", "The reviewer request was not found.");
   if (request.status !== "pending") throw new ApiError(409, "CONFLICT", "The reviewer request is no longer pending.");
   const signed = await verifySignedPayload(env, payload, root.signed_message);
-  await rateLimitGlobalAuth(env);
   await requireMaintainer(env, near, request.commitment_id, signed.account_id, signed.public_key);
   const now = await currentChainTime(near);
   await useNonce(env, signed.account_id, "reject-request", signed.nonce_hex, now);
   const result = await env.DB.prepare(
     `UPDATE reviewer_requests
      SET status = 'rejected', resolved_by = ?, resolved_at_ns = ?,
-         resolution_public_key = ?, resolution_signature_b64 = ?, resolution_callback_url = ?
+         resolution_public_key = ?, resolution_signature_b64 = ?, resolution_callback_url = ?,
+         resolution_signed_record_json = ?
      WHERE request_id = ? AND status = 'pending'`,
   ).bind(
     signed.account_id,
@@ -483,6 +510,7 @@ async function rejectRequest(env: Env, near: NearReadSession, requestId: string,
     signed.public_key,
     signed.signature,
     signed.callback_url ?? null,
+    canonicalJson({ payload, signed_message: signed }),
     requestId,
   ).run();
   if (result.meta.changes !== 1) throw new ApiError(409, "CONFLICT", "The reviewer request changed before the rejection was recorded.");
@@ -506,6 +534,15 @@ async function createGrant(env: Env, near: NearReadSession, body: unknown): Prom
   if (typeof grant.request_id !== "string" || !/^[0-9a-f-]{36}$/.test(grant.request_id)) {
     throw new ApiError(400, "BAD_REQUEST", "The reviewer request ID is invalid.");
   }
+  const maximum = Number(env.MAX_ARTIFACT_BYTES);
+  const maxArtifactBytes = Number.isSafeInteger(maximum) && maximum > 0 ? Math.min(maximum, 8 * 1024 * 1024) : 8 * 1024 * 1024;
+  if (typeof grant.ciphertext_bytes !== "number" || !Number.isSafeInteger(grant.ciphertext_bytes)
+      || grant.ciphertext_bytes < 16 || grant.ciphertext_bytes > maxArtifactBytes) {
+    throw new ApiError(413, "BAD_REQUEST", "The ciphertext is empty or exceeds the configured artifact-size limit.");
+  }
+  if (root.ciphertext_b64.length > 4 * Math.ceil(maxArtifactBytes / 3)) {
+    throw new ApiError(413, "BAD_REQUEST", "The encoded ciphertext exceeds the configured artifact-size limit.");
+  }
   let ciphertext: Uint8Array;
   let hpkeEnc: Uint8Array;
   let wrappedKey: Uint8Array;
@@ -518,8 +555,6 @@ async function createGrant(env: Env, near: NearReadSession, body: unknown): Prom
   } catch {
     throw new ApiError(400, "BAD_REQUEST", "The encrypted artifact or HPKE envelope is malformed.");
   }
-  const maximum = Number(env.MAX_ARTIFACT_BYTES);
-  const maxArtifactBytes = Number.isSafeInteger(maximum) && maximum > 0 ? Math.min(maximum, 8 * 1024 * 1024) : 8 * 1024 * 1024;
   if (ciphertext.byteLength < 16 || ciphertext.byteLength > maxArtifactBytes || grant.ciphertext_bytes !== ciphertext.byteLength) {
     throw new ApiError(413, "BAD_REQUEST", "The ciphertext is empty or exceeds the configured artifact-size limit.");
   }
@@ -556,7 +591,6 @@ async function createGrant(env: Env, near: NearReadSession, body: unknown): Prom
     nonce_hex: grant.nonce_hex,
   };
   const signed = await verifySignedPayload(env, requestPayload, root.signed_message);
-  await rateLimitGlobalAuth(env);
   await requireMaintainer(env, near, requestRow.commitment_id, signed.account_id, signed.public_key);
   const now = await currentChainTime(near);
   if (expiresAt <= now || expiresAt > now + MAX_GRANT_LIFETIME_NS) {
@@ -608,7 +642,8 @@ async function createGrant(env: Env, near: NearReadSession, body: unknown): Prom
       env.DB.prepare(
         `UPDATE reviewer_requests
          SET status = 'approved', resolved_by = ?, resolved_at_ns = ?,
-             resolution_public_key = ?, resolution_signature_b64 = ?, resolution_callback_url = ?
+             resolution_public_key = ?, resolution_signature_b64 = ?, resolution_callback_url = ?,
+             resolution_signed_record_json = ?
          WHERE request_id = ? AND status = 'pending' AND changes() = 1`,
       ).bind(
         signed.account_id,
@@ -616,17 +651,39 @@ async function createGrant(env: Env, near: NearReadSession, body: unknown): Prom
         signed.public_key,
         signed.signature,
         signed.callback_url ?? null,
+        canonicalJson({ payload: requestPayload, signed_message: signed }),
         requestRow.request_id,
       ),
     ]);
     if (results.some((result) => !result.success || result.meta.changes !== 1)) throw new Error("grant transaction failed");
   } catch {
     try {
-      await env.PRIVATE_ARTIFACTS.delete(objectKey);
-      await env.DB.prepare("UPDATE encrypted_artifacts SET deleted_at_ns = ? WHERE artifact_id = ? AND deleted_at_ns IS NULL")
-        .bind(now.toString(), artifactId).run();
+      const committedGrant = await env.DB.prepare(
+        `SELECT g.grant_id, g.expires_at_ns, a.commitment_id, a.evaluation_id, a.evidence_digest
+         FROM reviewer_grants g JOIN encrypted_artifacts a ON a.artifact_id = g.artifact_id
+         WHERE g.request_id = ? AND a.network = ? AND a.contract_id = ?`,
+      ).bind(requestRow.request_id, env.NETWORK, env.CONTRACT_ID).first<{
+        grant_id: string;
+        expires_at_ns: string;
+        commitment_id: string;
+        evaluation_id: string;
+        evidence_digest: string;
+      }>();
+      if (committedGrant) {
+        return json({
+          grant_id: committedGrant.grant_id,
+          status: "active",
+          expires_at_ns: committedGrant.expires_at_ns,
+          artifact: {
+            grant_id: committedGrant.grant_id,
+            commitment_id: committedGrant.commitment_id,
+            evaluation_id: committedGrant.evaluation_id,
+            evidence_digest: committedGrant.evidence_digest,
+          },
+        }, 201);
+      }
     } catch {
-      // Keep the unlinked artifact row so scheduled cleanup can retry the ciphertext purge.
+      // The commit outcome is unknown. Leave the object for the orphan collector; never delete a committed grant's ciphertext.
     }
     throw new ApiError(409, "CONFLICT", "The grant could not be stored; confirm the request is still pending and retry with a new nonce.");
   }
@@ -637,16 +694,17 @@ async function listGrants(env: Env, near: NearReadSession, body: unknown): Promi
   const root = asRecord(body);
   const payload = asRecord(root?.payload);
   if (!root || !payload || !exactKeys(root, ["payload", "signed_message"])
-      || !exactKeys(payload, ["schema", "commitment_id", "nonce_hex"])
+      || !exactKeys(payload, ["schema", "commitment_id", "auth_expires_at_ns", "nonce_hex"])
       || payload.schema !== "lcp.reviewer-grant-list.v1") {
     throw new ApiError(400, "BAD_REQUEST", "Expected a signed reviewer grant-list query.");
   }
   const commitmentId = requireDecimal(payload.commitment_id, "commitment_id");
   const signed = await verifySignedPayload(env, payload, root.signed_message);
-  await rateLimitGlobalAuth(env);
   await requireCurrentAccessKey(near, signed);
   await rateLimitAccount(env, signed.account_id);
+  await rateLimitAuthorizedAction(env);
   const now = await currentChainTime(near);
+  requireFreshListAuthorization(payload, now);
   const commitment = await readCommitment(near, commitmentId);
   const isMaintainer = commitment.maintainer === signed.account_id;
   await useNonce(env, signed.account_id, "list-grants", signed.nonce_hex, now);
@@ -709,9 +767,9 @@ async function downloadGrant(env: Env, near: NearReadSession, grantId: string, b
   }
   const signed = await verifySignedPayload(env, expectedPayload, root.signed_message, grant.reviewer_account);
   if (signed.nonce_hex !== expectedPayload.nonce_hex) throw new ApiError(400, "BAD_REQUEST", "The signature nonce does not match the signed download request.");
-  await rateLimitGlobalAuth(env);
   await requireCurrentAccessKey(near, signed);
   await rateLimitAccount(env, signed.account_id);
+  await rateLimitAuthorizedAction(env);
   const now = await currentChainTime(near);
   if (grant.revoked_at_ns !== null || BigInt(grant.expires_at_ns) <= now) {
     throw new ApiError(403, "FORBIDDEN", "This reviewer grant is revoked or expired.");
@@ -757,7 +815,6 @@ async function revokeGrant(env: Env, near: NearReadSession, grantId: string, bod
   if (!grant) throw new ApiError(404, "NOT_FOUND", "The reviewer grant was not found.");
   if (grant.revoked_at_ns !== null) throw new ApiError(409, "CONFLICT", "The reviewer grant has already been revoked.");
   const signed = await verifySignedPayload(env, payload, root.signed_message);
-  await rateLimitGlobalAuth(env);
   await requireMaintainer(env, near, grant.commitment_id, signed.account_id, signed.public_key);
   const now = await currentChainTime(near);
   await useNonce(env, signed.account_id, "revoke", signed.nonce_hex, now);
