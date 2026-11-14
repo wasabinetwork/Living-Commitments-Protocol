@@ -116,8 +116,8 @@ const USDC_TOKEN_ACCOUNT_ID = NEAR_NETWORK_ID === "mainnet"
 const USDC_DECIMALS = 6;
 const TESTNET_EVALUATOR_ARTIFACTS = {
   heartbeat: {
-    wasmUrl: "https://artifacts.lcp.gama.works/17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97.wasm",
-    sha256: "17803b881810e20ef2dbedb7e93c62be0894a7073de72d9aef86d5a0d9163a97",
+    wasmUrl: "https://artifacts.lcp.gama.works/ef15b9130fda059ff1c93d694ced08c709ef9efb7c72e6b939b39d96cfb3a539.wasm",
+    sha256: "ef15b9130fda059ff1c93d694ced08c709ef9efb7c72e6b939b39d96cfb3a539",
   },
   service_availability: {
     wasmUrl: "https://artifacts.lcp.gama.works/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm",
@@ -3696,7 +3696,7 @@ function EvidenceSubmissionCard({
       <div className="form-grid evidence-form-grid">
         <FormField label="Evidence artifact file" wide>
           <input ref={artifactFileInputRef} className="artifact-file-input" type="file" onChange={(event) => void handleArtifactFileChange(event)} disabled={hashingArtifact || signing || busy} aria-describedby="artifact-file-help" />
-          <small id="artifact-file-help" className="artifact-help">Choose the report or record for this observation. SHA-256 is calculated in this browser; the file stays on this device and is not uploaded. Share it separately with reviewers who need to inspect it. Maximum size: 25 MiB.</small>
+          <small id="artifact-file-help" className="artifact-help">Choose the report or record for this observation. SHA-256 is calculated in this browser; the file stays on this device and is not uploaded. For a heartbeat, prepare the message below, sign it with the maintainer wallet, then request evaluation. The evaluator checks that signature and the file digest; it does not inspect file contents. Maximum size: 25 MiB.</small>
         </FormField>
         {hashingArtifact && <p className="artifact-file-status" role="status" aria-live="polite">Calculating SHA-256 locally…</p>}
         {artifactHash && (
@@ -5182,9 +5182,11 @@ function EvaluationProofReference({
         }
       }
       const reportId = attestationRecord.task_id;
-      const reportUrl = (typeof reportId === "string" || typeof reportId === "number")
-        ? `https://app.outlayer.ai/attestation/${encodeURIComponent(String(reportId))}`
-        : null;
+      const reportUrl = NEAR_NETWORK_ID === "testnet"
+        ? `${apiUrl}/attestations/by-tx/${encodeURIComponent(transactionHash)}`
+        : (typeof reportId === "string" || typeof reportId === "number")
+          ? `https://app.outlayer.ai/attestation/${encodeURIComponent(String(reportId))}`
+          : null;
       const message = mismatches.length > 0
         ? `Record found, but ${mismatches.join(", ")} binding${mismatches.length === 1 ? " differs" : "s differ"}.`
         : unavailableChecks.length > 0
@@ -5211,7 +5213,7 @@ function EvaluationProofReference({
           NEAR transaction ↗
         </a>
         {attestation.kind === "found" && attestation.reportUrl ? (
-          <a href={attestation.reportUrl} target="_blank" rel="noopener noreferrer">Open OutLayer report ↗</a>
+          <a href={attestation.reportUrl} target="_blank" rel="noopener noreferrer">{NEAR_NETWORK_ID === "testnet" ? "Open testnet attestation record ↗" : "Open OutLayer report ↗"}</a>
         ) : (
           <a href="https://app.outlayer.ai/docs/trust-verification" target="_blank" rel="noopener noreferrer">OutLayer verification guide ↗</a>
         )}
