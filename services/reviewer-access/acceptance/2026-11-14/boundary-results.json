@@ -1,0 +1,14 @@
+[
+  {
+    "case": "other-fullaccess-accounts-cannot-read-private-data",
+    "pass": true
+  },
+  {
+    "case": "grant-exact-expiry-and-rejection-replay",
+    "pass": true
+  },
+  {
+    "case": "invalid-signatures-consume-no-authenticated-capacity",
+    "pass": true
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "account": "lcpmaintainer.testnet",
+    "timestamp": "2026-11-14T19:46:56.666Z",
+    "http_status": 200,
+    "removed_verified": true,
+    "transaction_hash": "2sLq6zMmbAryaX1dW21gBMndogmXm7mr5oQowPHLZi7a",
+    "rpc_error_name": null,
+    "rpc_error_cause": null,
+    "rpc_error_message": null,
+    "result_error": "access key [public key] does not exist while viewing",
+    "permission_still_present": false
+  },
+  {
+    "account": "lcpsponsor.testnet",
+    "timestamp": "2026-11-14T19:46:56.916Z",
+    "http_status": 200,
+    "removed_verified": true,
+    "transaction_hash": "8qD9ePu15yRaxygkDMeWXGpJcPnnjbHYdmBpFwAiiBmz",
+    "rpc_error_name": null,
+    "rpc_error_cause": null,
+    "rpc_error_message": null,
+    "result_error": "access key [public key] does not exist while viewing",
+    "permission_still_present": false
+  }
+]

@@ -1,0 +1,29 @@
+const hashes=['11111111111111111111111111111111','4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi','9ejbYKYbX2nXPUQoH5JFRrNp9xL9MoXZFQxvQ2JCJGpJ'];
+export default {async fetch(request,env){
+ if(request.method!=='POST')return new Response(null,{status:404});
+ const [mode,time]=new URL(request.url).pathname.split('/').filter(Boolean);
+ const provider=Number(env.PROVIDER);
+ if((mode==='one-down'&&provider===3)||(mode==='two-down'&&provider!==1))return new Response(null,{status:503});
+ if(mode==='one-null'&&provider===3)return Response.json(null);
+ const body=await request.json();
+ const out=result=>Response.json({jsonrpc:'2.0',id:body.id,result});
+ let hash=mode==='hash43'?hashes[1]:hashes[0];
+ if(mode==='block-conflict')hash=hashes[provider-1];
+ if(mode==='one-conflict'&&provider===3)hash=hashes[1];
+ const height=mode==='isolated-higher'&&provider===3?277000001:277000000;
+ const timestamp=time&&/^\d{19}$/.test(time)?time:String(BigInt(Date.now())*1000000n);
+ if(body.method==='block')return out({header:{hash,height,timestamp_nanosec:timestamp}});
+ if(body.method!=='query')return Response.json({jsonrpc:'2.0',id:body.id,error:{code:-32601,message:'unsupported method'}});
+ const context={block_hash:body.params.block_id,block_height:277000000};
+ if(mode==='query-wrong-block'&&provider!==1)context.block_hash=hashes[1];
+ if(body.params.request_type==='view_access_key'){
+  const key=JSON.parse(env.MOCK_KEYS_JSON).find(k=>k.account===body.params.account_id&&k.public_key===body.params.public_key);
+  if(!key)return Response.json({jsonrpc:'2.0',id:body.id,error:{code:-32000,message:'UNKNOWN_ACCESS_KEY'}});
+  let permission=key.permission==='FullAccess'?'FullAccess':{FunctionCall:{receiver_id:'unrelated-game.testnet',method_names:['play'],allowance:'1'}};
+  if(mode==='key-conflict')permission=provider===1?'FullAccess':{FunctionCall:{receiver_id:`unrelated-${provider}.testnet`,method_names:['play'],allowance:'1'}};
+  if(mode==='key-one-conflict'&&provider===3)permission={FunctionCall:{receiver_id:'unrelated-game.testnet',method_names:['play'],allowance:'1'}};
+  return out({...context,nonce:0,permission});
+ }
+ const value=body.params.method_name==='get_commitment'?{id:'24',maintainer:'audit-maintainer.testnet'}:{status:'Accepted',evaluation_id:'7',evidence_hash:'b'.repeat(64)};
+ return out({...context,result:Array.from(new TextEncoder().encode(JSON.stringify(value))),logs:[]});
+}};

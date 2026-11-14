@@ -1,0 +1,24 @@
+{
+  "case": "competing-distinct-approvals",
+  "timestamp": "2026-11-14T19:44:09.302Z",
+  "worker_version": "4fc1861b-11d8-4670-9147-73027cf577c6",
+  "carrier_request_id": "cc4e261d-d6bd-469a-8157-f32f836cb2f7",
+  "attempts": [
+    {
+      "request_id": "44d46cce-0ab4-4a9c-a1ba-a7d4bf84d2a7",
+      "http_status": 201,
+      "error_code": null,
+      "grant_id": "e75a3fd3-111f-4a25-b0b4-d60444b90ba7"
+    },
+    {
+      "request_id": "4768946c-57b1-452b-bccf-38021f9aaeb7",
+      "http_status": 201,
+      "error_code": null,
+      "grant_id": "e75a3fd3-111f-4a25-b0b4-d60444b90ba7"
+    }
+  ],
+  "different_ciphertext": true,
+  "stored_grants": 1,
+  "barrier_entrants": 2,
+  "pass": false
+}

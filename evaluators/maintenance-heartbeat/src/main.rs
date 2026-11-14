@@ -186,7 +186,9 @@ fn evaluate_stdin() -> Result<String, &'static str> {
 
 fn verify_signature(request: &EvaluationRequest) -> bool {
     let evidence = &request.evidence;
-    let (public_key_bytes, signature_bytes, message) = match request.policy_version {
+    let (public_key_bytes, signature_bytes, message, fallback_message) = match request
+        .policy_version
+    {
         1 => {
             if evidence.signature_scheme.is_some()
                 || evidence.nonce_hex.is_some()
@@ -210,6 +212,7 @@ fn verify_signature(request: &EvaluationRequest) -> bool {
                 public_key_bytes,
                 signature_bytes,
                 evidence.payload.as_bytes().to_vec(),
+                None,
             )
         }
         2 => {
@@ -245,10 +248,11 @@ fn verify_signature(request: &EvaluationRequest) -> bool {
             if request.contract_id.as_deref() != Some(recipient) {
                 return false;
             }
-            let Some(callback_url) = evidence.callback_url.as_deref() else {
-                return false;
-            };
-            if callback_url.is_empty() || callback_url.len() > 2_048 {
+            if evidence
+                .callback_url
+                .as_deref()
+                .is_some_and(|callback_url| callback_url.is_empty() || callback_url.len() > 2_048)
+            {
                 return false;
             }
             let Ok(signature_vec) = BASE64_STANDARD.decode(&evidence.signature) else {
@@ -262,12 +266,28 @@ fn verify_signature(request: &EvaluationRequest) -> bool {
             let Ok(signature_bytes) = <[u8; 64]>::try_from(signature_vec) else {
                 return false;
             };
-            let Some(message) =
-                nep413_message_hash(&evidence.payload, nonce, recipient, callback_url)
-            else {
+            let Some(message) = nep413_message_hash_with_optional_callback(
+                &evidence.payload,
+                nonce,
+                recipient,
+                evidence.callback_url.as_deref(),
+            ) else {
                 return false;
             };
-            (public_key_bytes, signature_bytes, message.to_vec())
+            let fallback_message = evidence.callback_url.as_deref().and_then(|_| {
+                nep413_message_hash_with_optional_callback(
+                    &evidence.payload,
+                    nonce,
+                    recipient,
+                    None,
+                )
+            });
+            (
+                public_key_bytes,
+                signature_bytes,
+                message.to_vec(),
+                fallback_message.map(|message| message.to_vec()),
+            )
         }
         _ => return false,
     };
@@ -276,30 +296,31 @@ fn verify_signature(request: &EvaluationRequest) -> bool {
     };
     let signature = Signature::from_bytes(&signature_bytes);
     verifying_key.verify_strict(&message, &signature).is_ok()
+        || fallback_message
+            .as_deref()
+            .is_some_and(|message| verifying_key.verify_strict(message, &signature).is_ok())
 }
 
-fn nep413_message_hash(
+fn nep413_message_hash_with_optional_callback(
     message: &str,
     nonce: [u8; 32],
     recipient: &str,
-    callback_url: &str,
+    callback_url: Option<&str>,
 ) -> Option<[u8; 32]> {
     const NEP413_TAG: u32 = (1 << 31) + 413;
     let message_bytes = message.as_bytes();
     let recipient_bytes = recipient.as_bytes();
-    let callback_url_bytes = callback_url.as_bytes();
     let message_len = u32::try_from(message_bytes.len()).ok()?;
     let recipient_len = u32::try_from(recipient_bytes.len()).ok()?;
-    let callback_url_len = u32::try_from(callback_url_bytes.len()).ok()?;
+    let callback_url_bytes = callback_url.map(str::as_bytes);
+    let callback_url_len = callback_url_bytes.and_then(|bytes| u32::try_from(bytes.len()).ok());
     let mut payload = Vec::with_capacity(
         4 + 4
             + message_bytes.len()
             + 32
             + 4
             + recipient_bytes.len()
-            + 1
-            + 4
-            + callback_url_bytes.len(),
+            + callback_url_bytes.map_or(1, |bytes| 1 + 4 + bytes.len()),
     );
     payload.extend_from_slice(&NEP413_TAG.to_le_bytes());
     payload.extend_from_slice(&message_len.to_le_bytes());
@@ -307,9 +328,15 @@ fn nep413_message_hash(
     payload.extend_from_slice(&nonce);
     payload.extend_from_slice(&recipient_len.to_le_bytes());
     payload.extend_from_slice(recipient_bytes);
-    payload.push(1); // callbackUrl: Some(url)
-    payload.extend_from_slice(&callback_url_len.to_le_bytes());
-    payload.extend_from_slice(callback_url_bytes);
+    match (callback_url_bytes, callback_url_len) {
+        (Some(bytes), Some(length)) => {
+            payload.push(1); // callbackUrl: Some(url)
+            payload.extend_from_slice(&length.to_le_bytes());
+            payload.extend_from_slice(bytes);
+        }
+        (None, None) => payload.push(0), // callbackUrl: None
+        _ => return None,
+    }
     Some(Sha256::digest(payload).into())
 }
 

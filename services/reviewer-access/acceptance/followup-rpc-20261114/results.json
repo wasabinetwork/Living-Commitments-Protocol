@@ -1,0 +1,79 @@
+[
+  {
+    "scenario": "normal",
+    "timestamp": "2026-11-14T21:16:01.048Z",
+    "status": 200,
+    "request_id": "a5a908ec5c2c3361-MIA",
+    "body": {
+      "case": "normal",
+      "code": "OK",
+      "status": 200
+    }
+  },
+  {
+    "scenario": "skew",
+    "timestamp": "2026-11-14T21:16:01.317Z",
+    "status": 200,
+    "request_id": "a5a908ecdcb73361-MIA",
+    "body": {
+      "case": "skew",
+      "code": "OK",
+      "status": 200
+    }
+  },
+  {
+    "scenario": "one-down",
+    "timestamp": "2026-11-14T21:16:01.390Z",
+    "status": 200,
+    "request_id": "a5a908ed5d333361-MIA",
+    "body": {
+      "case": "one-down",
+      "code": "OK",
+      "status": 200
+    }
+  },
+  {
+    "scenario": "two-down",
+    "timestamp": "2026-11-14T21:16:01.483Z",
+    "status": 503,
+    "request_id": "a5a908ededb93361-MIA",
+    "body": {
+      "case": "two-down",
+      "code": "NearUnavailableError",
+      "status": 503
+    }
+  },
+  {
+    "scenario": "one-null",
+    "timestamp": "2026-11-14T21:16:01.530Z",
+    "status": 200,
+    "request_id": "a5a908ee3de43361-MIA",
+    "body": {
+      "case": "one-null",
+      "code": "OK",
+      "status": 200
+    }
+  },
+  {
+    "scenario": "block-conflict",
+    "timestamp": "2026-11-14T21:16:01.629Z",
+    "status": 503,
+    "request_id": "a5a908eede6c3361-MIA",
+    "body": {
+      "case": "block-conflict",
+      "code": "NearUnavailableError",
+      "status": 503
+    }
+  },
+  {
+    "scenario": "key-conflict",
+    "timestamp": "2026-11-14T21:16:01.675Z",
+    "status": 503,
+    "request_id": "a5a908ef1ea83361-MIA",
+    "body": {
+      "case": "key-conflict",
+      "code": "NearUnavailableError",
+      "status": 503
+    }
+  }
+]

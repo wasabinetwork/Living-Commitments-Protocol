@@ -2,7 +2,7 @@
 
 ## Product Requirements Document — v0.2
 
-**Status:** Research-aligned, ready for technical specification<br>**Target:** NEAR Hackathon 2026<br>**Submission deadline:** November 14, 2026, 23:59 UTC<br>**Primary track:** Open Innovation<br>**Secondary track candidate:** Social Money<br>**Conditional track candidate:** Privacy & Private AI, only if confidential TEE evaluation is demonstrated<br>**Implementation network:** NEAR testnet<br>**Product category:** Programmable, continuously verified commitments infrastructure
+**Status:** Product baseline; P0 MVP deployed on NEAR testnet, P1 acceptance and P2 USDC validation in progress<br>**Target:** NEAR Hackathon 2026<br>**Submission deadline:** November 14, 2026, 23:59 UTC<br>**Primary track:** Open Innovation<br>**Secondary track candidate:** Social Money<br>**Conditional track candidate:** Privacy & Private AI, only if confidential TEE evaluation is demonstrated<br>**Implementation network:** NEAR testnet<br>**Product category:** Programmable, continuously verified commitments infrastructure
 
 ---
 
@@ -621,6 +621,10 @@ The contract must:
 * Maintain consistent escrow accounting.
 * Provide an authorized path for remaining funds at closure.
 
+### Multi-asset extension (P2 implementation in progress)
+
+Commitment creators may choose native NEAR or a supported NEP-141 token such as USDC. The selected asset, token contract account, and raw tranche amount are immutable policy inputs. A commitment never mixes assets or performs conversion. USDC is the first supported stablecoin planned; its transaction gas, contract storage, token-account registration, and evaluator operations remain paid in NEAR. NEP-141 funding via `ft_transfer_call` requires the sponsor to attach 1 yoctoNEAR to the token call; outgoing NEP-141 transfers also require LCP to attach 1 yoctoNEAR. Each transfer deposit is separate from escrow and storage growth, and remaining excess is refunded. The local core, SDK, and Console now contain the first USDC settlement path, preserving legacy Borsh state and native-NEAR behavior. On 2026-11-13, the Rust 1.100.0 workspace suite passed 75 tests, the SDK and JavaScript suite passed 37 tests, contract checks and evaluator WASM builds passed, Worker dry runs and the Console production build passed, and the npm audit found no vulnerabilities. Independent invariant review, a reproducible build, testnet deployment, and live acceptance remain pending. See [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md) for current implementation and acceptance status.
+
 ## 9.4 Consequence adapters
 
 The protocol architecture must distinguish the **decision** from the **effect**.
@@ -735,6 +739,10 @@ No unilateral policy replacement is permitted in the MVP.
 
 ## 11.3 P2 — After hackathon
 
+* **In progress:** support selectable native NEAR or NEP-141 USDC commitment escrow, with a reusable asset catalog and separately accounted token-unit settlement. The first USDC path is implemented locally; testnet acceptance, invariant review, and reproducible deployment remain open. See [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md).
+* **Implemented locally:** show the application build/source SHA in the Console footer. Deploy and verify the build record independently on production and preview.
+* **Implemented locally:** add contextual form help and human-readable time-unit inputs while preserving exact protocol duration values. Firefox layout and accessibility review remains open.
+* **Configured and verified:** serve the current public evaluator artifacts from `https://artifacts.lcp.gama.works`; hashes and immutable R2 object protection are confirmed. A new OutLayer evaluation using the branded URL remains pending.
 * Constitution Compiler.
 * Resilience Lab.
 * Forkable Programs.
@@ -796,13 +804,15 @@ The protocol must expose enough information for independent reconstruction of de
 | --- | --- |
 | `create_commitment` | Register a new commitment and policy |
 | `activate_commitment` | Activate when prerequisites are satisfied |
-| `fund_commitment` | Deposit native NEAR for budget allocations |
+| `fund_commitment` | Deposit native NEAR for budget allocations; NEP-141 funding uses `ft_transfer_call` and the contract's `ft_on_transfer` receiver |
+| `ft_on_transfer` | Validate approved-token funding, accept only the remaining budget, and return unused token units for resolver refunds |
 | `request_evaluation` | Initiate a verification cycle |
 | `on_evaluation_result` | Private callback for the authorized asynchronous result |
 | `challenge_evaluation` | Open an authorized challenge |
 | `resolve_challenge` | Apply the predefined resolution policy |
 | `claim_tranche` | Request a health-gated budget release |
 | `on_tranche_transfer` | Reconcile asynchronous settlement result |
+| `on_refund_transfer` | Reconcile asynchronous residual-refund result |
 | `close_commitment` | Apply authorized terminal conditions |
 | `refund_remaining` | Return eligible unspent escrow according to policy |
 
@@ -835,6 +845,8 @@ Versioned events should include:
 * `tranche_claimed`
 * `settlement_completed`
 * `settlement_failed`
+
+For asset-aware funding, claims, and refunds, include the asset kind, token contract account when applicable, and raw integer amount. Keep legacy `*_yocto` fields native-NEAR-only and available for existing readers; do not use the display symbol as asset identity.
 * `commitment_closed`
 
 Time-derived status changes may exist before an event is emitted. The contract and UI must document this behavior clearly.
@@ -1454,7 +1466,7 @@ These must be resolved before or during the first implementation session.
 | Challenge resolution | Predefined arbiter and timeout fallback |
 | Consequence | Health-gated native NEAR budget tranche |
 | Policy updates | Immutable policy version in MVP |
-| Escrow asset | Native NEAR |
+| Escrow asset | Native NEAR in v0.1 MVP; NEP-141 USDC is the P2 extension (local implementation in progress; testnet acceptance pending) |
 | Cross-chain execution | Deferred |
 | AI authority | No independent settlement authority |
 | External automation | Permissionless triggering, no privileged overrides |

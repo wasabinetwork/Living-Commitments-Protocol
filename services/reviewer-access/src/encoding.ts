@@ -39,8 +39,33 @@ export function encodeHex(value: Uint8Array): string {
 }
 
 export function decodeBase64(value: string, expectedBytes?: number): Uint8Array {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+  if (value.length % 4 !== 0) {
     throw new Error("Malformed base64 data.");
+  }
+  if (expectedBytes !== undefined) {
+    if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || value.length !== 4 * Math.ceil(expectedBytes / 3)) {
+      throw new Error("Base64 data has an invalid encoded length.");
+    }
+  }
+  const hasDoublePadding = value.endsWith("==");
+  const hasPadding = hasDoublePadding || value.endsWith("=");
+  const paddingLength = hasDoublePadding ? 2 : hasPadding ? 1 : 0;
+  const contentLength = value.length - paddingLength;
+  if ((paddingLength === 2 && contentLength % 4 !== 2)
+      || (paddingLength === 1 && contentLength % 4 !== 3)
+      || (paddingLength === 0 && contentLength % 4 !== 0)) {
+    throw new Error("Malformed base64 padding.");
+  }
+  for (let index = 0; index < contentLength; index += 1) {
+    const code = value.charCodeAt(index);
+    const alphabetic = (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    const numeric = code >= 48 && code <= 57;
+    if (!alphabetic && !numeric && code !== 43 && code !== 47) {
+      throw new Error("Malformed base64 data.");
+    }
+  }
+  for (let index = contentLength; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) throw new Error("Malformed base64 padding.");
   }
   const decoded = Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
   if (encodeBase64(decoded) !== value || (expectedBytes !== undefined && decoded.byteLength !== expectedBytes)) {
@@ -58,7 +83,11 @@ export function encodeBase64(value: Uint8Array): string {
 }
 
 export function decodeBase58(value: string, expectedBytes: number): Uint8Array {
-  if (!value || !/^[1-9A-HJ-NP-Za-km-z]+$/.test(value)) throw new Error("Malformed base58 value.");
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 1
+      || value.length === 0 || value.length > Math.ceil(expectedBytes * Math.log(256) / Math.log(58))) {
+    throw new Error("Base58 value has an invalid encoded length.");
+  }
+  if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(value)) throw new Error("Malformed base58 value.");
   let integer = 0n;
   for (const character of value) {
     integer = integer * 58n + BigInt(BASE58_ALPHABET.indexOf(character));

@@ -1,0 +1,102 @@
+import worker from '/Users/gilbertoadon/Downloads/Develop/Living Commitments Protocol/services/reviewer-access/src/index.ts';
+import {verifyNep413Message} from '/Users/gilbertoadon/Downloads/Develop/Living Commitments Protocol/services/reviewer-access/src/nep413.ts';
+import {canonicalJson} from '/Users/gilbertoadon/Downloads/Develop/Living Commitments Protocol/services/reviewer-access/src/encoding.ts';
+const modes=new Set(['normal','one-down','two-down','one-null','hash43','block-conflict','one-conflict','isolated-higher','query-wrong-block','key-conflict','key-one-conflict']);
+const tables=['reviewer_access_events','reviewer_grants','reviewer_requests','encrypted_artifacts','used_nep413_nonces','reviewer_access_windows'];
+const faultError=()=>new Error('InjectedAcceptanceFailure');
+function bindings(request,env){
+ const mode=request.headers.get('X-Acceptance-RPC')||'normal';
+ if(!modes.has(mode))throw new Error('Unknown acceptance mode');
+ const time=request.headers.get('X-Acceptance-Time')||String(BigInt(Date.now())*1000000n);
+ if(!/^\d{19}$/.test(time))throw new Error('Invalid acceptance time');
+ const urls=[1,2,3].map(i=>`https://lcp-reviewer-audit-rpc${i}-ple.wasabinetwork.workers.dev/${mode}/${time}`);
+ const result={...env,NEAR_RPC_URL:urls[0],NEAR_RPC_FALLBACK_URLS:urls.slice(1).join(',')};
+ const group=request.headers.get('X-Acceptance-Rate-Group');
+ if(group&&/^[a-z0-9-]{1,80}$/.test(group))result.API_RATE_LIMITER={limit:({key})=>env.API_RATE_LIMITER.limit({key:`${key}|${group}`})};
+ const fault=request.headers.get('X-Acceptance-Fault')||'';
+ let commitFailed=false;
+ const pauseGrant=request.headers.get('X-Acceptance-Pause')==='grant-race';
+ if(fault.startsWith('d1-')||pauseGrant){
+  result.DB={prepare(query){
+   const stmt=env.DB.prepare(query);
+   const wrap=s=>({query,original:s,bind(...args){return wrap(s.bind(...args));},async first(...args){if(commitFailed&&fault==='d1-commit-and-recovery')throw faultError();return s.first(...args);},all:(...args)=>s.all(...args),async run(...args){if(fault==='d1-artifact'&&query.includes('INSERT INTO encrypted_artifacts'))throw faultError();return s.run(...args);}});
+   return wrap(stmt);
+  },async batch(statements){
+   const isGrant=statements.some(s=>s.query?.includes('INSERT INTO reviewer_grants'));
+   if(isGrant&&pauseGrant){
+    await env.DB.prepare("INSERT INTO reviewer_access_windows(account_id,window_start_s,request_count) VALUES('!acceptance-race',0,1) ON CONFLICT(account_id,window_start_s) DO UPDATE SET request_count=request_count+1").run();
+    const deadline=Date.now()+15000;
+    while((await env.DB.prepare("SELECT request_count FROM reviewer_access_windows WHERE account_id='!acceptance-race' AND window_start_s=0").first()).request_count<2){
+     if(Date.now()>deadline)throw new Error('HarnessRaceBarrierTimedOut');
+     await new Promise(resolve=>setTimeout(resolve,100));
+    }
+   }
+   if(isGrant&&fault==='d1-grant-before')throw faultError();
+   const answer=await env.DB.batch(statements.map(s=>s.original??s));
+   if(isGrant&&(fault==='d1-grant-after'||fault==='d1-commit-and-recovery')){commitFailed=true;throw faultError();}
+   return answer;
+  }};
+ }
+ if(fault.startsWith('r2-')) result.PRIVATE_ARTIFACTS={
+  async put(...args){if(fault==='r2-put-before')throw faultError();const answer=await env.PRIVATE_ARTIFACTS.put(...args);if(fault==='r2-put-after')throw faultError();return answer;},
+  get:(...args)=>env.PRIVATE_ARTIFACTS.get(...args),
+  async delete(...args){if(fault==='r2-delete')throw faultError();return env.PRIVATE_ARTIFACTS.delete(...args);},
+ };
+ return result;
+}
+async function control(body,env,adapted){
+ if(body.op==='grant-race'){
+  if(!Array.isArray(body.packets)||body.packets.length!==2)throw new Error('Invalid race');
+  const attempts=await Promise.all(body.packets.map(async packet=>{
+   const response=await worker.fetch(new Request('https://acceptance.invalid/v1/grants',{method:'POST',headers:{'Origin':env.APP_ORIGINS,'Content-Type':'application/json'},body:JSON.stringify(packet)}),adapted);
+   const value=await response.json();return {request_id:crypto.randomUUID(),http_status:response.status,error_code:value.error??null,grant_id:value.grant_id??null};
+  }));
+  return {attempts,different_ciphertext:body.packets[0].grant.ciphertext_sha256!==body.packets[1].grant.ciphertext_sha256};
+ }
+ if(body.op==='rpc-probe'){
+  const source=body.live?env:adapted;
+  const urls=[source.NEAR_RPC_URL,...source.NEAR_RPC_FALLBACK_URLS.split(',')];
+  return {providers:await Promise.all(urls.map(async(url)=>{try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:'lcp-reviewer-access',method:body.method??'block',params:body.params??{finality:'final'}}),signal:AbortSignal.timeout(10000)});const text=await r.text();let value;try{value=JSON.parse(text);}catch{}return {origin:new URL(url).origin,status:r.status,header:value?.result?.header?{hash:value.result.header.hash,height:value.result.header.height,timestamp_nanosec:value.result.header.timestamp_nanosec}:null,permission:value?.result?.permission??null,block_hash:value?.result?.block_hash??null,block_height:value?.result?.block_height??null,error_code:value?.error?.code??null,non_json:!value,snippet:!value?text.slice(0,100):null};}catch(e){return {origin:new URL(url).origin,error_class:e.name};}}))};
+ }
+ if(body.op==='reset'){
+  let listed; do {listed=await env.PRIVATE_ARTIFACTS.list({limit:1000});if(listed.objects.length)await env.PRIVATE_ARTIFACTS.delete(listed.objects.map(o=>o.key));}while(listed.truncated);
+  await env.DB.batch(tables.map(t=>env.DB.prepare(`DELETE FROM ${t}`)));
+  return {reset:true};
+ }
+ if(body.op==='windows'){await env.DB.prepare('DELETE FROM reviewer_access_windows').run();return {cleared:true};}
+ if(body.op==='seed-window'){
+  const key=body.key;if(typeof key!=='string'||key.length>150)throw new Error('invalid key');
+  const period=body.period===3600?3600:60, start=Math.floor(Date.now()/1000/period)*period;
+  await env.DB.prepare('INSERT OR REPLACE INTO reviewer_access_windows (account_id,window_start_s,request_count) VALUES (?,?,?)').bind(key,start,Number(body.count)).run();return {seeded:true};
+ }
+ if(body.op==='seed-download'){await env.DB.prepare('UPDATE reviewer_grants SET download_count=? WHERE grant_id=?').bind(Number(body.count),body.grant_id).run();return {seeded:true};}
+ if(body.op==='cleanup'){await worker.scheduled({},adapted);return {cleaned:true};}
+ if(body.op==='inspect'){
+  const counts={};for(const table of tables)counts[table]=(await env.DB.prepare(`SELECT count(*) AS n FROM ${table}`).first()).n;
+  const requests=await env.DB.prepare('SELECT request_id,status,request_signed_record_json,resolution_signed_record_json FROM reviewer_requests').all();
+  const requestResults=[];
+  for(const row of requests.results){
+   const verify=async raw=>{if(!raw)return null;const record=JSON.parse(raw);return verifyNep413Message(canonicalJson(record.payload),record.signed_message,env.ACCESS_RECIPIENT,[env.APP_ORIGINS]);};
+   requestResults.push({request_id:row.request_id,status:row.status,request_consent_valid:await verify(row.request_signed_record_json),resolution_consent_valid:await verify(row.resolution_signed_record_json)});
+  }
+  const grants=await env.DB.prepare('SELECT g.grant_id,g.request_id,g.revoked_at_ns,g.download_count,a.object_key,a.deleted_at_ns FROM reviewer_grants g JOIN encrypted_artifacts a ON a.artifact_id=g.artifact_id').all();
+  const grantResults=[];for(const row of grants.results)grantResults.push({grant_id:row.grant_id,request_id:row.request_id,revoked:row.revoked_at_ns!==null,download_count:row.download_count,purged:row.deleted_at_ns!==null,object_exists:(await env.PRIVATE_ARTIFACTS.head(row.object_key))!==null});
+  const windows=await env.DB.prepare('SELECT account_id,request_count FROM reviewer_access_windows').all();
+  return {counts,requests:requestResults,grants:grantResults,windows:windows.results,object_count:(await env.PRIVATE_ARTIFACTS.list()).objects.length};
+ }
+ throw new Error('unsupported control');
+}
+export default {async fetch(request,env){
+ const given=request.headers.get('X-Acceptance-Token')??'';
+ if(!env.ACCEPTANCE_TOKEN||given.length!==env.ACCEPTANCE_TOKEN.length||!crypto.subtle.timingSafeEqual(new TextEncoder().encode(given),new TextEncoder().encode(env.ACCEPTANCE_TOKEN)))return new Response(null,{status:401});
+ let response;
+ try{
+  const adapted=bindings(request,env);
+  response=new URL(request.url).pathname==='/__acceptance/control'
+   ?Response.json(await control(await request.json(),env,adapted))
+   :await worker.fetch(request,adapted);
+ }catch(error){response=Response.json({error:'ACCEPTANCE_HARNESS_ERROR',error_class:error.name},{status:500});}
+ response.headers.set('X-Acceptance-Version',env.AUDIT_VERSION.id);
+ response.headers.set('X-Acceptance-Request-Id',crypto.randomUUID());
+ return response;
+}};
