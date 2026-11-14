@@ -37,7 +37,7 @@ Check the contracts and build the evaluators locally with:
 ```sh
 cargo near check --locked --manifest-path contracts/lcp-core/Cargo.toml
 cargo near check --locked --manifest-path contracts/bounded-payout-adapter/Cargo.toml
-cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release --locked
+cargo build -p maintenance-heartbeat --target wasm32-wasip1 --release --locked
 cargo build -p service-availability-evaluator --target wasm32-wasip2 --release --locked
 ```
 

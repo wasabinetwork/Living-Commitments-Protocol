@@ -116,12 +116,14 @@ const USDC_TOKEN_ACCOUNT_ID = NEAR_NETWORK_ID === "mainnet"
 const USDC_DECIMALS = 6;
 const TESTNET_EVALUATOR_ARTIFACTS = {
   heartbeat: {
-    wasmUrl: "https://artifacts.lcp.gama.works/ef15b9130fda059ff1c93d694ced08c709ef9efb7c72e6b939b39d96cfb3a539.wasm",
-    sha256: "ef15b9130fda059ff1c93d694ced08c709ef9efb7c72e6b939b39d96cfb3a539",
+    wasmUrl: "https://artifacts.lcp.gama.works/2bf6e040e091a967fa5dc1129a9fe083b693d02474ea12531a76b0bcfed5b15b.wasm",
+    sha256: "2bf6e040e091a967fa5dc1129a9fe083b693d02474ea12531a76b0bcfed5b15b",
+    buildTarget: "wasm32-wasip1",
   },
   service_availability: {
     wasmUrl: "https://artifacts.lcp.gama.works/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm",
     sha256: "908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611",
+    buildTarget: "wasm32-wasip2",
   },
 } as const;
 const DEFAULT_RPC_URLS = NEAR_NETWORK_ID === "mainnet"
@@ -4845,7 +4847,9 @@ function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: s
         outlayer_account: "outlayer.testnet",
         wasm_url: fields.wasmUrl,
         wasm_sha256_hex: fields.wasmSha256,
-        build_target: "wasm32-wasip2",
+        build_target: evidenceMode === "service_availability"
+          ? TESTNET_EVALUATOR_ARTIFACTS.service_availability.buildTarget
+          : TESTNET_EVALUATOR_ARTIFACTS.heartbeat.buildTarget,
         max_instructions: maxInstructions,
         max_memory_mb: maxMemoryMb,
         max_execution_seconds: executionSeconds,

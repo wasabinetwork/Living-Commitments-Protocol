@@ -18,7 +18,7 @@ cargo fmt --all -- --check
 cargo test --workspace
 cargo near check --locked --manifest-path contracts/lcp-core/Cargo.toml
 cargo near check --locked --manifest-path contracts/bounded-payout-adapter/Cargo.toml
-cargo build -p maintenance-heartbeat --target wasm32-wasip2 --release
+cargo build -p maintenance-heartbeat --target wasm32-wasip1 --release
 cargo build -p service-availability-evaluator --target wasm32-wasip2 --release
 node --check evaluators/service-availability/probe.mjs
 npm test
@@ -26,7 +26,7 @@ npm run check --workspace=@lcp/event-indexer
 npm run check --workspace=@lcp/reviewer-access
 npm run build --workspace=@lcp/console
 npm run types --workspace=@lcp/reviewer-access
-shasum -a 256 target/wasm32-wasip2/release/maintenance-heartbeat.wasm
+shasum -a 256 target/wasm32-wasip1/release/maintenance-heartbeat.wasm
 ```
 
 These checks do not establish third-party reproducibility for NEAR contract WASM.
@@ -36,7 +36,7 @@ These checks do not establish third-party reproducibility for NEAR contract WASM
 Install the pinned Cargo NEAR CLI, ensure the workspace source is committed, and run these commands from the repository root:
 
 ```sh
-rustup toolchain install 1.100.0 --profile minimal --component clippy --component rustfmt --target wasm32-unknown-unknown --target wasm32-wasip2
+rustup toolchain install 1.100.0 --profile minimal --component clippy --component rustfmt --target wasm32-unknown-unknown --target wasm32-wasip1 --target wasm32-wasip2
 curl --fail --location --proto '=https' --tlsv1.2 \
   --output /tmp/cargo-near-installer.sh \
   https://github.com/near/cargo-near/releases/download/cargo-near-v0.23.0/cargo-near-installer.sh
