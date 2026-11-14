@@ -10,7 +10,7 @@ import type {
   ServiceAvailabilityPolicyInput,
   ServicePolicyAmendmentView,
 } from "@lcp/sdk";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const YOCTO_PER_NEAR = 10n ** 24n;
 const NS_PER_HOUR = 60n * 60n * 1_000_000_000n;
@@ -188,6 +188,16 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const adapterPollCallbacksRef = useRef({
+    contractId: props.contractId,
+    onLoadAdapterStatus: props.onLoadAdapterStatus,
+    onLoadGrant: props.onLoadGrant,
+  });
+  adapterPollCallbacksRef.current = {
+    contractId: props.contractId,
+    onLoadAdapterStatus: props.onLoadAdapterStatus,
+    onLoadGrant: props.onLoadGrant,
+  };
   const currentAdapterStatus = adapterStatus && adapterStatusAccount === adapterAccount ? adapterStatus : null;
   const grantManagerIsCommitmentParty = Boolean(currentAdapterStatus
     && [props.policy.budget.sponsor, props.policy.budget.beneficiary].includes(currentAdapterStatus.pool_manager));
@@ -203,8 +213,11 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
   const maxExpiryMinutes = maxAuthorityGrantMinutes(props.commitment, props.policy, props.chainTimeNs);
   const grantActive = Boolean(grant && props.chainTimeNs && !grant.revoked
     && BigInt(props.chainTimeNs) < BigInt(grant.expires_at_ns));
+  const eligibleGrantEpoch = props.eligibility?.claimable_epoch ?? props.eligibility?.current_epoch ?? null;
+  const grantAlreadyUsedThisEpoch = Boolean(grant && eligibleGrantEpoch !== null
+    && grant.last_authorized_epoch === eligibleGrantEpoch);
   const canExecute = Boolean(canTrigger && grantManagerMatches && props.contractSupported && props.eligibility?.eligible
-    && props.commitment.lifecycle === "Active" && grantActive);
+    && props.commitment.lifecycle === "Active" && grantActive && !grantAlreadyUsedThisEpoch);
   const settlementAsset = props.commitment.settlement_asset
     ?? props.policy.settlement_asset
     ?? props.policy.budget.settlement_asset;
@@ -340,6 +353,55 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
     }
   }
 
+  const trackedAdapterAccount = grant?.adapter_account ?? (adapterStatus ? adapterAccount : null);
+  const trackedResourceAccount = grant?.resource_account ?? resourceAccount;
+  const pendingGrantId = grant?.action_pending ? grant.grant_id : null;
+  const hasAdapterStatus = Boolean(adapterStatus);
+
+  useEffect(() => {
+    const trackedAdapter = trackedAdapterAccount;
+    if (!trackedAdapter || !hasAdapterStatus || adapterStatusAccount !== trackedAdapter) return;
+
+    let active = true;
+    let inFlight = false;
+    const refreshTrackedStatus = async () => {
+      if (!active || inFlight || document.visibilityState !== "visible") return;
+      inFlight = true;
+      try {
+        const callbacks = adapterPollCallbacksRef.current;
+        const [latestGrant, latestStatus] = await Promise.all([
+          pendingGrantId
+            ? callbacks.onLoadGrant(pendingGrantId)
+            : Promise.resolve(null),
+          callbacks.onLoadAdapterStatus(trackedAdapter),
+        ]);
+        if (!active) return;
+        if (latestGrant) setGrant(latestGrant);
+        if (!latestStatus
+          || latestStatus.lcp_contract_id !== callbacks.contractId
+          || latestStatus.resource_account !== trackedResourceAccount) return;
+        setAdapterStatus(latestStatus);
+        setAdapterStatusAccount(trackedAdapter);
+        setAdapterStatusError("");
+      } catch {
+        // Keep the last confirmed values visible and retry on the next interval.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const intervalMs = pendingGrantId ? 4_000 : 30_000;
+    const interval = window.setInterval(() => void refreshTrackedStatus(), intervalMs);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refreshTrackedStatus();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [trackedAdapterAccount, trackedResourceAccount, pendingGrantId, hasAdapterStatus, adapterStatusAccount]);
+
   async function executeGrant() {
     if (!grant || !canTrigger) throw new Error("Connect the grantor or the named adapter wallet to trigger this grant.");
     if (!grantAdapterStatus) throw new Error("Refresh this grant's adapter pool status before authorizing a payout.");
@@ -414,7 +476,7 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
               <button type="button" className="browser-text-button" disabled={busy || BigInt(adapterStatus.available_yocto) === 0n || BigInt(adapterStatus.pending_yocto) > 0n} onClick={() => void run(withdrawAdapterPool, "Adapter pool withdrawal submitted to the connected manager wallet.")}>Withdraw to manager wallet</button>
             </div>
           )}
-          <small>Anyone may fund the pool. Only the configured manager can withdraw its available balance; both transfers settle asynchronously.</small>
+          <small>Anyone may fund the pool. Only the configured manager can withdraw its available balance; both transfers settle asynchronously. Pool status updates every 30 seconds, or every 4 seconds while an adapter action is settling, whenever this page is visible.</small>
         </div>
         <button type="button" className="browser-button" disabled={busy || !props.contractSupported || !canCreateGrant || !props.chainTimeNs || maxExpiryMinutes < 1 || props.commitment.lifecycle !== "Active"} onClick={() => void run(createGrant, "Bounded payout authority recorded on NEAR.")}>Create wallet-signed grant</button>
         <small>{!currentAdapterStatus
@@ -438,10 +500,16 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
             <div className="digest-row"><span>PER ACTION / EXPIRES</span><code>{formatNear(grant.per_action_limit_yocto)} NEAR · {formatNs(grant.expires_at_ns)}</code></div>
             <div className="reviewer-inline-actions governance-actions">
               <label className="governance-amount">Action amount · NEAR<input inputMode="decimal" value={actionAmount} onChange={(event) => setActionAmount(event.target.value)} /></label>
-              <button type="button" className="browser-button" disabled={busy || !canExecute || grant.action_pending} onClick={() => void run(executeGrant, "Adapter action submitted. LCP restores its allowance, nonce, and epoch if the adapter call fails.")}>Authorize eligible epoch action</button>
+              <button type="button" className="browser-button" disabled={busy || !canExecute || grant.action_pending} onClick={() => void run(executeGrant, "Adapter action submitted. LCP restores its allowance, nonce, and epoch if the adapter call fails.")}>
+                {grant.action_pending ? "Action settling…" : grantAlreadyUsedThisEpoch ? `Already used in epoch ${eligibleGrantEpoch}` : "Authorize eligible epoch action"}
+              </button>
               {props.accountId === grant.granting_account && !grant.revoked && <button type="button" className="browser-text-button" disabled={busy || !props.contractSupported} onClick={() => void run(async () => { await props.onRevokeGrant(grant.grant_id); await props.onRefresh(); await loadGrant(grant.grant_id); }, "Authority grant revoked on NEAR.")}>Revoke grant</button>}
             </div>
-            <small>Actions require the same eligibility as a tranche claim, including a closed challenge window. {props.eligibility?.eligible ? `Epoch ${props.eligibility.claimable_epoch ?? props.eligibility.current_epoch ?? "—"} is eligible.` : props.eligibility?.reason ?? "Refresh finalized commitment state to determine eligibility."} The adapter also requires the grant creator to match its configured pool manager. The LCP allowance, nonce, and epoch stay reserved while pending, then restore if the adapter call or payout transfer fails.</small>
+            <small>Actions require the same eligibility as a tranche claim, including a closed challenge window, and each grant can act once per epoch. {grantAlreadyUsedThisEpoch
+              ? `This grant already completed its action in epoch ${eligibleGrantEpoch}; it can act again when a later epoch becomes eligible.`
+              : props.eligibility?.eligible
+                ? `Epoch ${props.eligibility.claimable_epoch ?? props.eligibility.current_epoch ?? "—"} is eligible.`
+                : props.eligibility?.reason ?? "Chain eligibility refreshes automatically while this page is visible."} The adapter also requires the grant creator to match its configured pool manager. The LCP allowance, nonce, and epoch stay reserved while pending, then restore if the adapter call or payout transfer fails.</small>
             {!grantAdapterStatus
               ? <small>Refresh this grant's adapter pool status to confirm its configured manager.</small>
               : !grantManagerMatches && <small>This grant was created by a different account than the adapter pool manager, so its payout will be rejected.</small>}

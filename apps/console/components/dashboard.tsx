@@ -167,6 +167,10 @@ export function Dashboard() {
   const recordViewRef = useRef<HTMLDivElement | null>(null);
   const advancedDetailsRef = useRef<HTMLDetailsElement | null>(null);
   const displayedCommitmentIdRef = useRef<string | null>(null);
+  const dataRef = useRef<CommitmentData | null>(null);
+  const loadingRef = useRef(false);
+  const liveRefreshInFlightRef = useRef(false);
+  const liveRefreshRef = useRef<(id: string) => Promise<void>>(async () => undefined);
   const [theme, setTheme] = useState<ColorTheme | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
   const [commitments, setCommitments] = useState<CommitmentSummaryView[]>([]);
@@ -196,8 +200,11 @@ export function Dashboard() {
   const [tokenReadiness, setTokenReadiness] = useState<TokenReadiness | null>(null);
   const [registeringTokenAccount, setRegisteringTokenAccount] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [liveSyncError, setLiveSyncError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const currentCommitmentId = data?.commitment.id ?? null;
+  dataRef.current = data;
+  loadingRef.current = loading;
 
   const ensureConnector = useCallback(async (): Promise<NearConnectorPort> => {
     if (connectorRef.current) return connectorRef.current;
@@ -397,23 +404,29 @@ export function Dashboard() {
     }
   }
 
-  async function loadCommitment(id = commitmentId): Promise<boolean> {
+  async function loadCommitment(id = commitmentId, options: { quiet?: boolean } = {}): Promise<boolean> {
+    const quiet = options.quiet === true;
     const normalizedId = id.trim();
     const keepCurrentData = data?.commitment.id === normalizedId;
     if (!CONTRACT_ID) {
-      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local to connect the LCP Console to a deployed contract.");
+      const message = "Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local to connect the LCP Console to a deployed contract.";
+      if (quiet) setLiveSyncError(message);
+      else setError(message);
       return false;
     }
     if (!/^(0|[1-9][0-9]*)$/.test(normalizedId)) {
-      setError("Enter a commitment ID as a whole number, such as 1.");
+      if (!quiet) setError("Enter a commitment ID as a whole number, such as 1.");
       return false;
     }
 
-    setCommitmentId(normalizedId);
-    setLoading(true);
-    if (!keepCurrentData) setData(null);
-    setError(null);
-    setActionMessage(null);
+    if (!quiet) {
+      setCommitmentId(normalizedId);
+      setLoading(true);
+      if (!keepCurrentData) setData(null);
+      setError(null);
+      setLiveSyncError(null);
+      setActionMessage(null);
+    }
     try {
       const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
       const chainTimeSnapshotPromise = getFinalBlockTimestampNs(RPC_URL)
@@ -430,8 +443,10 @@ export function Dashboard() {
       ]);
 
       if (!commitment) {
-        setData(null);
-        setError(`Commitment ${normalizedId} was not found on ${CONTRACT_ID}.`);
+        if (!quiet) {
+          setData(null);
+          setError(`Commitment ${normalizedId} was not found on ${CONTRACT_ID}.`);
+        } else setLiveSyncError(`Commitment ${normalizedId} could not be found in the latest chain read.`);
         return false;
       }
 
@@ -482,20 +497,135 @@ export function Dashboard() {
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
       setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, amendmentRejectionSupported, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      setLiveSyncError(null);
       return true;
     } catch (cause) {
-      if (!keepCurrentData) setData(null);
-      setError(cause instanceof Error ? cause.message : "The commitment could not be loaded.");
+      const message = cause instanceof Error ? cause.message : "The commitment could not be loaded.";
+      if (quiet) setLiveSyncError(message);
+      else {
+        if (!keepCurrentData) setData(null);
+        setError(message);
+      }
       return false;
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }
+
+  async function refreshLiveSnapshot(id: string): Promise<void> {
+    const current = dataRef.current;
+    if (!CONTRACT_ID || !current || current.commitment.id !== id || loadingRef.current
+      || liveRefreshInFlightRef.current || document.visibilityState !== "visible") return;
+
+    liveRefreshInFlightRef.current = true;
+    try {
+      const client = readClient();
+      const chainTimeSnapshotPromise = getFinalBlockTimestampNs(RPC_URL)
+        .then((chainTimeNs) => ({ chainTimeNs, capturedAtMs: Date.now() }))
+        .catch(() => ({ chainTimeNs: null, capturedAtMs: Date.now() }));
+      const authorityViewPromise = client.getLatestBoundedPayoutAuthorityGrant(id)
+        .then((value) => ({ value, available: true as const }), () => ({ value: null, available: false as const }));
+      const amendmentViewPromise = current.policy?.version === 3
+        ? client.getLatestServicePolicyAmendment(id)
+          .then((value) => ({ value, available: true as const }), () => ({ value: current.servicePolicyAmendment, available: false as const }))
+        : Promise.resolve({ value: current.servicePolicyAmendment, available: true as const });
+      const [commitment, policy, evaluation, eligibility, escrow, epoch, chainTimeSnapshot, authorityView, amendmentView] = await Promise.all([
+        client.getCommitment(id),
+        client.getPolicy(id),
+        client.getLatestEvaluation(id),
+        client.canClaimTranche(id),
+        client.getEscrowStatus(id),
+        client.getCurrentEpoch(id),
+        chainTimeSnapshotPromise,
+        authorityViewPromise,
+        amendmentViewPromise,
+      ]);
+      if (!commitment) throw new Error(`Commitment ${id} was not found on ${CONTRACT_ID}.`);
+
+      const latest = dataRef.current;
+      if (!latest || latest.commitment.id !== id) return;
+      const policyChanged = JSON.stringify(policy) !== JSON.stringify(latest.policy);
+      const requiresFullRefresh = commitment.policy_hash !== latest.commitment.policy_hash
+        || commitment.policy_version !== latest.commitment.policy_version
+        || commitment.next_evaluation_id !== latest.commitment.next_evaluation_id
+        || commitment.pending_evaluation_id !== latest.commitment.pending_evaluation_id
+        || commitment.active_challenge_id !== latest.commitment.active_challenge_id
+        || commitment.lifecycle !== latest.commitment.lifecycle
+        || policyChanged;
+      if (requiresFullRefresh) {
+        await loadCommitment(id, { quiet: true });
+        return;
+      }
+
+      const trancheEpoch = eligibility?.claimable_epoch ?? epoch;
+      const [tranche, reportInboxState] = await Promise.all([
+        trancheEpoch ? client.getTranche(id, trancheEpoch) : Promise.resolve(null),
+        policy?.version === 3
+          ? client.getServiceReportInbox(id, commitment.next_evaluation_id)
+            .then((value) => ({ value, available: true as const }), () => ({ value: current.serviceReportInbox, available: current.serviceReportInboxAvailable }))
+          : Promise.resolve({ value: current.serviceReportInbox, available: current.serviceReportInboxAvailable }),
+      ]);
+
+      setData((previous) => {
+        if (!previous || previous.commitment.id !== id) return previous;
+        const evaluationHistory = [...previous.evaluationHistory];
+        if (evaluation) {
+          const existingIndex = evaluationHistory.findIndex((item) => item.evaluation_id === evaluation.evaluation_id);
+          if (existingIndex >= 0) evaluationHistory[existingIndex] = evaluation;
+          else evaluationHistory.unshift(evaluation);
+          evaluationHistory.sort((left, right) => BigInt(left.evaluation_id) > BigInt(right.evaluation_id) ? -1 : BigInt(left.evaluation_id) < BigInt(right.evaluation_id) ? 1 : 0);
+          evaluationHistory.splice(EVALUATION_HISTORY_LIMIT);
+        }
+        return {
+          ...previous,
+          commitment,
+          policy,
+          serviceReportInbox: reportInboxState.value,
+          serviceReportInboxAvailable: reportInboxState.available,
+          latestAuthorityGrant: authorityView.available ? authorityView.value : previous.latestAuthorityGrant,
+          servicePolicyAmendment: amendmentView.available ? amendmentView.value : previous.servicePolicyAmendment,
+          chainTimeNs: chainTimeSnapshot.chainTimeNs ?? previous.chainTimeNs,
+          chainTimeCapturedAtMs: chainTimeSnapshot.chainTimeNs
+            ? chainTimeSnapshot.capturedAtMs
+            : previous.chainTimeCapturedAtMs,
+          evaluation,
+          evaluationHistory,
+          eligibility,
+          escrow,
+          epoch,
+          tranche,
+        };
+      });
+      setLiveSyncError(null);
+    } catch (cause) {
+      setLiveSyncError(cause instanceof Error ? cause.message : "Live commitment updates could not be loaded.");
+    } finally {
+      liveRefreshInFlightRef.current = false;
+    }
+  }
+
+  liveRefreshRef.current = refreshLiveSnapshot;
 
   useEffect(() => {
     if (!accountId || !data?.commitment.id) return;
     void loadCommitment(data.commitment.id);
   }, [accountId, data?.commitment.id]);
+
+  useEffect(() => {
+    const id = currentCommitmentId;
+    if (!id) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void liveRefreshRef.current(id);
+    };
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [currentCommitmentId]);
 
   function connectedWalletClient(): LcpClient {
     const connector = connectorRef.current;
@@ -1663,7 +1793,7 @@ export function Dashboard() {
               )}
               <details className="journey-timeline">
                 <summary>Health clock and recorded transitions</summary>
-                <HealthTimeline data={data} busy={loading} onRefresh={() => void loadCommitment(data.commitment.id)} />
+                <HealthTimeline data={data} busy={loading} syncError={liveSyncError} onRefresh={() => void loadCommitment(data.commitment.id)} />
               </details>
             </section>
 
@@ -2276,7 +2406,7 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
   });
 }
 
-function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy: boolean; onRefresh: () => void }) {
+function HealthTimeline({ data, busy, syncError, onRefresh }: { data: CommitmentData; busy: boolean; syncError: string | null; onRefresh: () => void }) {
   const points = buildHealthTimeline(data);
   const chainTimeNs = data.chainTimeNs;
   const canHaveNextDeadline = data.commitment.lifecycle === "Active"
@@ -2294,8 +2424,20 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
         <div><p className="eyebrow">RECORDED EVENTS &amp; POLICY TIME</p><h3 id="health-timeline-title">Health clock</h3></div>
         <div className="timeline-tools">
           <span className="timeline-snapshot">{data.chainTimeNs ? `FINALIZED · ${formatDate(data.chainTimeNs)}` : "BLOCK TIME UNAVAILABLE"}</span>
+          <span
+            className={`timeline-sync${syncError ? " timeline-sync-error" : ""}`}
+            role="status"
+            aria-live="polite"
+            title={syncError ?? "Commitment state checks automatically every 30 seconds while this page is visible."}
+          >
+            {syncError
+              ? "LIVE UPDATE ISSUE · SHOWING LAST SNAPSHOT"
+              : data.chainTimeCapturedAtMs
+                ? `AUTO-SYNC · UPDATED ${new Date(data.chainTimeCapturedAtMs).toISOString().slice(11, 19)} UTC`
+                : "AUTO-SYNC · WAITING FOR CHAIN TIME"}
+          </span>
           <button className="browser-text-button timeline-refresh" type="button" onClick={onRefresh} disabled={busy}>
-            {busy ? "Refreshing…" : "Refresh snapshot"}
+            {busy ? "Syncing…" : "Sync now"}
           </button>
         </div>
       </div>

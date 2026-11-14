@@ -26,19 +26,19 @@
     }
   ],
   "triggers": {
-    "crons": []
+    "crons": ["*/15 * * * *"]
   },
   "r2_buckets": [
     {
       "binding": "PRIVATE_ARTIFACTS",
-      "bucket_name": "lcp-reviewer-private-artifacts"
+      "bucket_name": "lcp-reviewer-private-artifacts-preview"
     }
   ],
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "lcp-reviewer-access",
-      "database_id": "db61970b-8e54-452c-bec3-07668e25828b",
+      "database_name": "lcp-reviewer-access-preview",
+      "database_id": "5fa2e1a4-1e56-420e-a1bd-4f20d28be89d",
       "migrations_dir": "migrations"
     }
   ],
