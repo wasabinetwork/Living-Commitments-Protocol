@@ -15,7 +15,7 @@ An OutLayer WASM evaluator checks submitted evidence and returns a result to the
 - Open an evaluation's NEAR transaction and OutLayer report to compare the recorded transaction, input, output, and WASM hashes. Complete TEE quote verification in OutLayer's report verifier or with `outlayer-verify`; a matching hash display alone is not a quote verification.
 - To try wallet actions, connect a NEAR testnet wallet and create a test commitment. Wallet actions require testnet NEAR for gas/storage and explicit wallet approval. Do not use mainnet funds.
 
-The [preview Console](https://codex-console-journey-ux.lcp-preview.pages.dev) is available for UI review. The hosted testnet Console is intended to remain available through **November 18, 2026**, following the hackathon guidance.
+The [preview Console](https://preview.lcp-preview.pages.dev) is available for UI review. The hosted testnet Console is intended to remain available through **November 18, 2026**, following the hackathon guidance.
 
 ## What is implemented
 
