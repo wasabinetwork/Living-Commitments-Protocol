@@ -8,18 +8,20 @@ function gitValue(...args: string[]): string | undefined {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    return value || undefined;
+    return value;
   } catch {
     return undefined;
   }
 }
+
+const gitRevision = gitValue("rev-parse", "--verify", "HEAD") || undefined;
 
 const sourceRevision = [
   process.env.CF_PAGES_COMMIT_SHA,
   process.env.GITHUB_SHA,
   process.env.NEXT_PUBLIC_BUILD_SHA,
 ].find((value) => value && /^[0-9a-f]{7,40}$/i.test(value))
-  ?? gitValue("rev-parse", "--verify", "HEAD")
+  ?? gitRevision
   ?? "unknown";
 
 const gitStatus = gitValue("status", "--porcelain", "--untracked-files=normal");
