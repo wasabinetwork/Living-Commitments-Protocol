@@ -435,7 +435,7 @@ export function AuthorityAdapterCard(props: AuthorityProps) {
         <span className="card-index">06</span>
       </div>
       <p className="governance-intro">The sponsor or beneficiary can authorize one named adapter to pay one fixed NEAR resource from funds deposited into that adapter. The grant creator must also be that adapter's configured pool manager. An action is available only when the same full tranche eligibility checks pass, including the challenge window.</p>
-      <p className="governance-caution">The grant controls only the adapter’s own prefunded pool. It never controls a wallet, account keys, or LCP escrow. Authorized amounts count against the grant when LCP calls the adapter, even if that adapter call fails.</p>
+      <p className="governance-caution">The grant controls only the adapter’s own prefunded pool. It never controls a wallet, account keys, or LCP escrow. An amount is reserved while settlement is pending; if the adapter rejects the action or the recipient transfer fails, LCP restores the grant’s allowance, nonce, and epoch slot.</p>
       <p className="governance-caution">Review the adapter code and its upgrade authority before granting access. The grant binds an account ID; it does not pin that account’s code hash.</p>
       {!props.contractSupported && <p className="reviewer-notice reviewer-notice-error">The selected contract does not expose bounded authority methods yet. Deploy the updated LCP contract before using this control.</p>}
       <div className="governance-proposal-form">
