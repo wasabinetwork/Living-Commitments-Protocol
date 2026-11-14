@@ -171,6 +171,9 @@ export function Dashboard() {
   const loadingRef = useRef(false);
   const liveRefreshInFlightRef = useRef(false);
   const liveRefreshRef = useRef<(id: string) => Promise<void>>(async () => undefined);
+  const walletAccountIdRef = useRef<string | null>(null);
+  const walletAccountVersionRef = useRef(0);
+  const walletSyncInFlightRef = useRef(false);
   const [theme, setTheme] = useState<ColorTheme | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
   const [commitments, setCommitments] = useState<CommitmentSummaryView[]>([]);
@@ -208,6 +211,13 @@ export function Dashboard() {
   dataRef.current = data;
   loadingRef.current = loading;
 
+  const publishWalletAccount = useCallback((nextAccountId: string | null) => {
+    if (walletAccountIdRef.current === nextAccountId) return;
+    walletAccountIdRef.current = nextAccountId;
+    walletAccountVersionRef.current += 1;
+    setAccountId(nextAccountId);
+  }, []);
+
   const ensureConnector = useCallback(async (): Promise<NearConnectorPort> => {
     if (connectorRef.current) return connectorRef.current;
     if (connectorInitRef.current) return connectorInitRef.current;
@@ -218,8 +228,8 @@ export function Dashboard() {
         network: NEAR_NETWORK_ID,
         features: { testnet: NEAR_NETWORK_ID === "testnet" },
       }) as unknown as NearConnectorPort;
-      connector.on("wallet:signIn", (event) => setAccountId(event.accounts[0]?.accountId ?? null));
-      connector.on("wallet:signOut", () => setAccountId(null));
+      connector.on("wallet:signIn", (event) => publishWalletAccount(event.accounts[0]?.accountId ?? null));
+      connector.on("wallet:signOut", () => publishWalletAccount(null));
       await connector.whenManifestLoaded?.catch(() => undefined);
       connectorRef.current = connector;
       return connector;
@@ -231,7 +241,29 @@ export function Dashboard() {
       connectorInitRef.current = null;
       throw cause;
     }
-  }, []);
+  }, [publishWalletAccount]);
+
+  const syncConnectedWalletAccount = useCallback(async () => {
+    const connector = connectorRef.current;
+    if (!connector || walletSyncInFlightRef.current) return;
+
+    const accountVersion = walletAccountVersionRef.current;
+    walletSyncInFlightRef.current = true;
+    try {
+      const { accounts } = await connector.getConnectedWallet();
+      if (accountVersion === walletAccountVersionRef.current) {
+        publishWalletAccount(accounts[0]?.accountId ?? null);
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "";
+      if (accountVersion === walletAccountVersionRef.current && /No wallet selected|No accounts found/i.test(message)) {
+        publishWalletAccount(null);
+      }
+      // Preserve the last known account for transient wallet or bridge errors.
+    } finally {
+      walletSyncInFlightRef.current = false;
+    }
+  }, [publishWalletAccount]);
 
   useEffect(() => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
@@ -254,9 +286,8 @@ export function Dashboard() {
     let active = true;
     void (async () => {
       try {
-        const connector = await ensureConnector();
-        const { accounts } = await connector.getConnectedWallet();
-        if (active) setAccountId(accounts[0]?.accountId ?? null);
+        await ensureConnector();
+        if (active) await syncConnectedWalletAccount();
       } catch {
         // A missing persisted wallet is the normal disconnected state.
       } finally {
@@ -264,7 +295,25 @@ export function Dashboard() {
       }
     })();
     return () => { active = false; };
-  }, [ensureConnector]);
+  }, [ensureConnector, syncConnectedWalletAccount]);
+
+  useEffect(() => {
+    if (!accountId || walletRestoring) return;
+
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible") void syncConnectedWalletAccount();
+    };
+    const interval = window.setInterval(syncWhenVisible, 2_000);
+    window.addEventListener("focus", syncWhenVisible);
+    window.addEventListener("pageshow", syncWhenVisible);
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", syncWhenVisible);
+      window.removeEventListener("pageshow", syncWhenVisible);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+    };
+  }, [accountId, walletRestoring, syncConnectedWalletAccount]);
 
   useEffect(() => {
     let active = true;
@@ -663,7 +712,7 @@ export function Dashboard() {
       await connector.whenManifestLoaded?.catch(() => undefined);
       await connector.connect();
       const { accounts } = await connector.getConnectedWallet();
-      setAccountId(accounts[0]?.accountId ?? null);
+      publishWalletAccount(accounts[0]?.accountId ?? null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Wallet connection was not completed.");
     } finally {
@@ -680,7 +729,7 @@ export function Dashboard() {
     setActionMessage(null);
     try {
       await connector.disconnect();
-      setAccountId(null);
+      publishWalletAccount(null);
       setActionMessage("Wallet disconnected.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Wallet disconnection was not completed.");
@@ -4915,7 +4964,13 @@ function CreateCommitmentForm({
 
 function FieldHelp({ label, help }: { label: string; help: string }) {
   return (
-    <details className="field-help">
+    <details className="field-help" onToggle={(event) => {
+      const openedHelp = event.currentTarget;
+      if (!openedHelp.open) return;
+      document.querySelectorAll<HTMLDetailsElement>(".field-help[open]").forEach((otherHelp) => {
+        if (otherHelp !== openedHelp) otherHelp.open = false;
+      });
+    }}>
       <summary aria-label={`More information about ${label}`} title={`More information about ${label}`}><span aria-hidden="true">?</span></summary>
       <div className="field-help-popover" role="note">{help}</div>
     </details>
