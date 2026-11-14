@@ -12,7 +12,7 @@ Each commitment selects one settlement asset before activation. That asset and i
 | NEAR testnet | `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` | 6 |
 | NEAR mainnet | `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` | 6 |
 
-On 2026-11-13, NearBlocks v3 metadata for both accounts returned `spec: ft-1.0.0`, `symbol: USDC`, and six decimals: [testnet token](https://testnet.nearblocks.io/tokens/3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af) and [mainnet token](https://nearblocks.io/tokens/17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1). Reconfirm both addresses against Circle's [multichain USDC registry](https://www.circle.com/multi-chain-usdc) and finalized on-chain metadata before deployment; explorer metadata is a consistency check, not asset authority.
+On 2026-11-14, Circle's [NEAR USDC page](https://www.circle.com/multi-chain-usdc/near) identified USDC as NEP-141 and listed the mainnet and testnet addresses; Circle's [NEAR](https://docs-w3s-node-sdk.circle.com/variables/chains.NEAR.html) and [NEAR_TESTNET](https://docs-w3s-node-sdk.circle.com/variables/chains.NEAR_TESTNET.html) USDCKit definitions provide the exact account IDs above and six decimals. FastNEAR and Intear independently returned matching finalized `ft_metadata` at mainnet block `224531824` (`9CaxtNGnQzuRLmM7TjH43RDSYir2X7LRrkm5Fv5HkhWk`) and testnet block `277674358` (`DpNqPJVc5PQbovaZbLLxErofgmEssyHs69A4Lh4CYJhf`): `spec: ft-1.0.0`, `symbol: USDC`, `decimals: 6`. This completes the current issuer and on-chain metadata cross-check; recheck both networks at deployment. Explorer labels remain a consistency check, not asset authority.
 
 ## Contract and Accounting Design
 

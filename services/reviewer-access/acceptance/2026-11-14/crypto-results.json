@@ -1,0 +1,26 @@
+[
+  {
+    "case": "sdk-deployed-encrypt-download-decrypt",
+    "pass": true,
+    "ciphertext_digest_verified": true,
+    "salted_plaintext_digest_verified": true
+  },
+  {
+    "case": "hpke-aes-metadata-tampering-rejected",
+    "pass": true,
+    "tamper_cases_rejected": 9
+  },
+  {
+    "case": "encrypted-backup-public-key-substitution",
+    "pass": false,
+    "error_class": "AssertionError",
+    "reason": "Encrypted backup accepted replacement public key and fingerprint without the passphrase; unlocked private key no longer matches advertised recipient.\n\ntrue !== false\n"
+  },
+  {
+    "case": "sdk-optional-callback-envelope",
+    "pass": true,
+    "wallet_omitting_requested_callback_status": 401,
+    "exact_signed_callback_envelope_status": 200,
+    "compatibility_observation": true
+  }
+]

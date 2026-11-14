@@ -794,13 +794,18 @@ The MVP will use `WasmUrl` to pin the exact evaluator binary.
     "max_execution_seconds": 30
   },
   "input_data": "{\"schema\":\"lcp.evaluation.request.v1\",...}",
-  "response_format": "Json"
+  "response_format": "Json",
+  "payer_account_id": "sponsor.testnet"
 }
 ```
 
 The URL and hash are deployment configuration values, not placeholders to ship.
 
 The actual build target must match the compiled WASM.
+
+The updated LCP request builder sets `payer_account_id` to the configured sponsor, who funds evaluator operations. [OutLayer documents](https://app.outlayer.ai/docs/near-integration) that unused resources are refunded to this account. Existing deployed contracts omit this optional field and therefore use OutLayer's default payer (the LCP contract sender) until upgraded. The LCP ledger still reserves the full configured deposit for each request. A missing or failed result is recorded as `Failed`, never converted into a health verdict, and does not refresh prior evidence. The callback records the returned output digest (including JSON `null`) for diagnosis.
+
+In November 2026 testnet traces, 11 of 13 dispatched requests failed at OutLayer's `resolve_execution` step with `Execution request not found`; the worker executions took 453–648 ms. LCP received JSON `null`, recorded `MISSING_OUTLAYER_RESULT`, cleared the pending lock, and preserved prior evidence. The public error localizes the incident to OutLayer settlement/request state, but does not reveal why the request was absent.
 
 ## 7.3 NEAR promise sequence
 
@@ -1089,9 +1094,7 @@ The MVP will use a bounded operations budget:
 - Evaluation count and concurrency are limited.
 - The contract never intentionally spends escrow allocations on evaluator execution.
 
-Unused OutLayer refunds may return to the contract.
-
-For v0.1, conservative accounting will not automatically recredit refunds as available operations budget. The handling of residual operations funds must be documented as a prototype limitation and reconciled before production use.
+The updated LCP request builder sets OutLayer `payer_account_id` to the commitment sponsor, so unused-resource refunds are routed directly to the sponsor when OutLayer settles the execution. This behavior awaits testnet contract deployment and acceptance. The commitment ledger conservatively reserves the full configured deposit per attempt and does not automatically recredit it; a sponsor may need to add operations funds again even after receiving an OutLayer refund. After closure, `refund_unused_operations` lets only the configured sponsor recover the unreserved operations balance held by LCP. It requires pending evaluations, challenges, and transfers to settle first; a private transfer callback removes the pending record on success or restores the balance after failure. The method takes a measured storage bond and returns any excess attached deposit. Testnet acceptance remains pending.
 
 ## 9.8 Storage solvency
 
@@ -1398,7 +1401,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (updated 2026-11-13):** The repository is public, and `TESTING.md` documents deterministic tests, reproducible builds, and testnet/browser reproduction. Core milestones A through F have working implementations for temporal state, OutLayer callbacks, bounded evaluation history, challenges, health-gated claims, transfer reconciliation, closure/refunds, wallet journeys, and the Console. P1 source adds transaction-authenticated multi-operator reports, consent-based amendments, bounded authority grants, and private reviewer access. The reviewer-access audit remediations are local; deployment, D1 migration 0004, acceptance, and follow-up review remain release gates. P2 NEP-141/USDC support is implemented locally in the contract, SDK, and Console, but awaits independent invariant review, a reproducible build, and testnet acceptance. The SDK provides typed contract calls and finalized NEAR reads. The dashboard shows historical health transitions and policy-derived deadlines; OutLayer record and digest checks do not verify the TEE quote. Deployment receipts and the latest verified testnet states are maintained in `TESTNET-E2E-STATUS.md` and `TODO.md`.
+**Repository status (updated 2026-11-14):** The repository is public, and `TESTING.md` documents deterministic tests, reproducible builds, and testnet/browser reproduction. Core milestones A through F have working implementations for temporal state, OutLayer callbacks, bounded evaluation history, challenges, health-gated claims, transfer reconciliation, closure/refunds, wallet journeys, and the Console. P1 source adds transaction-authenticated multi-operator reports, consent-based amendments, bounded authority grants, and private reviewer access. All nine reviewer-access audit remediations are deployed to isolated preview and production Workers, with D1 migration 0004 applied; deployed acceptance and independent follow-up review remain release gates. P2 NEP-141/USDC support is implemented locally in the contract, SDK, and Console, but awaits independent invariant review, a reproducible build, and testnet acceptance. The SDK provides typed contract calls and finalized NEAR reads. The dashboard shows historical health transitions and policy-derived deadlines; OutLayer record and digest checks do not verify the TEE quote. Deployment receipts and the latest verified testnet states are maintained in `TESTNET-E2E-STATUS.md` and `TODO.md`.
 
 ## Milestone A — Pure engine
 
@@ -1560,7 +1563,7 @@ The breached-claim rejection, healthy distinct-beneficiary payout/callback, clos
 
 **Task 010 — Complete breach, recovery, and updated challenge validation — CORE PATH VERIFIED; CLAIM-WINDOW EDGE CASES OPEN**
 
-Evidence expiry, breached-claim rejection, fresh-evidence recovery, and upheld/invalidated arbiter outcomes were exercised on testnet. On the upgraded contract, commitment `29` also confirmed that a timed-out challenge preserves accepted evidence. Its sponsor closed the commitment before the tranche became eligible, so the test does not establish close protection or the exact reserved claim-window resumption. Exact local temporal boundaries have deterministic tests, and commitment `21` naturally transitioned to `AtRisk` and `Breached` at finalized timestamps. The remaining acceptance steps are tracked in `TODO.md`; other playground observations are exploratory.
+Evidence expiry, breached-claim rejection, fresh-evidence recovery, and upheld/invalidated arbiter outcomes were exercised on testnet. Commitment `29` confirmed that a timed-out challenge preserves accepted evidence, but its sponsor closed before eligibility. Commitment `35` later passed the fresh role-separation, eligible-tranche close-guard, and timeout scenario per user confirmation; finalized reads show it Healthy with accepted evaluation `#4` and a TimedOut challenge that preserves evidence. Commitment `36` confirms evaluation `#3` was explicitly invalidated and leaves the commitment AtRisk. Receipt tracing maps `35/#1–#3` and `36/#1–#2, #4–#9` to OutLayer JSON `null` results; all use the same pinned WASI P1 evaluator, while `35/#4` and `36/#3` completed. OutLayer's public jobs API reports 11 of the 13 dispatched requests failed when submitting `resolve_execution`, each rejected by the OutLayer contract with `Execution request not found`; those executions ran for 453–648 ms across two executor IDs. A representative failed job has no attestation record. Running captured failed inputs through the current native evaluator produces a compliant verdict, so invalid heartbeat evidence is not indicated. This localizes the observed failure to OutLayer's resolution/request state, not LCP's callback timeout or evaluator runtime; why OutLayer could not find the request remains unknown from public records. Successful fresh-evidence recovery and beneficiary voluntary close remain. Exact local temporal boundaries have deterministic tests, and commitment `21` naturally transitioned to `AtRisk` and `Breached` at finalized timestamps. The remaining acceptance steps are tracked in `TODO.md`.
 
 **Task 011 — Improve commitment discovery — CONTRACT DEPLOYED; RPC AND BROWSER PAGINATION VERIFIED**
 

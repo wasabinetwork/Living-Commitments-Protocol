@@ -1,0 +1,54 @@
+[
+  {
+    "case": "add-disposable-functioncall-key",
+    "environment": "NEAR-testnet",
+    "timestamp": "2026-11-14T19:50:32.292Z",
+    "request_id": "0c700888-afa8-4b9c-b72a-7db27546a02c",
+    "http_status": 200,
+    "error_code": null,
+    "account": "lcpmaintainer.testnet",
+    "transaction_hash": "6DFu9hdKaajFB4tGr6EpvDRCL6Xjff8UKEdroyXVd5jo",
+    "transaction_succeeded": true,
+    "block_hash": "GheMHrNKSWcwH9X78VHKAGadDC8DtsKAVC4Gj8Wm7RgF",
+    "block_timestamp_ns": "1794684394484821744"
+  },
+  {
+    "case": "remove-disposable-functioncall-key",
+    "environment": "NEAR-testnet",
+    "timestamp": "2026-11-14T19:50:32.882Z",
+    "request_id": "0599102c-eccb-4018-b452-1a40d7faeb44",
+    "http_status": 200,
+    "error_code": null,
+    "account": "lcpmaintainer.testnet",
+    "transaction_hash": "2sLq6zMmbAryaX1dW21gBMndogmXm7mr5oQowPHLZi7a",
+    "transaction_succeeded": true,
+    "block_hash": "E4rcBDyWu6Zb4CZURJxaE5sTd58PkzLfdwS83YRJc7n1",
+    "block_timestamp_ns": "1794685572694259680"
+  },
+  {
+    "case": "add-disposable-functioncall-key",
+    "environment": "NEAR-testnet",
+    "timestamp": "2026-11-14T19:50:33.266Z",
+    "request_id": "14b6e5e3-e5ff-4e92-831b-5ad3da966d95",
+    "http_status": 200,
+    "error_code": null,
+    "account": "lcpsponsor.testnet",
+    "transaction_hash": "GXDmPa5cJ1KEjD14L8XHspZ3dNsZ5S39xt3oaHJWJcJw",
+    "transaction_succeeded": true,
+    "block_hash": "3vH8dJGp9QvEJSG2eUZi9FDXKprHGYoSxCeHaZvqyd5A",
+    "block_timestamp_ns": "1794684396278640257"
+  },
+  {
+    "case": "remove-disposable-functioncall-key",
+    "environment": "NEAR-testnet",
+    "timestamp": "2026-11-14T19:50:33.674Z",
+    "request_id": "7a8123f4-9114-4b3b-bac3-28a1c62b31e9",
+    "http_status": 200,
+    "error_code": null,
+    "account": "lcpsponsor.testnet",
+    "transaction_hash": "8qD9ePu15yRaxygkDMeWXGpJcPnnjbHYdmBpFwAiiBmz",
+    "transaction_succeeded": true,
+    "block_hash": "5xKa9C5LwDJvsYBeK5cXTGSkZeHXVk7SWy4udKiBGNtu",
+    "block_timestamp_ns": "1794685574171196633"
+  }
+]

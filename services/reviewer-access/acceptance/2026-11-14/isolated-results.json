@@ -1,0 +1,187 @@
+[
+  {
+    "case": "fullaccess-and-functioncall",
+    "pass": true
+  },
+  {
+    "case": "consent-and-replay",
+    "pass": true
+  },
+  {
+    "case": "signed-bindings-and-expiry",
+    "pass": true
+  },
+  {
+    "case": "nonce-retention-and-consent-records",
+    "pass": true,
+    "stored_consent_signatures_verified": true,
+    "nonce_rows_after_cleanup": 0
+  },
+  {
+    "case": "ciphertext-4194304",
+    "pass": true,
+    "bytes": 4194304,
+    "digest_match": true
+  },
+  {
+    "case": "ciphertext-8388608",
+    "pass": true,
+    "bytes": 8388608,
+    "digest_match": true
+  },
+  {
+    "case": "malformed-and-oversized-artifacts",
+    "pass": true
+  },
+  {
+    "case": "bounded-public-key",
+    "pass": true,
+    "elapsed_ms": 95
+  },
+  {
+    "case": "rpc-normal",
+    "pass": true,
+    "response_status": 200
+  },
+  {
+    "case": "rpc-one-down",
+    "pass": true,
+    "response_status": 200
+  },
+  {
+    "case": "rpc-two-down",
+    "pass": true,
+    "response_status": 503
+  },
+  {
+    "case": "rpc-one-null",
+    "pass": true,
+    "response_status": 200
+  },
+  {
+    "case": "rpc-hash43",
+    "pass": true,
+    "response_status": 200
+  },
+  {
+    "case": "rpc-block-conflict",
+    "pass": true,
+    "response_status": 503
+  },
+  {
+    "case": "rpc-isolated-higher",
+    "pass": true,
+    "response_status": 503
+  },
+  {
+    "case": "rpc-key-conflict",
+    "pass": true,
+    "response_status": 503
+  },
+  {
+    "case": "rpc-query-wrong-block",
+    "pass": true,
+    "response_status": 503
+  },
+  {
+    "case": "rpc-one-conflict",
+    "pass": false,
+    "expected_status": 503,
+    "actual_status": 200,
+    "reason": "The documented matrix requires conflicting valid responses to fail closed, including a dissenting third provider."
+  },
+  {
+    "case": "rpc-key-one-conflict",
+    "pass": false,
+    "expected_status": 503,
+    "actual_status": 200,
+    "reason": "The documented matrix requires conflicting valid responses to fail closed, including a dissenting third provider."
+  },
+  {
+    "case": "fault-d1-artifact",
+    "pass": true,
+    "committed": false,
+    "committed_ciphertext_preserved": null,
+    "orphan_objects_after_cleanup": 0,
+    "retry_success": true
+  },
+  {
+    "case": "fault-d1-grant-before",
+    "pass": true,
+    "committed": false,
+    "committed_ciphertext_preserved": null,
+    "orphan_objects_after_cleanup": 0,
+    "retry_success": true
+  },
+  {
+    "case": "fault-r2-put-before",
+    "pass": true,
+    "committed": false,
+    "committed_ciphertext_preserved": null,
+    "orphan_objects_after_cleanup": 0,
+    "retry_success": true
+  },
+  {
+    "case": "fault-r2-put-after",
+    "pass": true,
+    "committed": false,
+    "committed_ciphertext_preserved": null,
+    "orphan_objects_after_cleanup": 0,
+    "retry_success": true
+  },
+  {
+    "case": "fault-d1-grant-after",
+    "pass": true,
+    "committed": true,
+    "committed_ciphertext_preserved": true,
+    "orphan_objects_after_cleanup": null,
+    "retry_success": null
+  },
+  {
+    "case": "fault-d1-commit-and-recovery",
+    "pass": true,
+    "committed": true,
+    "committed_ciphertext_preserved": true,
+    "orphan_objects_after_cleanup": null,
+    "retry_success": null
+  },
+  {
+    "case": "purge-retry",
+    "pass": true
+  },
+  {
+    "case": "download-limit-race",
+    "pass": true
+  },
+  {
+    "case": "competing-distinct-approvals",
+    "pass": false,
+    "actual_statuses": [
+      201,
+      201
+    ],
+    "different_ciphertext": true,
+    "stored_grants": 1,
+    "proof": "race-results.json"
+  },
+  {
+    "case": "unregistered-signer-capacity-isolation",
+    "pass": true
+  },
+  {
+    "case": "authorized-shared-boundary",
+    "pass": true
+  },
+  {
+    "case": "account-boundary",
+    "pass": true
+  },
+  {
+    "case": "edge-boundary",
+    "pass": true,
+    "first_rate_limited_request": 62,
+    "approximate_limit": true,
+    "strict_boundary_met": false,
+    "note": "First 429 was request 62; the configured limit is approximate and local to a Cloudflare location. The strict matrix boundary is not established."
+  }
+]

@@ -1,0 +1,194 @@
+[
+  {
+    "timestamp": "2026-11-14T19:41:49.829Z",
+    "preview_response": {
+      "case": "live-final-list-1",
+      "environment": "live",
+      "timestamp": "2026-11-14T19:41:46.398Z",
+      "worker_version": "b1882f4b-0c2c-4646-8956-f7795bb8c167",
+      "request_id": "a5a87edf7e0f20a7-MIA",
+      "correlation_id": "25fd4983-6f8d-4227-ba31-52401c3d2046",
+      "http_status": 503,
+      "error_code": "NEAR_UNAVAILABLE",
+      "request_record_id": null,
+      "grant_id": null,
+      "rpc_scenario": "live-testnet",
+      "transaction_hashes": []
+    },
+    "providers": [
+      {
+        "origin": "https://test.rpc.fastnear.com",
+        "status": 200,
+        "header": {
+          "hash": "CJnvyj6TUnGcQEqFtapnv6hetUD1LY596pFBoQoTS22t",
+          "height": 277701455,
+          "timestamp_nanosec": "1794685305914016448"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://near-testnet.drpc.org",
+        "status": 200,
+        "header": {
+          "hash": "8gQZ97bMHexu5D6cDwRxvL2szygTyv3brpTwmzbgxere",
+          "height": 277701456,
+          "timestamp_nanosec": "1794685306514662603"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://testnet-rpc.intea.rs",
+        "status": 200,
+        "header": {
+          "hash": "Gype4tJo9eH7L8XoGJ1p1CW6PDu5kNWeQAn5LrTF9cgW",
+          "height": 277701457,
+          "timestamp_nanosec": "1794685307206494600"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-11-14T19:41:52.279Z",
+    "preview_response": {
+      "case": "live-final-list-2",
+      "environment": "live",
+      "timestamp": "2026-11-14T19:41:49.833Z",
+      "worker_version": "b1882f4b-0c2c-4646-8956-f7795bb8c167",
+      "request_id": "a5a87ef2fb8820a7-MIA",
+      "correlation_id": "dc3b5ac6-a918-4cb0-86b6-ff70f3ddc064",
+      "http_status": 503,
+      "error_code": "NEAR_UNAVAILABLE",
+      "request_record_id": null,
+      "grant_id": null,
+      "rpc_scenario": "live-testnet",
+      "transaction_hashes": []
+    },
+    "providers": [
+      {
+        "origin": "https://test.rpc.fastnear.com",
+        "status": 200,
+        "header": {
+          "hash": "J78wt3XpLdbWaYuQNESThKZgaqYZy99fg4nvNvvqugqz",
+          "height": 277701460,
+          "timestamp_nanosec": "1794685308939551618"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://near-testnet.drpc.org",
+        "status": 200,
+        "header": {
+          "hash": "J78wt3XpLdbWaYuQNESThKZgaqYZy99fg4nvNvvqugqz",
+          "height": 277701460,
+          "timestamp_nanosec": "1794685308939551618"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://testnet-rpc.intea.rs",
+        "status": 200,
+        "header": {
+          "hash": "2LgxLQhMQMMFrCopSntDSNHbmkgzf9yAwnwbyRFf6eA5",
+          "height": 277701462,
+          "timestamp_nanosec": "1794685310154706761"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-11-14T19:41:54.634Z",
+    "preview_response": {
+      "case": "live-final-list-3",
+      "environment": "live",
+      "timestamp": "2026-11-14T19:41:52.282Z",
+      "worker_version": "b1882f4b-0c2c-4646-8956-f7795bb8c167",
+      "request_id": "a5a87f02486f20a7-MIA",
+      "correlation_id": "8ed5121c-5bc6-4333-8ce6-6bd886591497",
+      "http_status": 503,
+      "error_code": "NEAR_UNAVAILABLE",
+      "request_record_id": null,
+      "grant_id": null,
+      "rpc_scenario": "live-testnet",
+      "transaction_hashes": []
+    },
+    "providers": [
+      {
+        "origin": "https://test.rpc.fastnear.com",
+        "status": 200,
+        "header": {
+          "hash": "6nU2LtuLFFtbS52u8Zp7AEMX8i2oKZV9tMTekMYS3EXv",
+          "height": 277701464,
+          "timestamp_nanosec": "1794685311446206854"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://near-testnet.drpc.org",
+        "status": 200,
+        "header": {
+          "hash": "6nU2LtuLFFtbS52u8Zp7AEMX8i2oKZV9tMTekMYS3EXv",
+          "height": 277701464,
+          "timestamp_nanosec": "1794685311446206854"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://testnet-rpc.intea.rs",
+        "status": 200,
+        "header": {
+          "hash": "G9JSZA23RdzqXxy7EZa9pnDTV8yxgnPZp3mxSgUqJqbE",
+          "height": 277701465,
+          "timestamp_nanosec": "1794685312041225632"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      }
+    ]
+  }
+]

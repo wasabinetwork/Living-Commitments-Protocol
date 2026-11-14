@@ -1,0 +1,14 @@
+{
+  "counts": {
+    "reviewer_access_events": 0,
+    "reviewer_grants": 0,
+    "reviewer_requests": 0,
+    "encrypted_artifacts": 0,
+    "used_nep413_nonces": 0,
+    "reviewer_access_windows": 0
+  },
+  "requests": [],
+  "grants": [],
+  "windows": [],
+  "object_count": 0
+}

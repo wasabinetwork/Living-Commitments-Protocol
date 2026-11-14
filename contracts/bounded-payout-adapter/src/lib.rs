@@ -116,6 +116,14 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "only the configured pool manager can authorize a payout")]
+    fn non_manager_granting_account_cannot_authorize_adapter_payout() {
+        let mut adapter = adapter();
+        testing_env!(context(accounts(1), 0));
+        let _ = adapter.execute_authorized_action(accounts(5), U64(1), accounts(3), U128(1));
+    }
+
+    #[test]
     #[should_panic(expected = "only the pool manager can withdraw adapter funds")]
     fn only_configured_pool_manager_can_withdraw() {
         let mut adapter = adapter();

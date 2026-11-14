@@ -1,0 +1,74 @@
+[
+  {
+    "case": "health",
+    "environment": "preview",
+    "timestamp": "2026-11-14T19:48:41.408Z",
+    "worker_version": "b1882f4b-0c2c-4646-8956-f7795bb8c167",
+    "version_source": "Cloudflare deployment metadata",
+    "request_id": "a5a88900be01efa6-MIA",
+    "http_status": 200,
+    "error_code": null,
+    "access_control_allow_origin": "https://preview.lcp-preview.pages.dev",
+    "transaction_hashes": []
+  },
+  {
+    "case": "allowed-preflight",
+    "environment": "preview",
+    "timestamp": "2026-11-14T19:48:41.725Z",
+    "worker_version": "b1882f4b-0c2c-4646-8956-f7795bb8c167",
+    "version_source": "Cloudflare deployment metadata",
+    "request_id": "a5a88901480cefa6-MIA",
+    "http_status": 204,
+    "error_code": null,
+    "access_control_allow_origin": "https://preview.lcp-preview.pages.dev",
+    "transaction_hashes": []
+  },
+  {
+    "case": "unrelated-preflight",
+    "environment": "preview",
+    "timestamp": "2026-11-14T19:48:41.794Z",
+    "worker_version": "b1882f4b-0c2c-4646-8956-f7795bb8c167",
+    "version_source": "Cloudflare deployment metadata",
+    "request_id": "a5a88901b9b2efa6-MIA",
+    "http_status": 204,
+    "error_code": null,
+    "access_control_allow_origin": null,
+    "transaction_hashes": []
+  },
+  {
+    "case": "health",
+    "environment": "production",
+    "timestamp": "2026-11-14T19:48:41.866Z",
+    "worker_version": "70b4c65b-e247-43be-8e55-12e0f61c2d46",
+    "version_source": "Cloudflare deployment metadata",
+    "request_id": "a5a88903afdddf8e-ATL",
+    "http_status": 200,
+    "error_code": null,
+    "access_control_allow_origin": "https://lcp.gama.works",
+    "transaction_hashes": []
+  },
+  {
+    "case": "allowed-preflight",
+    "environment": "production",
+    "timestamp": "2026-11-14T19:48:42.167Z",
+    "worker_version": "70b4c65b-e247-43be-8e55-12e0f61c2d46",
+    "version_source": "Cloudflare deployment metadata",
+    "request_id": "a5a889040873df8e-ATL",
+    "http_status": 204,
+    "error_code": null,
+    "access_control_allow_origin": "https://lcp.gama.works",
+    "transaction_hashes": []
+  },
+  {
+    "case": "unrelated-preflight",
+    "environment": "production",
+    "timestamp": "2026-11-14T19:48:42.225Z",
+    "worker_version": "70b4c65b-e247-43be-8e55-12e0f61c2d46",
+    "version_source": "Cloudflare deployment metadata",
+    "request_id": "a5a889046902df8e-ATL",
+    "http_status": 204,
+    "error_code": null,
+    "access_control_allow_origin": null,
+    "transaction_hashes": []
+  }
+]

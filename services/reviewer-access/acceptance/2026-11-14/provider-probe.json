@@ -1,0 +1,101 @@
+{
+  "timestamp": "2026-11-14T19:31:39.618Z",
+  "mocks": {
+    "providers": [
+      {
+        "origin": "https://lcp-reviewer-audit-rpc1-ple.wasabinetwork.workers.dev",
+        "status": 200,
+        "header": {
+          "hash": "11111111111111111111111111111111",
+          "height": 277000000,
+          "timestamp_nanosec": "1794684697994000000"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://lcp-reviewer-audit-rpc2-ple.wasabinetwork.workers.dev",
+        "status": 200,
+        "header": {
+          "hash": "11111111111111111111111111111111",
+          "height": 277000000,
+          "timestamp_nanosec": "1794684697994000000"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://lcp-reviewer-audit-rpc3-ple.wasabinetwork.workers.dev",
+        "status": 200,
+        "header": {
+          "hash": "11111111111111111111111111111111",
+          "height": 277000000,
+          "timestamp_nanosec": "1794684697994000000"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      }
+    ]
+  },
+  "live": {
+    "providers": [
+      {
+        "origin": "https://test.rpc.fastnear.com",
+        "status": 200,
+        "header": {
+          "hash": "GuGeGAi5Q861kp3fapRM9NiksUX25411SodjFzdcssXB",
+          "height": 277700405,
+          "timestamp_nanosec": "1794684696633257342"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://near-testnet.drpc.org",
+        "status": 200,
+        "header": {
+          "hash": "GuGeGAi5Q861kp3fapRM9NiksUX25411SodjFzdcssXB",
+          "height": 277700405,
+          "timestamp_nanosec": "1794684696633257342"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      },
+      {
+        "origin": "https://testnet-rpc.intea.rs",
+        "status": 200,
+        "header": {
+          "hash": "7UvPJW9bntgHosTCPdem19vjGZkwT9ciN79DcSS4MosV",
+          "height": 277700407,
+          "timestamp_nanosec": "1794684697471859695"
+        },
+        "permission": null,
+        "block_hash": null,
+        "block_height": null,
+        "error_code": null,
+        "non_json": false,
+        "snippet": null
+      }
+    ]
+  }
+}

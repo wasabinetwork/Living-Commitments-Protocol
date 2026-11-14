@@ -62,7 +62,7 @@ async function signedRequest(request, recipient, signerAccount = request.reviewe
   };
 }
 
-function mockDatabase({ requestRow = null, batchChanges = [1, 1, 1] } = {}) {
+function mockDatabase({ requestRow = null, batchChanges = [1, 1, 1], recoveryRow = null } = {}) {
   const executed = [];
   return {
     executed,
@@ -74,6 +74,61 @@ function mockDatabase({ requestRow = null, batchChanges = [1, 1, 1] } = {}) {
         async first() {
           executed.push({ query, args: this.args, method: "first" });
           if (query.includes("reviewer_access_windows")) return { request_count: 1 };
+          if (query.includes("FROM reviewer_grants g")) {
+            if (recoveryRow === "exact") {
+              const artifact = executed.find((entry) => entry.method === "run" && entry.query.includes("INSERT INTO encrypted_artifacts"));
+              const batch = executed.find((entry) => entry.method === "batch");
+              if (!artifact || !batch) return null;
+              const [artifactId, objectKey, network, contractId, commitmentId, evaluationId, evidenceDigest,
+                ciphertextSha256, ciphertextBytes, createdAtNs] = artifact.args;
+              const [grantId, requestId, insertedArtifactId, ownerAccount, reviewerAccount, scopesJson,
+                expiresAtNs, hpkeEnc, wrappedKey, contentIv, grantCreatedAtNs] = batch.statements[1].args;
+              const [resolvedBy, resolvedAtNs, resolutionPublicKey, resolutionSignature, resolutionCallbackUrl,
+                resolutionSignedRecord] = batch.statements[2].args;
+              if (grantId !== this.args[0] || requestId !== this.args[1] || artifactId !== this.args[2]
+                  || insertedArtifactId !== artifactId) return null;
+              return {
+                grant_id: grantId,
+                request_id: requestId,
+                artifact_id: artifactId,
+                owner_account: ownerAccount,
+                reviewer_account: reviewerAccount,
+                scopes_json: scopesJson,
+                expires_at_ns: expiresAtNs,
+                hpke_enc_b64: hpkeEnc,
+                wrapped_key_b64: wrappedKey,
+                content_iv_b64: contentIv,
+                created_at_ns: grantCreatedAtNs,
+                object_key: objectKey,
+                network,
+                contract_id: contractId,
+                commitment_id: commitmentId,
+                evaluation_id: evaluationId,
+                evidence_digest: evidenceDigest,
+                ciphertext_sha256: ciphertextSha256,
+                ciphertext_bytes: ciphertextBytes,
+                request_status: "approved",
+                resolved_by: resolvedBy,
+                resolved_at_ns: resolvedAtNs,
+                resolution_public_key: resolutionPublicKey,
+                resolution_signature_b64: resolutionSignature,
+                resolution_callback_url: resolutionCallbackUrl,
+                resolution_signed_record_json: resolutionSignedRecord,
+              };
+            }
+            if (query.includes("WHERE g.grant_id = ? AND g.request_id = ? AND g.artifact_id = ?")) {
+              return recoveryRow
+                && recoveryRow.grant_id === this.args[0]
+                && recoveryRow.request_id === this.args[1]
+                && recoveryRow.artifact_id === this.args[2]
+                ? recoveryRow
+                : null;
+            }
+            if (query.includes("WHERE g.request_id = ?")) {
+              return recoveryRow?.request_id === this.args[0] ? recoveryRow : null;
+            }
+            return null;
+          }
           if (query.includes("FROM reviewer_requests")) return requestRow;
           return null;
         },
@@ -152,7 +207,7 @@ test("malformed JSON and unknown routes return bounded errors", async () => {
 });
 
 test("reviewer request checks the wallet key and completed evaluation before storing consent metadata", async (t) => {
-  const nowNs = "1794192696952171274";
+  const nowNs = (BigInt(Date.now()) * 1_000_000n - 1_000_000_000n).toString();
   const database = mockDatabase();
   const env = { ...baseEnv, DB: database, PRIVATE_ARTIFACTS: { async put() {}, async get() { return null; }, async delete() {} } };
   const originalFetch = globalThis.fetch;
@@ -203,7 +258,7 @@ test("reviewer request checks the wallet key and completed evaluation before sto
 });
 
 test("grant creation keeps signed approval evidence and gates every write on one unused nonce", async (t) => {
-  const nowNs = "1794192696952171274";
+  const nowNs = (BigInt(Date.now()) * 1_000_000n - 1_000_000_000n).toString();
   const requestId = "d43fd0cc-296d-4cb9-96b0-66a43eef4f10";
   const reviewerKey = new Uint8Array(32).fill(9);
   const requestRow = {
@@ -280,8 +335,147 @@ test("grant creation keeps signed approval evidence and gates every write on one
   assert.ok(batch.statements[2].args.includes(signed.signature));
 });
 
+test("grant recovery does not return success for another approval on the same request", async (t) => {
+  const nowNs = (BigInt(Date.now()) * 1_000_000n - 1_000_000_000n).toString();
+  const requestId = "d43fd0cc-296d-4cb9-96b0-66a43eef4f10";
+  const reviewerKey = new Uint8Array(32).fill(9);
+  const requestRow = {
+    request_id: requestId,
+    network: "testnet",
+    contract_id: baseEnv.CONTRACT_ID,
+    commitment_id: "24",
+    evaluation_id: "7",
+    evidence_digest: "a".repeat(64),
+    reviewer_account: "reviewer.testnet",
+    encryption_public_key_b64: encodeBase64(reviewerKey),
+    encryption_key_fingerprint: await sha256Hex(reviewerKey),
+    scopes_json: '["download_ciphertext"]',
+    expires_at_ns: (BigInt(nowNs) + 60_000_000_000n).toString(),
+    created_at_ns: nowNs,
+    status: "pending",
+  };
+  const priorGrant = { grant_id: "a-different-grant-id", request_id: requestId, artifact_id: "a-different-artifact" };
+  const database = mockDatabase({ requestRow, batchChanges: [1, 0, 0], recoveryRow: priorGrant });
+  const uploaded = [];
+  const env = {
+    ...baseEnv,
+    DB: database,
+    MAX_ARTIFACT_BYTES: "8388608",
+    PRIVATE_ARTIFACTS: {
+      async put(key, bytes) { uploaded.push({ key, bytes: new Uint8Array(bytes) }); },
+      async delete() { throw new Error("uncertain writes must be left to the orphan collector"); },
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (_url, init) => {
+    const rpcRequest = JSON.parse(init.body);
+    if (rpcRequest.method === "block") return finalizedBlock(nowNs);
+    if (rpcRequest.method === "query" && rpcRequest.params.request_type === "view_access_key") {
+      return finalizedQueryResult({ permission: "FullAccess" });
+    }
+    if (rpcRequest.method === "query" && rpcRequest.params.request_type === "call_function") {
+      return finalizedQueryResult({ result: Array.from(new TextEncoder().encode(JSON.stringify({ maintainer: "maintainer.testnet" }))) });
+    }
+    throw new Error(`Unexpected NEAR RPC request: ${rpcRequest.method}`);
+  };
+
+  const ciphertext = new Uint8Array(16).fill(4);
+  const grant = {
+    schema: "lcp.reviewer-grant.v1",
+    request_id: requestId,
+    ciphertext_sha256: await sha256Hex(ciphertext),
+    ciphertext_bytes: ciphertext.byteLength,
+    hpke_enc_b64: encodeBase64(new Uint8Array(32).fill(1)),
+    wrapped_key_b64: encodeBase64(new Uint8Array(48).fill(2)),
+    content_iv_b64: encodeBase64(new Uint8Array(12).fill(3)),
+    scopes: ["download_ciphertext"],
+    expires_at_ns: requestRow.expires_at_ns,
+    nonce_hex: "e".repeat(64),
+  };
+  const signed = await signedRequest(grant, baseEnv.ACCESS_RECIPIENT, "maintainer.testnet");
+  const response = await worker.fetch(new Request("https://reviewer.example.test/v1/grants", {
+    method: "POST",
+    headers: { Origin: allowedOrigin, "Content-Type": "application/json" },
+    body: JSON.stringify({ grant, ciphertext_b64: encodeBase64(ciphertext), signed_message: signed }),
+  }), env);
+
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).error, "CONFLICT");
+  assert.equal(uploaded.length, 1);
+  const recovery = database.executed.find(({ query }) => typeof query === "string" && query.includes("FROM reviewer_grants g"));
+  assert.match(recovery.query, /WHERE g\.grant_id = \? AND g\.request_id = \? AND g\.artifact_id = \?/);
+  assert.notEqual(recovery.args[0], priorGrant.grant_id);
+});
+
+test("grant recovery returns success when the exact grant and signed approval committed", async (t) => {
+  const nowNs = (BigInt(Date.now()) * 1_000_000n - 1_000_000_000n).toString();
+  const requestId = "d43fd0cc-296d-4cb9-96b0-66a43eef4f10";
+  const reviewerKey = new Uint8Array(32).fill(8);
+  const requestRow = {
+    request_id: requestId,
+    network: "testnet",
+    contract_id: baseEnv.CONTRACT_ID,
+    commitment_id: "24",
+    evaluation_id: "7",
+    evidence_digest: "b".repeat(64),
+    reviewer_account: "reviewer.testnet",
+    encryption_public_key_b64: encodeBase64(reviewerKey),
+    encryption_key_fingerprint: await sha256Hex(reviewerKey),
+    scopes_json: '["download_ciphertext"]',
+    expires_at_ns: (BigInt(nowNs) + 60_000_000_000n).toString(),
+    created_at_ns: nowNs,
+    status: "pending",
+  };
+  const database = mockDatabase({ requestRow, batchChanges: [1, 1, 0], recoveryRow: "exact" });
+  const env = {
+    ...baseEnv,
+    DB: database,
+    MAX_ARTIFACT_BYTES: "8388608",
+    PRIVATE_ARTIFACTS: { async put() {}, async delete() { throw new Error("recovered artifact must not be deleted"); } },
+  };
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (_url, init) => {
+    const rpcRequest = JSON.parse(init.body);
+    if (rpcRequest.method === "block") return finalizedBlock(nowNs);
+    if (rpcRequest.method === "query" && rpcRequest.params.request_type === "view_access_key") {
+      return finalizedQueryResult({ permission: "FullAccess" });
+    }
+    if (rpcRequest.method === "query" && rpcRequest.params.request_type === "call_function") {
+      return finalizedQueryResult({ result: Array.from(new TextEncoder().encode(JSON.stringify({ maintainer: "maintainer.testnet" }))) });
+    }
+    throw new Error(`Unexpected NEAR RPC request: ${rpcRequest.method}`);
+  };
+
+  const ciphertext = new Uint8Array(16).fill(5);
+  const grant = {
+    schema: "lcp.reviewer-grant.v1",
+    request_id: requestId,
+    ciphertext_sha256: await sha256Hex(ciphertext),
+    ciphertext_bytes: ciphertext.byteLength,
+    hpke_enc_b64: encodeBase64(new Uint8Array(32).fill(1)),
+    wrapped_key_b64: encodeBase64(new Uint8Array(48).fill(2)),
+    content_iv_b64: encodeBase64(new Uint8Array(12).fill(3)),
+    scopes: ["download_ciphertext"],
+    expires_at_ns: requestRow.expires_at_ns,
+    nonce_hex: "f".repeat(64),
+  };
+  const signed = await signedRequest(grant, baseEnv.ACCESS_RECIPIENT, "maintainer.testnet");
+  const response = await worker.fetch(new Request("https://reviewer.example.test/v1/grants", {
+    method: "POST",
+    headers: { Origin: allowedOrigin, "Content-Type": "application/json" },
+    body: JSON.stringify({ grant, ciphertext_b64: encodeBase64(ciphertext), signed_message: signed }),
+  }), env);
+
+  assert.equal(response.status, 201);
+  assert.match((await response.json()).grant_id, /^[0-9a-f-]{36}$/);
+  const recovery = database.executed.find(({ query }) => typeof query === "string" && query.includes("FROM reviewer_grants g"));
+  assert.match(recovery.query, /WHERE g\.grant_id = \? AND g\.request_id = \? AND g\.artifact_id = \?/);
+});
+
 test("scheduled cleanup retries expired and orphan ciphertext and removes terminal metadata", async (t) => {
-  const nowNs = "2000000000000000000";
+  const nowNs = (BigInt(Date.now()) * 1_000_000n - 1_000_000_000n).toString();
   const queries = [];
   const database = {
     prepare(query) {

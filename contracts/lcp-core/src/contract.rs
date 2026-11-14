@@ -1396,22 +1396,7 @@ impl Contract {
         self.commitments.flush();
         refund_excess(caller, attached, required_storage_bond);
 
-        let outlayer_args = json!({
-            "source": {
-                "WasmUrl": {
-                    "url": commitment.policy.evaluator.wasm_url,
-                    "hash": encode_hex(&commitment.policy.evaluator.wasm_sha256),
-                    "build_target": commitment.policy.evaluator.build_target,
-                }
-            },
-            "resource_limits": {
-                "max_instructions": commitment.policy.evaluator.max_instructions,
-                "max_memory_mb": commitment.policy.evaluator.max_memory_mb,
-                "max_execution_seconds": commitment.policy.evaluator.max_execution_seconds,
-            },
-            "input_data": input_data,
-            "response_format": "Json",
-        });
+        let outlayer_args = build_outlayer_request_args(&commitment, &input_data);
         let outlayer_args = near_sdk::serde_json::to_vec(&outlayer_args)
             .unwrap_or_else(|_| env::panic_str("failed to serialize OutLayer request"));
         let callback_args = near_sdk::serde_json::to_vec(&json!({
@@ -2135,20 +2120,7 @@ impl Contract {
         self.commitments.flush();
         refund_excess(caller, attached, required_storage_bond);
 
-        let outlayer_args = json!({
-            "source": { "WasmUrl": {
-                "url": commitment.policy.evaluator.wasm_url,
-                "hash": encode_hex(&commitment.policy.evaluator.wasm_sha256),
-                "build_target": commitment.policy.evaluator.build_target,
-            }},
-            "resource_limits": {
-                "max_instructions": commitment.policy.evaluator.max_instructions,
-                "max_memory_mb": commitment.policy.evaluator.max_memory_mb,
-                "max_execution_seconds": commitment.policy.evaluator.max_execution_seconds,
-            },
-            "input_data": input_data,
-            "response_format": "Json",
-        });
+        let outlayer_args = build_outlayer_request_args(&commitment, &input_data);
         let outlayer_args = near_sdk::serde_json::to_vec(&outlayer_args)
             .unwrap_or_else(|_| env::panic_str("failed to serialize OutLayer request"));
         let callback_args = near_sdk::serde_json::to_vec(&json!({
@@ -2939,6 +2911,10 @@ impl Contract {
             env::log_str("ignored callback for an unknown refund transfer");
             return;
         };
+        if transfer.kind == TransferKind::OperationsRefund {
+            self.on_operations_refund_transfer(transfer);
+            return;
+        }
         if transfer.kind != TransferKind::Refund {
             env::log_str("ignored refund callback for a non-refund transfer");
             return;
@@ -3008,6 +2984,43 @@ impl Contract {
                 "amount_yocto": is_native_near.then(|| amount_raw.to_string()),
                 "amount_raw": amount_raw.to_string(),
                 "settlement_asset": settlement_asset,
+            }),
+        );
+    }
+
+    fn on_operations_refund_transfer(&mut self, transfer: PendingTransfer) {
+        let mut commitment = self.load_commitment(transfer.commitment_id);
+        if transfer.amount_yocto == 0 || commitment.pending_transfer_count == 0 {
+            env::panic_str("pending operations refund accounting invariant violated");
+        }
+        let succeeded = env::promise_results_count() == 1
+            && match env::promise_result_checked(0, 0) {
+                Ok(_) | Err(PromiseError::TooLong(_)) => true,
+                Err(_) => false,
+            };
+        if !succeeded {
+            commitment.operations_funded_yocto = commitment
+                .operations_funded_yocto
+                .checked_add(transfer.amount_yocto)
+                .unwrap_or_else(|| env::panic_str("operations refund recovery overflow"));
+        }
+        commitment.pending_transfer_count -= 1;
+        self.commitments.insert(commitment.id, commitment);
+        self.pending_transfers.remove(&transfer.id);
+        self.commitments.flush();
+        self.pending_transfers.flush();
+
+        emit_event(
+            if succeeded {
+                "operations_refunded"
+            } else {
+                "operations_refund_failed"
+            },
+            json!({
+                "commitment_id": transfer.commitment_id.to_string(),
+                "transfer_id": transfer.id.to_string(),
+                "sponsor": transfer.recipient,
+                "amount_yocto": transfer.amount_yocto.to_string(),
             }),
         );
     }
@@ -3182,6 +3195,101 @@ impl Contract {
                 "amount_yocto": is_native_near.then(|| amount.to_string()),
                 "amount_raw": amount.to_string(),
                 "settlement_asset": settlement_asset,
+            }),
+        );
+        U64(transfer_id)
+    }
+
+    #[payable]
+    pub fn refund_unused_operations(&mut self, commitment_id: U64) -> U64 {
+        let caller = env::predecessor_account_id();
+        let mut commitment = self.load_commitment(commitment_id.0);
+        require!(
+            caller == commitment.policy.budget.sponsor,
+            "only the configured sponsor may refund unused evaluator operations"
+        );
+        require!(
+            commitment.lifecycle == Lifecycle::Closed,
+            "close the commitment before refunding unused evaluator operations"
+        );
+        require!(
+            commitment.pending_evaluation_id.is_none() && commitment.active_challenge_id.is_none(),
+            "pending evaluations and challenges must be resolved before refund"
+        );
+        require!(
+            commitment.pending_transfer_count == 0,
+            "wait for existing transfers to settle before refunding evaluator operations"
+        );
+        let amount = commitment
+            .operations_funded_yocto
+            .checked_sub(commitment.operations_authorized_spend_yocto)
+            .unwrap_or_else(|| env::panic_str("operations accounting invariant violated"));
+        require!(
+            amount > 0,
+            "there are no unused evaluator operations to refund"
+        );
+
+        let transfer_id = self
+            .next_transfer_id
+            .checked_add(1)
+            .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
+        commitment.operations_funded_yocto -= amount;
+        commitment.pending_transfer_count = commitment
+            .pending_transfer_count
+            .checked_add(1)
+            .unwrap_or_else(|| env::panic_str("pending transfer counter overflow"));
+        let pending_transfer = PendingTransfer {
+            id: transfer_id,
+            commitment_id: commitment_id.0,
+            kind: TransferKind::OperationsRefund,
+            epoch: None,
+            recipient: commitment.policy.budget.sponsor.clone(),
+            amount_yocto: amount,
+        };
+
+        let storage_before = env::storage_usage();
+        self.pending_transfers
+            .insert(transfer_id, pending_transfer.clone());
+        self.commitments.insert(commitment_id.0, commitment.clone());
+        self.pending_transfers.flush();
+        self.commitments.flush();
+        let storage_bytes = env::storage_usage()
+            .checked_sub(storage_before)
+            .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
+        let required_storage_bond = storage_cost(storage_bytes);
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(
+            attached >= required_storage_bond,
+            format!("attach at least {required_storage_bond} yoctoNEAR for evaluator operations refund storage")
+        );
+        commitment.storage_deposit_yocto = commitment
+            .storage_deposit_yocto
+            .checked_add(required_storage_bond)
+            .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
+        self.commitments.insert(commitment_id.0, commitment);
+        self.commitments.flush();
+        refund_excess(caller, attached, required_storage_bond);
+
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "transfer_id": U64(transfer_id),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize operations refund callback"));
+        let _refund_promise = Promise::new(pending_transfer.recipient.clone())
+            .transfer(NearToken::from_yoctonear(amount))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_refund_transfer".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
+            ));
+        self.next_transfer_id = transfer_id;
+        emit_event(
+            "operations_refund_requested",
+            json!({
+                "commitment_id": commitment_id.0.to_string(),
+                "transfer_id": transfer_id.to_string(),
+                "sponsor": pending_transfer.recipient,
+                "amount_yocto": amount.to_string(),
             }),
         );
         U64(transfer_id)
@@ -3379,6 +3487,7 @@ impl Contract {
             tranche_amount_raw: U128(tranche_amount_raw_for(commitment)),
             operations_funded_yocto: U128(commitment.operations_funded_yocto),
             operations_authorized_spend_yocto: U128(commitment.operations_authorized_spend_yocto),
+            pending_transfer_count: commitment.pending_transfer_count,
             storage_deposit_yocto: U128(commitment.storage_deposit_yocto),
         })
     }
@@ -4782,6 +4891,28 @@ fn parse_decimal_u64(value: &str) -> Option<u64> {
     (parsed.to_string() == value).then_some(parsed)
 }
 
+fn build_outlayer_request_args(commitment: &Commitment, input_data: &str) -> Value {
+    json!({
+        "source": {
+            "WasmUrl": {
+                "url": commitment.policy.evaluator.wasm_url,
+                "hash": encode_hex(&commitment.policy.evaluator.wasm_sha256),
+                "build_target": commitment.policy.evaluator.build_target,
+            }
+        },
+        "resource_limits": {
+            "max_instructions": commitment.policy.evaluator.max_instructions,
+            "max_memory_mb": commitment.policy.evaluator.max_memory_mb,
+            "max_execution_seconds": commitment.policy.evaluator.max_execution_seconds,
+        },
+        "input_data": input_data,
+        "response_format": "Json",
+        // The sponsor funds evaluator operations. Route OutLayer's automatic refund of
+        // unused resources to that sponsor instead of leaving it unassigned in this contract.
+        "payer_account_id": commitment.policy.budget.sponsor.to_string(),
+    })
+}
+
 fn parse_near_transaction_hash(value: &str) -> Option<[u8; 32]> {
     let decoded = bs58::decode(value).into_vec().ok()?;
     decoded.try_into().ok()
@@ -5815,6 +5946,9 @@ mod tests {
                 status: ChallengeStatus::Open,
             },
         );
+        contract
+            .challenge_by_evaluation
+            .insert((CONTRACT_ID, EVALUATION_ID), TRANSFER_ID);
         reserve_challenge_completion_timestamp(TRANSFER_ID);
         reserve_challenge_epoch(TRANSFER_ID, reserved_epoch);
         contract.commitments.flush();
@@ -5831,6 +5965,26 @@ mod tests {
         contract.commitments.flush();
         contract.tranches.flush();
         contract.pending_transfers.flush();
+    }
+
+    fn create_commitment_with_arbiter_role_overlap(arbiter: AccountId) {
+        let (mut contract, _) = contract_with_pending_tranche();
+        let policy = contract
+            .commitments
+            .get(&CONTRACT_ID)
+            .unwrap()
+            .policy
+            .clone();
+        testing_env!(context(accounts(1), 0));
+        contract.insert_commitment(
+            "role separation fixture".to_string(),
+            accounts(2),
+            arbiter,
+            policy,
+            [0; 32],
+            None,
+            None,
+        );
     }
 
     fn contract_with_pending_refund() -> Contract {
@@ -5857,6 +6011,18 @@ mod tests {
         contract.next_transfer_id = refund_id;
         contract.commitments.flush();
         contract.pending_transfers.flush();
+        contract
+    }
+
+    fn contract_with_closed_operations_balance() -> Contract {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Closed;
+        commitment.operations_funded_yocto = TRANCHE_AMOUNT * 3;
+        commitment.operations_authorized_spend_yocto = TRANCHE_AMOUNT;
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.commitments.flush();
         contract
     }
 
@@ -6844,6 +7010,66 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(
+        expected = "arbiter must be distinct from the maintainer, sponsor, and beneficiary"
+    )]
+    fn commitment_creation_rejects_arbiter_matching_sponsor() {
+        create_commitment_with_arbiter_role_overlap(accounts(1));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "arbiter must be distinct from the maintainer, sponsor, and beneficiary"
+    )]
+    fn commitment_creation_rejects_arbiter_matching_maintainer() {
+        create_commitment_with_arbiter_role_overlap(accounts(2));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "arbiter must be distinct from the maintainer, sponsor, and beneficiary"
+    )]
+    fn commitment_creation_rejects_arbiter_matching_beneficiary() {
+        create_commitment_with_arbiter_role_overlap(accounts(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "the beneficiary must claim or explicitly close a claimable tranche")]
+    fn sponsor_cannot_close_commitment_with_eligible_tranche() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        assert!(
+            contract
+                .can_claim_tranche(U64(CONTRACT_ID))
+                .unwrap()
+                .eligible
+        );
+
+        testing_env!(context(accounts(1), 0));
+        contract.close_commitment(U64(CONTRACT_ID));
+    }
+
+    #[test]
+    fn beneficiary_can_voluntarily_close_commitment_with_eligible_tranche() {
+        let (mut contract, beneficiary) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        assert!(
+            contract
+                .can_claim_tranche(U64(CONTRACT_ID))
+                .unwrap()
+                .eligible
+        );
+
+        testing_env!(context(beneficiary, 0));
+        contract.close_commitment(U64(CONTRACT_ID));
+
+        assert_eq!(
+            contract.commitments.get(&CONTRACT_ID).unwrap().lifecycle,
+            Lifecycle::Closed
+        );
+    }
+
+    #[test]
     fn invalidated_challenge_clears_evidence_and_starts_negative_period() {
         let (mut contract, _) = contract_with_pending_tranche();
         clear_pending_tranche(&mut contract);
@@ -6904,6 +7130,35 @@ mod tests {
         assert_eq!(commitment.negative_since_ns, None);
         assert_eq!(
             contract.claim_eligibility(&commitment, resolution_deadline_ns),
+            Ok(EPOCH)
+        );
+    }
+
+    #[test]
+    fn challenge_timeout_restores_the_remaining_claim_window() {
+        let (mut contract, _) = contract_with_pending_tranche();
+        clear_pending_tranche(&mut contract);
+        add_open_challenge(&mut contract);
+        let resolution_deadline_ns = NOW_NS + 1_000;
+        let original_claim_end_ns = 1_000_000_000 + 1_000_000;
+        let claim_window_start_ns = 1_000_000_000 + 100;
+        let resumed_claim_end_ns =
+            original_claim_end_ns + (resolution_deadline_ns - claim_window_start_ns);
+
+        testing_env!(context_at(accounts(0), 0, resolution_deadline_ns));
+        contract.expire_challenge(U64(TRANSFER_ID));
+
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(
+            contract.claim_eligibility(&commitment, resolution_deadline_ns),
+            Ok(EPOCH)
+        );
+        assert_eq!(
+            contract.claim_eligibility(&commitment, resumed_claim_end_ns - 1),
+            Ok(EPOCH)
+        );
+        assert_ne!(
+            contract.claim_eligibility(&commitment, resumed_claim_end_ns),
             Ok(EPOCH)
         );
     }
@@ -7054,6 +7309,66 @@ mod tests {
         );
         assert_eq!(commitment.negative_since_ns, None);
         assert_eq!(commitment.pending_evaluation_id, None);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn null_outlayer_json_result_is_failed_and_preserves_compliant_evidence() {
+        let mut contract = contract_with_pending_evaluation();
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"null".to_vec()),
+        );
+
+        contract.on_outlayer_result(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID));
+
+        let record = contract
+            .get_evaluation(U64(CONTRACT_ID), U64(PENDING_EVALUATION_ID))
+            .unwrap();
+        assert_eq!(record.status, EvaluationStatus::Failed);
+        assert_eq!(record.verdict, None);
+        assert_eq!(record.reason_codes, vec!["MISSING_OUTLAYER_RESULT"]);
+        assert_eq!(
+            record.output_hash,
+            Some(encode_hex(&env::sha256_array(b"null")))
+        );
+
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(commitment.pending_evaluation_id, None);
+        assert_eq!(
+            commitment.last_good.as_ref().unwrap().evaluation_id,
+            EVALUATION_ID
+        );
+        assert_eq!(commitment.negative_since_ns, None);
+    }
+
+    #[test]
+    fn outlayer_request_pins_policy_and_routes_refund_to_sponsor() {
+        let (contract, _) = contract_with_pending_tranche();
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        let args = build_outlayer_request_args(&commitment, "{}");
+
+        assert_eq!(
+            args["source"]["WasmUrl"]["url"],
+            commitment.policy.evaluator.wasm_url
+        );
+        assert_eq!(
+            args["source"]["WasmUrl"]["hash"],
+            encode_hex(&commitment.policy.evaluator.wasm_sha256)
+        );
+        assert_eq!(
+            args["source"]["WasmUrl"]["build_target"],
+            commitment.policy.evaluator.build_target
+        );
+        assert_eq!(
+            args["resource_limits"]["max_execution_seconds"],
+            commitment.policy.evaluator.max_execution_seconds
+        );
+        assert_eq!(args["response_format"], "Json");
+        assert_eq!(
+            args["payer_account_id"],
+            commitment.policy.budget.sponsor.to_string()
+        );
     }
 
     #[test]
@@ -7283,6 +7598,151 @@ mod tests {
         assert_eq!(settled.pending_yocto.0, 0);
         assert_eq!(settled.refunded_yocto.0, TRANCHE_AMOUNT);
         assert_eq!(settled.free_yocto.0, TRANCHE_AMOUNT);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn unused_operations_refund_returns_only_unreserved_funds_and_settles_once() {
+        let mut contract = contract_with_closed_operations_balance();
+        testing_env!(context_at(accounts(1), 10_u128.pow(24), NOW_NS));
+
+        let transfer_id = contract.refund_unused_operations(U64(CONTRACT_ID));
+        let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(commitment.operations_funded_yocto, TRANCHE_AMOUNT);
+        assert_eq!(commitment.operations_authorized_spend_yocto, TRANCHE_AMOUNT);
+        assert_eq!(commitment.pending_transfer_count, 1);
+        assert_eq!(
+            contract
+                .get_commitment(U64(CONTRACT_ID))
+                .unwrap()
+                .pending_transfer_count,
+            1
+        );
+        let pending = contract.pending_transfers.get(&transfer_id.0).unwrap();
+        assert_eq!(pending.kind, TransferKind::OperationsRefund);
+        assert_eq!(pending.recipient, accounts(1));
+        assert_eq!(pending.amount_yocto, TRANCHE_AMOUNT * 2);
+
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_refund_transfer(transfer_id);
+        contract.on_refund_transfer(transfer_id);
+
+        let settled = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(settled.operations_funded_yocto, TRANCHE_AMOUNT);
+        assert_eq!(settled.pending_transfer_count, 0);
+        assert_eq!(
+            contract
+                .get_commitment(U64(CONTRACT_ID))
+                .unwrap()
+                .pending_transfer_count,
+            0
+        );
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_none());
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn failed_unused_operations_refund_restores_sponsor_budget() {
+        let mut contract = contract_with_closed_operations_balance();
+        testing_env!(context_at(accounts(1), 10_u128.pow(24), NOW_NS));
+
+        let transfer_id = contract.refund_unused_operations(U64(CONTRACT_ID));
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        contract.on_refund_transfer(transfer_id);
+
+        let recovered = contract.commitments.get(&CONTRACT_ID).unwrap();
+        assert_eq!(recovered.operations_funded_yocto, TRANCHE_AMOUNT * 3);
+        assert_eq!(recovered.operations_authorized_spend_yocto, TRANCHE_AMOUNT);
+        assert_eq!(recovered.pending_transfer_count, 0);
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "only the configured sponsor may refund unused evaluator operations")]
+    fn non_sponsor_cannot_refund_unused_operations() {
+        let mut contract = contract_with_closed_operations_balance();
+        testing_env!(context_at(accounts(2), 10_u128.pow(24), NOW_NS));
+
+        contract.refund_unused_operations(U64(CONTRACT_ID));
+    }
+
+    #[test]
+    #[should_panic(expected = "close the commitment before refunding unused evaluator operations")]
+    fn unused_operations_cannot_be_refunded_before_commitment_closure() {
+        let mut contract = contract_with_closed_operations_balance();
+        let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Active;
+        contract.commitments.insert(CONTRACT_ID, commitment);
+        contract.commitments.flush();
+        testing_env!(context_at(accounts(1), 10_u128.pow(24), NOW_NS));
+
+        contract.refund_unused_operations(U64(CONTRACT_ID));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "wait for existing transfers to settle before refunding evaluator operations"
+    )]
+    fn duplicate_unused_operations_refund_is_blocked_while_transfer_is_pending() {
+        let mut contract = contract_with_closed_operations_balance();
+        testing_env!(context_at(accounts(1), 10_u128.pow(24), NOW_NS));
+
+        contract.refund_unused_operations(U64(CONTRACT_ID));
+        contract.refund_unused_operations(U64(CONTRACT_ID));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn successful_excess_storage_refund_does_not_create_a_withdrawable_credit() {
+        let mut contract = Contract::new();
+        let account_id = accounts(1);
+        let amount = U128(123);
+
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(Vec::new()),
+        );
+        contract.on_excess_refund(account_id.clone(), amount);
+
+        assert_eq!(contract.get_storage_refund_balance(account_id).0, 0);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn failed_excess_storage_refund_can_be_retried_from_credited_balance() {
+        let mut contract = Contract::new();
+        let account_id = accounts(1);
+        let amount = U128(123);
+
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        contract.on_excess_refund(account_id.clone(), amount);
+        assert_eq!(
+            contract.get_storage_refund_balance(account_id.clone()).0,
+            amount.0
+        );
+
+        testing_env!(context(account_id.clone(), 0));
+        contract.withdraw_storage_refund();
+        assert_eq!(contract.get_storage_refund_balance(account_id.clone()).0, 0);
+
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        contract.on_service_report_refund(account_id.clone(), amount);
+        assert_eq!(
+            contract.get_storage_refund_balance(account_id.clone()).0,
+            amount.0
+        );
+
+        testing_env!(context(account_id.clone(), 0));
+        contract.withdraw_storage_refund();
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(Vec::new()),
+        );
+        contract.on_service_report_refund(account_id.clone(), amount);
+        assert_eq!(contract.get_storage_refund_balance(account_id).0, 0);
     }
 }
 

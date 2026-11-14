@@ -75,6 +75,7 @@ export function ReviewerAccessPanel(props: Props) {
   const [vault, setVault] = useState<ReviewerKeyVault | null>(null);
   const [privateKey, setPrivateKey] = useState<Uint8Array | null>(null);
   const privateKeyRef = useRef<Uint8Array | null>(null);
+  const [unlockedFingerprint, setUnlockedFingerprint] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState("");
   const [requestDigest, setRequestDigest] = useState("");
   const [receipt, setReceipt] = useState<EvidenceReceipt | null>(null);
@@ -93,6 +94,7 @@ export function ReviewerAccessPanel(props: Props) {
     privateKeyRef.current?.fill(0);
     privateKeyRef.current = null;
     setPrivateKey(null);
+    setUnlockedFingerprint(null);
     setPassphrase("");
     setVault(null);
     if (!props.accountId) return;
@@ -135,6 +137,11 @@ export function ReviewerAccessPanel(props: Props) {
 
   async function saveVault(nextVault: ReviewerKeyVault, accountId = props.accountId) {
     if (!accountId) throw new Error("Connect a NEAR wallet before creating a reviewer key.");
+    privateKeyRef.current?.fill(0);
+    privateKeyRef.current = null;
+    setPrivateKey(null);
+    setUnlockedFingerprint(null);
+    setPassphrase("");
     await putVault(accountId, nextVault);
     setVault(nextVault);
   }
@@ -180,6 +187,7 @@ export function ReviewerAccessPanel(props: Props) {
       privateKeyRef.current?.fill(0);
       privateKeyRef.current = unlocked;
       setPrivateKey(unlocked);
+      setUnlockedFingerprint(vault.fingerprint_hex);
       setPassphrase("");
       setMessage("Reviewer key unlocked in memory for this browser session.");
     } catch (cause) {
@@ -193,6 +201,7 @@ export function ReviewerAccessPanel(props: Props) {
     privateKeyRef.current?.fill(0);
     privateKeyRef.current = null;
     setPrivateKey(null);
+    setUnlockedFingerprint(null);
     setMessage("Reviewer key locked and cleared from this page's memory.");
   }
 
@@ -245,6 +254,9 @@ export function ReviewerAccessPanel(props: Props) {
     setBusy(true);
     try {
       if (!vault) throw new Error("Create or import a local reviewer key first.");
+      if (!privateKey || unlockedFingerprint !== vault.fingerprint_hex) {
+        throw new Error("Unlock and validate this reviewer key backup before requesting access.");
+      }
       if (!props.accountId) throw new Error("Connect the wallet that will receive reviewer access.");
       if (!props.chainTimeNs) throw new Error("Refresh the commitment to read finalized NEAR time before requesting access.");
       if (!/^[0-9a-f]{64}$/.test(requestDigest)) throw new Error("Enter the 64-character salted evidence digest shared by the maintainer.");
@@ -382,7 +394,9 @@ export function ReviewerAccessPanel(props: Props) {
     clearNotice();
     setBusy(true);
     try {
-      if (!privateKey) throw new Error("Unlock the local reviewer key before downloading evidence.");
+      if (!privateKey || unlockedFingerprint !== vault?.fingerprint_hex) {
+        throw new Error("Unlock and validate this reviewer key backup before downloading evidence.");
+      }
       const grant = grants.find((candidate) => candidate.grant_id === selectedGrantId);
       if (!grant) throw new Error("Select a reviewer grant.");
       const signed = await signPayload({ schema: "lcp.reviewer-download.v1", grant_id: grant.grant_id });
@@ -466,7 +480,7 @@ export function ReviewerAccessPanel(props: Props) {
               <p className="eyebrow">REQUEST ACCESS</p>
               <p>Enter the salted evidence digest the maintainer shared with you privately. The request is signed by your connected wallet.</p>
               <label>Evidence digest<input className="reviewer-digest-input" inputMode="text" spellCheck={false} autoCapitalize="off" value={requestDigest} onChange={(event) => setRequestDigest(event.target.value.trim())} placeholder="64 lowercase hexadecimal characters" /></label>
-              <button type="button" className="browser-button" disabled={busy || !props.accountId || !vault || !evaluationComplete} onClick={() => void createRequest()}>Sign and request access</button>
+              <button type="button" className="browser-button" disabled={busy || !props.accountId || !vault || unlockedFingerprint !== vault?.fingerprint_hex || !evaluationComplete} onClick={() => void createRequest()}>Sign and request access</button>
             </section>
             <section className="reviewer-workflow-block">
               <p className="eyebrow">PREPARE A PRIVATE EVIDENCE DIGEST</p>
@@ -538,7 +552,7 @@ async function putVault(accountId: string, vault: ReviewerKeyVault): Promise<voi
 }
 
 function isReviewerKeyVault(value: unknown): value is ReviewerKeyVault {
-  return isRecord(value) && value.schema === "lcp.reviewer-key-vault.v1"
+  return isRecord(value) && (value.schema === "lcp.reviewer-key-vault.v1" || value.schema === "lcp.reviewer-key-vault.v2")
     && typeof value.public_key_b64 === "string" && typeof value.fingerprint_hex === "string"
     && value.kdf === "PBKDF2-SHA256" && typeof value.iterations === "number"
     && typeof value.salt_b64 === "string" && typeof value.iv_b64 === "string"

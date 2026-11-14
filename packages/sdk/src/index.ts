@@ -341,6 +341,7 @@ export interface NearSignedMessage {
   accountId: string;
   publicKey: string;
   signature: string;
+  callbackUrl?: string;
 }
 
 export interface ReviewerSignedMessage {
@@ -349,7 +350,7 @@ export interface ReviewerSignedMessage {
   signature: string;
   nonce_hex: string;
   recipient: string;
-  callback_url: string;
+  callback_url?: string;
 }
 
 export type ReviewerWalletMessageSigner = (input: {
@@ -373,7 +374,7 @@ export interface ReviewerDownloadEnvelope {
 }
 
 export interface ReviewerKeyVault {
-  schema: "lcp.reviewer-key-vault.v1";
+  schema: "lcp.reviewer-key-vault.v1" | "lcp.reviewer-key-vault.v2";
   public_key_b64: string;
   fingerprint_hex: Sha256Hex;
   kdf: "PBKDF2-SHA256";
@@ -457,6 +458,7 @@ export interface CommitmentView {
   tranche_amount_raw?: DecimalString;
   operations_funded_yocto: YoctoNear;
   operations_authorized_spend_yocto: YoctoNear;
+  pending_transfer_count?: number;
   storage_deposit_yocto: YoctoNear;
 }
 
@@ -1159,6 +1161,15 @@ export class LcpClient {
   refundRemaining(id: CommitmentId, options: ContractCallOptions): Promise<TransferId> {
     return this.transport.call<TransferId>(this.contractId, "refund_remaining", { commitment_id: id }, options);
   }
+
+  refundUnusedOperations(id: CommitmentId, options: ContractCallOptions): Promise<TransferId> {
+    return this.transport.call<TransferId>(
+      this.contractId,
+      "refund_unused_operations",
+      { commitment_id: id },
+      options,
+    );
+  }
 }
 
 export async function createSignedHeartbeat(
@@ -1287,6 +1298,25 @@ export async function signReviewerPayload<T extends Record<string, unknown>>(
     throw new Error("The connected NEAR wallet returned an unsupported NEP-413 signature.");
   }
   validateBase58Ed25519Key(signed.publicKey);
+  if (signed.callbackUrl !== undefined && signed.callbackUrl !== options.callbackUrl) {
+    throw new Error("The wallet returned a callback URL different from the one requested.");
+  }
+  const message = canonicalJson(signedPayload);
+  const callbacksToCheck = signed.callbackUrl !== undefined
+    ? [signed.callbackUrl]
+    : [options.callbackUrl, undefined];
+  let verifiedCallback: string | undefined;
+  let signatureVerified = false;
+  for (const callbackUrl of callbacksToCheck) {
+    if (await verifyReviewerWalletSignature(message, nonce, options.recipient, callbackUrl, signed.publicKey, signed.signature)) {
+      verifiedCallback = callbackUrl;
+      signatureVerified = true;
+      break;
+    }
+  }
+  if (!signatureVerified) {
+    throw new Error("The wallet returned a NEP-413 signature that does not match this request and callback.");
+  }
   return {
     payload: signedPayload,
     signed_message: {
@@ -1295,9 +1325,70 @@ export async function signReviewerPayload<T extends Record<string, unknown>>(
       signature: signed.signature,
       nonce_hex: nonceHex,
       recipient: options.recipient,
-      callback_url: options.callbackUrl,
+      ...(verifiedCallback === undefined ? {} : { callback_url: verifiedCallback }),
     },
   };
+}
+
+async function verifyReviewerWalletSignature(
+  message: string,
+  nonce: Uint8Array,
+  recipient: string,
+  callbackUrl: string | undefined,
+  publicKey: string,
+  signature: string,
+): Promise<boolean> {
+  try {
+    const callback = callbackUrl === undefined
+      ? new Uint8Array([0])
+      : concatUint8Arrays(new Uint8Array([1]), borshUtf8(callbackUrl));
+    const payload = concatUint8Arrays(
+      u32le(2_147_484_061),
+      borshUtf8(message),
+      nonce,
+      borshUtf8(recipient),
+      callback,
+    );
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", Uint8Array.from(payload).buffer));
+    const key = await crypto.subtle.importKey(
+      "raw",
+      Uint8Array.from(decodeBase58Ed25519PublicKey(publicKey)).buffer,
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    return await crypto.subtle.verify(
+      { name: "Ed25519" },
+      key,
+      Uint8Array.from(decodeBase64(signature, 64)).buffer,
+      Uint8Array.from(digest).buffer,
+    );
+  } catch {
+    return false;
+  }
+}
+
+function borshUtf8(value: string): Uint8Array {
+  const bytes = new TextEncoder().encode(value);
+  return concatUint8Arrays(u32le(bytes.byteLength), bytes);
+}
+
+function decodeBase58Ed25519PublicKey(publicKey: string): Uint8Array {
+  const encoded = publicKey.slice("ed25519:".length);
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let value = 0n;
+  for (const character of encoded) {
+    const digit = alphabet.indexOf(character);
+    if (digit < 0) throw new Error("Malformed base58 NEAR public key.");
+    value = value * 58n + BigInt(digit);
+  }
+  const bytes = new Uint8Array(32);
+  for (let index = bytes.length - 1; index >= 0; index -= 1) {
+    bytes[index] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  if (value !== 0n) throw new Error("NEAR public key exceeds 32 bytes.");
+  return bytes;
 }
 
 /** Browser API wrapper for the separate reviewer-access Worker. */
@@ -1410,29 +1501,33 @@ export async function createReviewerKeyVault(passphrase: string): Promise<Review
   const privateKey = new Uint8Array(await suite.kem.serializePrivateKey(pair.privateKey));
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const wrappingKey = await deriveVaultWrappingKey(passphrase, salt, REVIEWER_KEY_VAULT_ITERATIONS);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: Uint8Array.from(iv).buffer, additionalData: new TextEncoder().encode("lcp.reviewer-key-vault.v1") },
-    wrappingKey,
-    Uint8Array.from(privateKey).buffer,
-  );
-  privateKey.fill(0);
-  return {
-    schema: "lcp.reviewer-key-vault.v1",
+  const header = {
+    schema: "lcp.reviewer-key-vault.v2" as const,
     public_key_b64: encodeBase64(publicKey),
     fingerprint_hex: await sha256Hex(publicKey),
-    kdf: "PBKDF2-SHA256",
+    kdf: "PBKDF2-SHA256" as const,
     iterations: REVIEWER_KEY_VAULT_ITERATIONS,
     salt_b64: encodeBase64(salt),
     iv_b64: encodeBase64(iv),
-    encrypted_private_key_b64: encodeBase64(new Uint8Array(encrypted)),
   };
+  const wrappingKey = await deriveVaultWrappingKey(passphrase, salt, REVIEWER_KEY_VAULT_ITERATIONS);
+  try {
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: Uint8Array.from(iv).buffer, additionalData: Uint8Array.from(reviewerKeyVaultAdditionalData(header)).buffer },
+      wrappingKey,
+      Uint8Array.from(privateKey).buffer,
+    );
+    return { ...header, encrypted_private_key_b64: encodeBase64(new Uint8Array(encrypted)) };
+  } finally {
+    privateKey.fill(0);
+  }
 }
 
 /** Unlock an encrypted reviewer-key backup in memory. Clear the returned bytes when finished. */
 export async function unlockReviewerKeyVault(vault: ReviewerKeyVault, passphrase: string): Promise<Uint8Array> {
   assertVaultPassphrase(passphrase);
-  if (vault.schema !== "lcp.reviewer-key-vault.v1" || vault.kdf !== "PBKDF2-SHA256"
+  if ((vault.schema !== "lcp.reviewer-key-vault.v1" && vault.schema !== "lcp.reviewer-key-vault.v2")
+      || vault.kdf !== "PBKDF2-SHA256"
       || !Number.isInteger(vault.iterations) || vault.iterations < 310_000 || vault.iterations > 2_000_000) {
     throw new Error("The reviewer key backup format or KDF settings are unsupported.");
   }
@@ -1445,7 +1540,13 @@ export async function unlockReviewerKeyVault(vault: ReviewerKeyVault, passphrase
   let rawPrivateKey: ArrayBuffer;
   try {
     rawPrivateKey = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: Uint8Array.from(iv).buffer, additionalData: new TextEncoder().encode("lcp.reviewer-key-vault.v1") },
+      {
+        name: "AES-GCM",
+        iv: Uint8Array.from(iv).buffer,
+        additionalData: Uint8Array.from(vault.schema === "lcp.reviewer-key-vault.v1"
+          ? new TextEncoder().encode("lcp.reviewer-key-vault.v1")
+          : reviewerKeyVaultAdditionalData(vault)).buffer,
+      },
       wrappingKey,
       Uint8Array.from(encryptedPrivateKey).buffer,
     );
@@ -1457,7 +1558,54 @@ export async function unlockReviewerKeyVault(vault: ReviewerKeyVault, passphrase
     privateKey.fill(0);
     throw new Error("The reviewer key backup contains an invalid private key.");
   }
+  if (!await reviewerKeyPairMatches(publicKey, privateKey)) {
+    privateKey.fill(0);
+    throw new Error("The decrypted private key does not match the public key in this reviewer backup.");
+  }
   return privateKey;
+}
+
+type ReviewerKeyVaultHeader = Pick<
+  ReviewerKeyVault,
+  "schema" | "public_key_b64" | "fingerprint_hex" | "kdf" | "iterations" | "salt_b64" | "iv_b64"
+>;
+
+function reviewerKeyVaultAdditionalData(header: ReviewerKeyVaultHeader): Uint8Array {
+  return new TextEncoder().encode(canonicalJson({
+    schema: header.schema,
+    public_key_b64: header.public_key_b64,
+    fingerprint_hex: header.fingerprint_hex,
+    kdf: header.kdf,
+    iterations: header.iterations,
+    salt_b64: header.salt_b64,
+    iv_b64: header.iv_b64,
+  }));
+}
+
+async function reviewerKeyPairMatches(publicKeyBytes: Uint8Array, privateKeyBytes: Uint8Array): Promise<boolean> {
+  const proof = crypto.getRandomValues(new Uint8Array(32));
+  const aad = new TextEncoder().encode("lcp.reviewer-key-vault.pair-check.v1");
+  try {
+    const suite = reviewerHpkeSuite();
+    const recipientPublicKey = await suite.kem.deserializePublicKey(publicKeyBytes);
+    const recipientPrivateKey = await suite.kem.deserializePrivateKey(privateKeyBytes);
+    const sealed = await suite.seal({ recipientPublicKey }, proof, aad);
+    const opened = new Uint8Array(await suite.open(
+      { recipientKey: recipientPrivateKey, enc: new Uint8Array(sealed.enc) },
+      new Uint8Array(sealed.ct),
+      aad,
+    ));
+    let difference = opened.byteLength ^ proof.byteLength;
+    for (let index = 0; index < Math.min(opened.byteLength, proof.byteLength); index += 1) {
+      difference |= (opened[index] ?? 0) ^ (proof[index] ?? 0);
+    }
+    opened.fill(0);
+    return difference === 0;
+  } catch {
+    return false;
+  } finally {
+    proof.fill(0);
+  }
 }
 
 /** Generate a salted commitment for a private file. Keep the salt with the local vault; it is packaged into the encrypted artifact for reviewers. */

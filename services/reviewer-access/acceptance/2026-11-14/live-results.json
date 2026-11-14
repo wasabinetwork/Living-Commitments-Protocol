@@ -1,0 +1,44 @@
+[
+  {
+    "case": "live-health",
+    "pass": true,
+    "expected_statuses": [
+      200
+    ],
+    "actual_status": 200,
+    "error_code": null
+  },
+  {
+    "case": "live-list-grants-full",
+    "pass": false,
+    "expected_statuses": [
+      200
+    ],
+    "actual_status": 503,
+    "error_code": "NEAR_UNAVAILABLE"
+  },
+  {
+    "case": "live-request-functioncall",
+    "pass": false,
+    "expected_statuses": [
+      401,
+      403
+    ],
+    "actual_status": 503,
+    "error_code": "NEAR_UNAVAILABLE"
+  },
+  {
+    "case": "live-request-full",
+    "pass": false,
+    "expected_statuses": [
+      201
+    ],
+    "actual_status": 503,
+    "error_code": "NEAR_UNAVAILABLE"
+  },
+  {
+    "case": "live-matrix-completion",
+    "pass": false,
+    "error_class": "Error"
+  }
+]

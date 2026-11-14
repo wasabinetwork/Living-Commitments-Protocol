@@ -151,6 +151,7 @@ pub struct Tranche {
 pub enum TransferKind {
     Tranche,
     Refund,
+    OperationsRefund,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
@@ -807,6 +808,7 @@ pub struct CommitmentView {
     pub tranche_amount_raw: U128,
     pub operations_funded_yocto: U128,
     pub operations_authorized_spend_yocto: U128,
+    pub pending_transfer_count: u32,
     pub storage_deposit_yocto: U128,
 }
 

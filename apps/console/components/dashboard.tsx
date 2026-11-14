@@ -104,7 +104,7 @@ interface CommitmentData {
 
 type SetupAction = "escrow" | "operations" | "activate";
 type ChallengeAction = "open" | "uphold" | "invalidate" | "expire";
-type ClosureAction = "close" | "refund";
+type ClosureAction = "close" | "refund" | "refund_operations";
 
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
 const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA?.trim() || "unknown";
@@ -180,6 +180,8 @@ export function Dashboard() {
   const [loadingCommitments, setLoadingCommitments] = useState(false);
   const [data, setData] = useState<CommitmentData | null>(null);
   const [accountId, setAccountId] = useState<string | null>(null);
+  const [adapterAuthorizationTestMode, setAdapterAuthorizationTestMode] = useState(false);
+  const [closeGuardTestMode, setCloseGuardTestMode] = useState(false);
   const [storageRefundBalance, setStorageRefundBalance] = useState("0");
   const [withdrawingStorageRefund, setWithdrawingStorageRefund] = useState(false);
   const [walletRestoring, setWalletRestoring] = useState(true);
@@ -233,6 +235,19 @@ export function Dashboard() {
 
   useEffect(() => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+  }, []);
+
+  useEffect(() => {
+    if (NEAR_NETWORK_ID !== "testnet") return;
+    const hostname = window.location.hostname;
+    const previewOrLocal = hostname === "localhost" || hostname === "127.0.0.1"
+      || hostname === "lcp-preview.pages.dev" || hostname.endsWith(".lcp-preview.pages.dev");
+    setAdapterAuthorizationTestMode(
+      previewOrLocal && new URLSearchParams(window.location.search).get("lcpAdapterAuthTest") === "1",
+    );
+    setCloseGuardTestMode(
+      previewOrLocal && new URLSearchParams(window.location.search).get("lcpCloseGuardTest") === "1",
+    );
   }, []);
 
   useEffect(() => {
@@ -884,21 +899,73 @@ export function Dashboard() {
     setRequestingEvaluation(true);
     setError(null);
     setActionMessage(null);
+    const readClient = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+    const requestedEvaluationId = data.commitment.next_evaluation_id;
+    let walletRequestStarted = false;
     try {
+      const current = await readClient.getCommitment(data.commitment.id);
+      if (!current) throw new Error(`Commitment #${data.commitment.id} could not be read from NEAR.`);
+      if (current.pending_evaluation_id) {
+        await loadCommitment(data.commitment.id);
+        setError(`Evaluation #${current.pending_evaluation_id} is already pending. Wait for its result; no new transaction was sent.`);
+        return;
+      }
+      if (current.active_challenge_id) {
+        await loadCommitment(data.commitment.id);
+        setError(`Resolve challenge #${current.active_challenge_id} before requesting another evaluation. No transaction was sent.`);
+        return;
+      }
+      if (current.next_evaluation_id !== requestedEvaluationId) {
+        await loadCommitment(data.commitment.id);
+        setError("The commitment changed since this form was prepared. Its current state was refreshed; prepare and sign a new observation before retrying.");
+        return;
+      }
+      const operationsAvailable = BigInt(current.operations_funded_yocto) - BigInt(current.operations_authorized_spend_yocto);
+      const executionDeposit = BigInt(policy.evaluator.execution_deposit_yocto);
+      if (operationsAvailable < executionDeposit) {
+        setError(`Evaluator operations are exhausted. This request needs ${formatNear(executionDeposit - operationsAvailable)} NEAR; the sponsor must add funds before another evaluation.`);
+        return;
+      }
       const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
         rpcUrl: RPC_URL,
         sendTransaction: createWalletSender(connector),
       }));
+      walletRequestStarted = true;
       const evaluationId = await client.requestEvaluation(data.commitment.id, evidence, {
         attachedDepositYocto: storageDeposit,
         gas: "180000000000000",
       });
       const loaded = await loadCommitment(data.commitment.id);
-      setActionMessage(loaded
-        ? `Evaluation #${evaluationId} requested. The commitment is waiting for its evaluator callback.`
-        : `Evaluation request #${evaluationId} returned successfully. Reload commitment #${data.commitment.id} to verify its state.`);
+      const latest = await readClient.getLatestEvaluation(data.commitment.id).catch(() => null);
+      if (latest?.evaluation_id === evaluationId && latest.status !== "Pending") {
+        setActionMessage(`Evaluation #${evaluationId} finished as ${latest.status}${latest.verdict ? ` · ${latest.verdict}` : ""}. The latest on-chain result is shown below.`);
+      } else {
+        setActionMessage(loaded
+          ? `Evaluation #${evaluationId} was submitted. OutLayer may take several minutes to return its result; this page checks the commitment automatically.`
+          : `Evaluation #${evaluationId} was submitted. Reload commitment #${data.commitment.id} to verify its current state.`);
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The evaluation request failed.");
+      const message = cause instanceof Error ? cause.message : "The evaluation request failed.";
+      if (walletRequestStarted) {
+        try {
+          const current = await readClient.getCommitment(data.commitment.id);
+          await loadCommitment(data.commitment.id);
+          if (current?.pending_evaluation_id) {
+            setError(`The wallet did not return a final result, but NEAR shows evaluation #${current.pending_evaluation_id} is still pending. Do not submit it again; the page will update as the evaluator responds. ${message}`);
+            return;
+          }
+          if (current && current.next_evaluation_id !== requestedEvaluationId) {
+            const latest = await readClient.getLatestEvaluation(data.commitment.id).catch(() => null);
+            setError(`The wallet did not return a final result, but NEAR recorded evaluation #${latest?.evaluation_id ?? "?"}${latest ? ` as ${latest.status}${latest.verdict ? ` · ${latest.verdict}` : ""}` : ""}. Review the refreshed record before trying again. ${message}`);
+            return;
+          }
+        } catch {
+          // Keep the wallet error and make the uncertain chain state explicit below.
+        }
+        setError(`${message} The transaction outcome is uncertain. Refresh commitment #${data.commitment.id} and check your wallet history before retrying; another request uses more evaluator funds.`);
+      } else {
+        setError(message);
+      }
     } finally {
       setRequestingEvaluation(false);
     }
@@ -1272,16 +1339,28 @@ export function Dashboard() {
       }
     } else {
       if (commitment.lifecycle !== "Closed") {
-        setError("Close the commitment before refunding residual escrow.");
+        setError("Close the commitment before recovering remaining funds.");
         return;
       }
       if (accountId !== policy.budget.sponsor) {
-        setError(`Only ${policy.budget.sponsor} can refund residual escrow.`);
+        setError(`Only ${policy.budget.sponsor} can recover commitment funds.`);
         return;
       }
-      if (BigInt(data.escrow?.free_raw ?? data.escrow?.free_yocto ?? "0") === 0n) {
-        setError("There is no residual escrow to refund.");
-        return;
+      if (action === "refund") {
+        if (BigInt(data.escrow?.free_raw ?? data.escrow?.free_yocto ?? "0") === 0n) {
+          setError("There is no residual escrow to refund.");
+          return;
+        }
+      } else {
+        const operationsAvailable = BigInt(commitment.operations_funded_yocto) - BigInt(commitment.operations_authorized_spend_yocto);
+        if (operationsAvailable === 0n) {
+          setError("There are no unused evaluator operations to refund.");
+          return;
+        }
+        if (commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(data.escrow?.pending_raw ?? data.escrow?.pending_yocto ?? "0") > 0n) {
+          setError("Wait for evaluations, challenges, and transfers to settle before refunding evaluator operations.");
+          return;
+        }
       }
     }
 
@@ -1297,9 +1376,9 @@ export function Dashboard() {
         await client.closeCommitment(commitment.id);
         const loaded = await loadCommitment(commitment.id);
         setActionMessage(loaded
-          ? `Commitment #${commitment.id} is closed. The sponsor may request any residual escrow refund.`
+          ? `Commitment #${commitment.id} is closed. The sponsor may return any residual escrow and unused evaluator operations.`
           : `Commitment #${commitment.id} was closed. Reload it to verify its current state.`);
-      } else {
+      } else if (action === "refund") {
         const asset = commitmentSettlementAsset(commitment, policy);
         if (asset.kind === "nep141") {
           if (!await hasSufficientTokenStorage(asset.token_account_id, policy.budget.sponsor)) {
@@ -1317,9 +1396,67 @@ export function Dashboard() {
         setActionMessage(loaded
           ? `Residual refund transfer #${transferId} requested for ${formatAssetValue(refundAmount, asset)}.`
           : `Residual refund transfer #${transferId} requested. Reload commitment #${commitment.id} to verify its state.`);
+      } else {
+        const operationsAvailable = BigInt(commitment.operations_funded_yocto) - BigInt(commitment.operations_authorized_spend_yocto);
+        const transferId = await client.refundUnusedOperations(commitment.id, {
+          attachedDepositYocto: parseNearToYocto(DEFAULT_STORAGE_DEPOSIT),
+          gas: "150000000000000",
+        });
+        const loaded = await loadCommitment(commitment.id);
+        setActionMessage(loaded
+          ? `Unused evaluator refund #${transferId} requested for ${formatNear(operationsAvailable)} NEAR. It settles asynchronously.`
+          : `Unused evaluator refund #${transferId} requested. Reload commitment #${commitment.id} to verify its state.`);
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The closure or refund action failed.");
+    } finally {
+      setClosureAction(null);
+    }
+  }
+
+  async function testNonBeneficiaryCloseGuard() {
+    if (!closeGuardTestMode || NEAR_NETWORK_ID !== "testnet" || !data?.policy || !data.eligibility?.eligible) {
+      setError("This test is available only on local or testnet preview after a tranche is eligible.");
+      return;
+    }
+    const { commitment, policy } = data;
+    const beneficiary = policy.budget.beneficiary;
+    const authorizedNonBeneficiary = [commitment.creator, commitment.maintainer, commitment.arbiter, policy.budget.sponsor]
+      .includes(accountId ?? "");
+    if (!accountId || accountId === beneficiary || !authorizedNonBeneficiary) {
+      setError("Connect an authorized non-beneficiary wallet, such as the sponsor, to run this guard test.");
+      return;
+    }
+    if (commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(data.escrow?.pending_raw ?? commitment.escrow_pending_yocto) > 0n) {
+      setError("Resolve pending evaluations, challenges, and transfers before testing the close guard.");
+      return;
+    }
+    const connector = connectorRef.current;
+    if (!connector) {
+      setError("Reconnect the testnet wallet before running the close-guard test.");
+      return;
+    }
+    if (!window.confirm(`Submit a deliberately rejected close attempt for commitment #${commitment.id} from ${accountId}? The contract should keep the eligible tranche protected; the wallet may charge a testnet transaction fee.`)) return;
+
+    setClosureAction("close");
+    setError(null);
+    setActionMessage(null);
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      await client.closeCommitment(commitment.id);
+      await loadCommitment(commitment.id);
+      setError("The close attempt unexpectedly succeeded. Stop testing and verify the contract state immediately.");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "The close transaction failed.";
+      const loaded = await loadCommitment(commitment.id);
+      if (/beneficiary must claim|claimable tranche/i.test(message) && loaded) {
+        setActionMessage("Expected contract rejection: only the beneficiary may claim or explicitly close an eligible tranche. The commitment remains open.");
+      } else {
+        setError(message);
+      }
     } finally {
       setClosureAction(null);
     }
@@ -1772,6 +1909,7 @@ export function Dashboard() {
                     data={data}
                     accountId={accountId}
                     busy={requestingEvaluation || expiringEvaluation}
+                    requestingEvaluation={requestingEvaluation}
                     pendingTimeoutNs={data.evaluationTimeoutNs}
                     onExpire={expirePendingEvaluation}
                     onSubmit={submitEvaluation}
@@ -1854,11 +1992,13 @@ export function Dashboard() {
                 <ClosureControlsCard
                   data={data}
                   accountId={accountId}
+                  closeGuardTestMode={closeGuardTestMode}
                   tokenReadiness={tokenReadiness}
                   registeringTokenAccount={registeringTokenAccount}
                   onRegisterTokenAccount={(targetAccountId, description) => void registerSettlementAccount(targetAccountId, description)}
                   busyAction={closureAction}
                   onAction={submitClosureAction}
+                  onTestCloseGuard={testNonBeneficiaryCloseGuard}
                 />
               )}
             </section>
@@ -2032,6 +2172,7 @@ export function Dashboard() {
                 commitment={data.commitment}
                 contractId={CONTRACT_ID}
                 testnet={NEAR_NETWORK_ID === "testnet"}
+                authorizationGuardTestMode={adapterAuthorizationTestMode}
                 policy={data.policy}
                 latestGrant={data.latestAuthorityGrant}
                 eligibility={data.eligibility}
@@ -2559,20 +2700,12 @@ async function fetchIndexerJson(url: string, signal: AbortSignal): Promise<unkno
   return response.json() as Promise<unknown>;
 }
 
-function eventIndexerStatusLabel(health: EventIndexerHealth): string {
-  if (health.status === "ready") return "UP TO DATE";
-  if (health.status === "degraded") return "INDEXER DEGRADED";
-  if (health.status === "not_initialized") return "INITIALIZING";
-  return health.lag_blocks === null ? "CATCHING UP" : `CATCHING UP · ${health.lag_blocks.toLocaleString()} BLOCKS`;
-}
-
 function IndexedEventHistory({ commitmentId }: { commitmentId: string }) {
   const [health, setHealth] = useState<EventIndexerHealth | null>(null);
   const [events, setEvents] = useState<IndexedEventRecord[]>([]);
   const [nextBeforeId, setNextBeforeId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [archiveAvailable, setArchiveAvailable] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -2581,31 +2714,29 @@ function IndexedEventHistory({ commitmentId }: { commitmentId: string }) {
     setHealth(null);
     setEvents([]);
     setNextBeforeId(null);
-    setError(null);
-    setLoading(true);
+    setArchiveAvailable(false);
 
     async function loadInitialPage() {
       try {
+        const rawHealth = await fetchIndexerJson(`${EVENT_INDEXER_URL}/health`, controller.signal);
+        const parsedHealth = parseEventIndexerHealth(rawHealth);
+        if (!parsedHealth || parsedHealth.status !== "ready" || parsedHealth.lag_blocks !== 0 || parsedHealth.last_error_code) return;
+
         const eventsUrl = new URL(`${EVENT_INDEXER_URL}/v1/events`);
         eventsUrl.searchParams.set("commitment_id", commitmentId);
         eventsUrl.searchParams.set("limit", "20");
-        const [rawHealth, rawPage] = await Promise.all([
-          fetchIndexerJson(`${EVENT_INDEXER_URL}/health`, controller.signal),
-          fetchIndexerJson(eventsUrl.toString(), controller.signal),
-        ]);
-        const parsedHealth = parseEventIndexerHealth(rawHealth);
+        const rawPage = await fetchIndexerJson(eventsUrl.toString(), controller.signal);
         const parsedPage = parseIndexedEventPage(rawPage);
-        if (!parsedHealth || !parsedPage || !isRecord(rawPage) || rawPage.commitment_id !== commitmentId) {
-          throw new Error("The event indexer returned data for a different network, contract, or commitment.");
+        if (!parsedPage || !isRecord(rawPage) || rawPage.commitment_id !== commitmentId) {
+          return;
         }
+        if (parsedPage.events.length === 0) return;
         setHealth(parsedHealth);
         setEvents(parsedPage.events);
         setNextBeforeId(parsedPage.next_before_id);
-      } catch (cause) {
-        if (controller.signal.aborted) return;
-        setError(cause instanceof Error ? cause.message : "The event indexer could not be reached.");
-      } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        setArchiveAvailable(true);
+      } catch {
+        // Indexed history is optional; contract-backed views remain available without it.
       }
     }
 
@@ -2617,7 +2748,6 @@ function IndexedEventHistory({ commitmentId }: { commitmentId: string }) {
     if (!nextBeforeId || loadingOlder || !requestControllerRef.current) return;
     const controller = requestControllerRef.current;
     setLoadingOlder(true);
-    setError(null);
     try {
       const eventsUrl = new URL(`${EVENT_INDEXER_URL}/v1/events`);
       eventsUrl.searchParams.set("commitment_id", commitmentId);
@@ -2626,57 +2756,54 @@ function IndexedEventHistory({ commitmentId }: { commitmentId: string }) {
       const rawPage = await fetchIndexerJson(eventsUrl.toString(), controller.signal);
       const parsedPage = parseIndexedEventPage(rawPage);
       if (!parsedPage || !isRecord(rawPage) || rawPage.commitment_id !== commitmentId) {
-        throw new Error("The event indexer returned an invalid history page.");
+        setArchiveAvailable(false);
+        return;
       }
       setEvents((current) => [...current, ...parsedPage.events]);
       setNextBeforeId(parsedPage.next_before_id);
-    } catch (cause) {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Older indexed events could not be loaded.");
+    } catch {
+      if (!controller.signal.aborted) setArchiveAvailable(false);
     } finally {
       if (!controller.signal.aborted) setLoadingOlder(false);
     }
   }
 
+  if (!archiveAvailable) return null;
+
   return (
     <section className="content-card indexed-history" aria-labelledby="indexed-history-title">
       <div className="card-heading">
-        <div><p className="eyebrow">PUBLIC ARCHIVE · {health ? eventIndexerStatusLabel(health) : "FINALIZED LCP EVENTS"}</p><h3 id="indexed-history-title">Indexed event history</h3></div>
+        <div><p className="eyebrow">PUBLIC ARCHIVE · UP TO DATE</p><h3 id="indexed-history-title">Indexed event history</h3></div>
         <span className="card-index">INDEX</span>
       </div>
       <p className="indexed-history-explainer">A paginated archive of LCP events from finalized NEAR blocks. Health, eligibility, and settlement continue to come directly from the contract.</p>
       {health?.last_processed_height !== null && health?.last_processed_height !== undefined && (
-        <p className="indexed-history-status">Last indexed block {health.last_processed_height.toLocaleString()}{health.lag_blocks !== null ? ` · ${health.lag_blocks.toLocaleString()} blocks behind` : ""}</p>
+        <p className="indexed-history-status">Current through block {health.last_processed_height.toLocaleString()}.</p>
       )}
-      {health?.last_error_code && <p className="indexed-history-error">Indexer reports {health.last_error_code}.</p>}
-      {error && <p className="indexed-history-error" role="status">{error}</p>}
-      {loading ? <p className="empty-copy">Loading finalized event history…</p> : events.length === 0 ? (
-        <p className="empty-copy">No indexed events are available for this commitment yet. The indexer may still be catching up.</p>
-      ) : (
-        <ol className="indexed-event-list">
-          {events.map((item) => {
-            const eventData = item.event.data[0] ?? {};
-            const eventLabel = item.event.event.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
-            return (
-              <li className="indexed-event" key={item.id}>
-                <div className="indexed-event-heading">
-                  <strong>{eventLabel}</strong>
-                  <span>BLOCK {item.block_height}</span>
-                </div>
-                <time>{formatDate(item.block_timestamp_ns)}</time>
-                {item.transaction_hash && (
-                  <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${item.transaction_hash}`} target="_blank" rel="noopener noreferrer">
-                    NEAR transaction ↗
-                  </a>
-                )}
-                <details>
-                  <summary>Public event data</summary>
-                  <pre>{JSON.stringify(eventData, null, 2)}</pre>
-                </details>
-              </li>
-            );
-          })}
-        </ol>
-      )}
+      <ol className="indexed-event-list">
+        {events.map((item) => {
+          const eventData = item.event.data[0] ?? {};
+          const eventLabel = item.event.event.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+          return (
+            <li className="indexed-event" key={item.id}>
+              <div className="indexed-event-heading">
+                <strong>{eventLabel}</strong>
+                <span>BLOCK {item.block_height}</span>
+              </div>
+              <time>{formatDate(item.block_timestamp_ns)}</time>
+              {item.transaction_hash && (
+                <a href={`https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/txns/${item.transaction_hash}`} target="_blank" rel="noopener noreferrer">
+                  NEAR transaction ↗
+                </a>
+              )}
+              <details>
+                <summary>Public event data</summary>
+                <pre>{JSON.stringify(eventData, null, 2)}</pre>
+              </details>
+            </li>
+          );
+        })}
+      </ol>
       {nextBeforeId && (
         <button className="browser-more-button indexed-history-more" type="button" onClick={() => void loadOlderEvents()} disabled={loadingOlder}>
           {loadingOlder ? "Loading older events…" : "Load older events"}
@@ -3620,6 +3747,7 @@ function EvidenceSubmissionCard({
   data,
   accountId,
   busy,
+  requestingEvaluation,
   pendingTimeoutNs,
   onExpire,
   onSubmit,
@@ -3628,6 +3756,7 @@ function EvidenceSubmissionCard({
   data: CommitmentData;
   accountId: string | null;
   busy: boolean;
+  requestingEvaluation: boolean;
   pendingTimeoutNs: string | null;
   onExpire: () => Promise<void>;
   onSubmit: (evidence: SignedHeartbeatEvidence, storageDeposit: string) => Promise<void>;
@@ -3831,7 +3960,7 @@ function EvidenceSubmissionCard({
             {busy ? "Expiring evaluation…" : "Expire after timeout"}
           </button>
           {!accountId && <small>Connect any testnet wallet to expire the request.</small>}
-          <small>Any connected wallet can expire the request after its deadline if the OutLayer callback has not completed.</small>
+          <small>This page checks the on-chain status automatically every 30 seconds. Any connected wallet can expire the request after its deadline if the OutLayer callback has not completed. If the wallet stops waiting, refresh the commitment before retrying; a duplicate request spends more evaluator funds.</small>
         </div>
       )}
       {commitment.active_challenge_id && <p className="form-wallet-hint">Resolve challenge #{commitment.active_challenge_id} before requesting another evaluation.</p>}
@@ -3880,7 +4009,7 @@ function EvidenceSubmissionCard({
             <FormField label="Request storage deposit · NEAR"><input inputMode="decimal" value={storageDepositNear} onChange={(event) => setStorageDepositNear(event.target.value)} /><small>Includes the maximum evaluator callback reserve. The contract refunds any excess.</small></FormField>
           </div>
           {formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
-          <div className="creation-submit-row"><p>Requesting evaluation spends the evaluator execution budget and reserves callback storage. The contract validates the signature scheme, key pin, and request binding.</p><button className="lookup-button" type="submit" disabled={busy || signing || !canRequest || blocked || (policy.version === 1 ? !signature : !walletEvidence)}>{busy ? <><span className="spinner" />Requesting evaluation</> : <>Request evaluation <span aria-hidden="true">↗</span></>}</button></div>
+          <div className="creation-submit-row"><p>Requesting evaluation spends the evaluator execution budget and reserves callback storage. OutLayer can take several minutes to execute and return its callback to NEAR. If the wallet stops waiting, check the on-chain status before retrying.</p><button className="lookup-button" type="submit" disabled={busy || signing || !canRequest || blocked || (policy.version === 1 ? !signature : !walletEvidence)}>{requestingEvaluation ? <><span className="spinner" />Waiting for OutLayer and NEAR</> : busy ? "Processing…" : <>Request evaluation <span aria-hidden="true">↗</span></>}</button></div>
         </form>
       )}
       {!payload && formError && <div className="notice notice-error form-notice" role="alert"><span className="notice-icon">!</span>{formError}</div>}
@@ -4014,19 +4143,23 @@ function ChallengeControlsCard({
 function ClosureControlsCard({
   data,
   accountId,
+  closeGuardTestMode,
   tokenReadiness,
   registeringTokenAccount,
   onRegisterTokenAccount,
   busyAction,
   onAction,
+  onTestCloseGuard,
 }: {
   data: CommitmentData;
   accountId: string | null;
+  closeGuardTestMode: boolean;
   tokenReadiness: TokenReadiness | null;
   registeringTokenAccount: string | null;
   onRegisterTokenAccount: (accountId: string, description: string) => void;
   busyAction: ClosureAction | null;
   onAction: (action: ClosureAction, storageDeposit?: string) => Promise<void>;
+  onTestCloseGuard: () => Promise<void>;
 }) {
   const { commitment, policy, escrow } = data;
   const asset = commitmentSettlementAsset(commitment, policy);
@@ -4035,10 +4168,11 @@ function ClosureControlsCard({
   const canRefund = accountId === policy?.budget.sponsor;
   const residualYocto = escrow?.free_raw ?? escrow?.free_yocto ?? "0";
   const hasResidual = BigInt(residualYocto) > 0n;
+  const operationsAvailable = BigInt(commitment.operations_funded_yocto) - BigInt(commitment.operations_authorized_spend_yocto);
   const pendingYocto = escrow?.pending_raw ?? escrow?.pending_yocto ?? "0";
   const hasRefundPending = BigInt(pendingYocto) > 0n;
   const refundedYocto = escrow?.refunded_raw ?? escrow?.refunded_yocto ?? "0";
-  const hasPending = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(pendingYocto) > 0n);
+  const hasPending = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id || (commitment.pending_transfer_count ?? 0) > 0 || BigInt(pendingYocto) > 0n);
   const eligibleEpoch = data.eligibility?.eligible ? data.eligibility.claimable_epoch ?? data.eligibility.current_epoch : null;
   const beneficiaryHasClaimableTranche = Boolean(data.eligibility?.eligible && eligibleEpoch !== null);
   const beneficiaryConnected = Boolean(accountId && beneficiary && accountId === beneficiary);
@@ -4047,7 +4181,7 @@ function ClosureControlsCard({
   return (
     <section className="content-card closure-controls">
       <div className="card-heading">
-        <div><p className="eyebrow">CLOSE · SETTLE REMAINING ESCROW</p><h3>{commitment.lifecycle === "Closed" ? "Commitment closed." : "End this commitment."}</h3></div>
+        <div><p className="eyebrow">CLOSE · RETURN REMAINING FUNDS</p><h3>{commitment.lifecycle === "Closed" ? "Commitment closed." : "End this commitment."}</h3></div>
         <span className="card-index">{commitment.lifecycle.toUpperCase()}</span>
       </div>
       {commitment.lifecycle === "Closed" ? (
@@ -4078,10 +4212,28 @@ function ClosureControlsCard({
           ) : BigInt(refundedYocto) > 0n ? (
             <div className="closure-refund-pending"><strong>Refund complete</strong><span>{formatAssetValue(refundedYocto, asset)} has been returned to the sponsor.</span></div>
           ) : <p className="closure-help">No residual escrow is available to refund.</p>}
+          <div className="closure-balance"><span>UNUSED EVALUATOR OPERATIONS</span><strong>{formatNear(operationsAvailable)} NEAR</strong></div>
+          {operationsAvailable > 0n ? (
+            <>
+              {!canRefund && <p className="form-wallet-hint">Connect the sponsor wallet ({policy?.budget.sponsor}) to recover unused evaluator operations.</p>}
+              <div className="closure-refund-row">
+                <div className="closure-refund-deposit"><span>REFUND STORAGE BOND</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
+                <button type="button" onClick={() => void onAction("refund_operations", DEFAULT_STORAGE_DEPOSIT)} disabled={!canRefund || hasPending || busyAction !== null}>
+                  {busyAction === "refund_operations" ? "Returning evaluator funds…" : "Return unused evaluator funds"}
+                </button>
+              </div>
+              <small className="closure-help">The sponsor receives {formatNear(operationsAvailable)} NEAR. The app attaches {DEFAULT_STORAGE_DEPOSIT} NEAR for transfer storage and returns any excess. The transfer settles asynchronously.</small>
+              {hasPending && <p className="form-wallet-hint">Wait for pending evaluations, challenges, and transfers to settle before returning evaluator operations.</p>}
+            </>
+          ) : (
+            commitment.pending_transfer_count && commitment.pending_transfer_count > 0
+              ? <div className="closure-refund-pending"><strong>Commitment transfer is settling</strong><span>Wait for its callback before treating the final balances as settled.</span></div>
+              : <p className="closure-help">No unused evaluator operations remain to return.</p>
+          )}
         </>
       ) : (
         <>
-          <p className="closure-intro">Closing stops future evaluations and claims. After pending work settles, the sponsor can request the remaining escrow refund.</p>
+          <p className="closure-intro">Closing stops future evaluations and claims. After pending work settles, the sponsor can refund remaining escrow and recover unused evaluator operations.</p>
           {beneficiaryHasClaimableTranche && (
             <div className="notice notice-warning" role="status">
               <span className="notice-icon">!</span>
@@ -4093,6 +4245,16 @@ function ClosureControlsCard({
           {hasPending && <p className="form-wallet-hint">Resolve pending evaluations, challenges, and escrow transfers before closing.</p>}
           {!canClose && <p className="form-wallet-hint">Connect the creator, maintainer, arbiter, sponsor, or beneficiary wallet to close this commitment.</p>}
           <button className="close-commitment-button" type="button" onClick={() => void onAction("close")} disabled={!canClose || hasPending || blockedByClaimableTranche || busyAction !== null}>{busyAction === "close" ? "Closing commitment…" : beneficiaryHasClaimableTranche && beneficiaryConnected ? "Close and forfeit eligible tranche" : "Close commitment"}</button>
+          {closeGuardTestMode && beneficiaryHasClaimableTranche && !beneficiaryConnected && canClose && !hasPending && (
+            <div className="notice notice-warning" role="status">
+              <span className="notice-icon">!</span>
+              <div>
+                <strong>Test only · contract close guard</strong>
+                <p>This sends a non-beneficiary close call that should fail on testnet. A failed transaction can still spend a small amount of gas.</p>
+                <button className="browser-button" type="button" onClick={() => void onTestCloseGuard()} disabled={busyAction !== null}>Test non-beneficiary close rejection</button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </section>
@@ -4430,7 +4592,7 @@ function CreateCommitmentForm({
     maxInstructions: "1000000000",
     maxMemoryMb: "64",
     maxExecution: durationFromSeconds("10"),
-    requestTimeout: durationFromSeconds("180"),
+    requestTimeout: durationFromSeconds("300"),
     storageDepositNear: DEFAULT_STORAGE_DEPOSIT,
   });
   const [selectedTemplateId, setSelectedTemplateId] = useState(POLICY_TEMPLATES[0].id);
@@ -4738,7 +4900,7 @@ function CreateCommitmentForm({
           <FormField label="Maximum instructions"><input inputMode="numeric" value={fields.maxInstructions} onChange={(event) => update("maxInstructions", event.target.value)} required /></FormField>
           <FormField label="Memory limit · MB"><input type="number" min="1" max="4096" step="1" value={fields.maxMemoryMb} onChange={(event) => update("maxMemoryMb", event.target.value)} required /></FormField>
           <DurationField label="Execution limit" value={fields.maxExecution} onChange={(maxExecution) => update("maxExecution", maxExecution)} help="Maximum evaluator runtime. The current OutLayer configuration supports up to 180 seconds." units={["seconds", "minutes"]} />
-          <DurationField label="OutLayer response deadline" value={fields.requestTimeout} onChange={(requestTimeout) => update("requestTimeout", requestTimeout)} help="Default 180 seconds allows time for evaluation and the callback to NEAR. If it expires, the request ends without a verdict." units={["seconds", "minutes"]} />
+          <DurationField label="OutLayer response deadline" value={fields.requestTimeout} onChange={(requestTimeout) => update("requestTimeout", requestTimeout)} help="Default 5 minutes allows time for OutLayer's 180-second execution limit plus callback delivery to NEAR. If it expires, the request ends without a verdict; another attempt needs more evaluator funds." units={["seconds", "minutes"]} />
           <FormField label="Draft storage bond · NEAR"><input inputMode="decimal" value={fields.storageDepositNear} onChange={(event) => update("storageDepositNear", event.target.value)} readOnly={evidenceMode === "service_availability"} required /><small>{evidenceMode === "service_availability" ? "Service policies attach a conservative 0.05 NEAR bond; the contract returns the unused amount." : "Any excess is returned by the contract."}</small></FormField>
         </div>
       </details>
@@ -4754,7 +4916,7 @@ function CreateCommitmentForm({
 function FieldHelp({ label, help }: { label: string; help: string }) {
   return (
     <details className="field-help">
-      <summary aria-label={`More information about ${label}`} title={`More information about ${label}`}>?</summary>
+      <summary aria-label={`More information about ${label}`} title={`More information about ${label}`}><span aria-hidden="true">?</span></summary>
       <div className="field-help-popover" role="note">{help}</div>
     </details>
   );
@@ -4931,7 +5093,7 @@ function buildCreateCommitmentArgs(
     throw new Error("Evidence windows and grace period exceed the supported timestamp range.");
   }
   const executionSeconds = durationToSeconds(fields.maxExecution, "Execution limit", 180n);
-  const requestTimeoutSeconds = durationToSeconds(fields.requestTimeout, "OutLayer response deadline", 180n);
+  const requestTimeoutSeconds = durationToSeconds(fields.requestTimeout, "OutLayer response deadline", 300n);
   if (BigInt(requestTimeoutSeconds) < BigInt(executionSeconds)) {
     throw new Error("Request timeout must cover the maximum execution time.");
   }
@@ -5266,8 +5428,11 @@ function evaluationExplanation(record: EvaluationRecordView): string | null {
   if (record.reason_codes.includes("CORROBORATION_THRESHOLD_NOT_MET")) {
     return "The reports did not meet the configured agreement coverage. The result is inconclusive, not proof that the service was down.";
   }
-  if (record.reason_codes.includes("OUTLAYER_EXECUTION_FAILED") || record.reason_codes.includes("MISSING_OUTLAYER_RESULT")) {
-    return "The evaluator failed before returning a result. This is not a service health verdict; check the evaluator service before retrying.";
+  if (record.reason_codes.includes("MISSING_OUTLAYER_RESULT")) {
+    return "OutLayer returned no verdict payload. LCP kept the prior health evidence unchanged. Check the OutLayer execution record before retrying; another configured operations deposit is reserved; any unused-resource refund follows the payer account configured for this contract.";
+  }
+  if (record.reason_codes.includes("OUTLAYER_EXECUTION_FAILED")) {
+    return "OutLayer failed before delivering a verdict. LCP kept the prior health evidence unchanged. Check the OutLayer execution record before retrying; another configured operations deposit is reserved; any unused-resource refund follows the payer account configured for this contract.";
   }
   if (record.status === "Pending") return "The request is waiting for the configured evaluator to return a result.";
   return null;
@@ -5371,7 +5536,7 @@ function EvaluationProofReference({
       <p className={`attestation-status attestation-${attestation.kind}`} role="status">
         {attestation.kind === "idle" ? "" : attestation.message}
       </p>
-      <code>outlayer-verify tx {transactionHash} --network {NEAR_NETWORK_ID}</code>
+      <code>outlayer-verify tx {transactionHash} --network {NEAR_NETWORK_ID} --api {NEAR_NETWORK_ID === "testnet" ? "https://testnet-api.outlayer.ai" : "https://api.outlayer.ai"}</code>
     </div>
   );
 }

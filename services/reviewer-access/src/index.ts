@@ -659,23 +659,80 @@ async function createGrant(env: Env, near: NearReadSession, body: unknown): Prom
   } catch {
     try {
       const committedGrant = await env.DB.prepare(
-        `SELECT g.grant_id, g.expires_at_ns, a.commitment_id, a.evaluation_id, a.evidence_digest
-         FROM reviewer_grants g JOIN encrypted_artifacts a ON a.artifact_id = g.artifact_id
-         WHERE g.request_id = ? AND a.network = ? AND a.contract_id = ?`,
-      ).bind(requestRow.request_id, env.NETWORK, env.CONTRACT_ID).first<{
+        `SELECT g.grant_id, g.request_id, g.artifact_id, g.owner_account, g.reviewer_account,
+                g.scopes_json, g.expires_at_ns, g.hpke_enc_b64, g.wrapped_key_b64,
+                g.content_iv_b64, g.created_at_ns, a.object_key, a.network, a.contract_id,
+                a.commitment_id, a.evaluation_id, a.evidence_digest, a.ciphertext_sha256,
+                a.ciphertext_bytes, r.status AS request_status, r.resolved_by,
+                r.resolved_at_ns, r.resolution_public_key, r.resolution_signature_b64,
+                r.resolution_callback_url, r.resolution_signed_record_json
+         FROM reviewer_grants g
+         JOIN encrypted_artifacts a ON a.artifact_id = g.artifact_id
+         JOIN reviewer_requests r ON r.request_id = g.request_id
+         WHERE g.grant_id = ? AND g.request_id = ? AND g.artifact_id = ?`,
+      ).bind(grantId, requestRow.request_id, artifactId).first<{
         grant_id: string;
+        request_id: string;
+        artifact_id: string;
+        owner_account: string;
+        reviewer_account: string;
+        scopes_json: string;
         expires_at_ns: string;
+        hpke_enc_b64: string;
+        wrapped_key_b64: string;
+        content_iv_b64: string;
+        created_at_ns: string;
+        object_key: string;
+        network: string;
+        contract_id: string;
         commitment_id: string;
         evaluation_id: string;
         evidence_digest: string;
+        ciphertext_sha256: string;
+        ciphertext_bytes: number;
+        request_status: string;
+        resolved_by: string | null;
+        resolved_at_ns: string | null;
+        resolution_public_key: string | null;
+        resolution_signature_b64: string | null;
+        resolution_callback_url: string | null;
+        resolution_signed_record_json: string | null;
       }>();
-      if (committedGrant) {
+      const expectedSignedRecord = canonicalJson({ payload: requestPayload, signed_message: signed });
+      const exactOperationCommitted = committedGrant
+        && committedGrant.grant_id === grantId
+        && committedGrant.request_id === requestRow.request_id
+        && committedGrant.artifact_id === artifactId
+        && committedGrant.owner_account === signed.account_id
+        && committedGrant.reviewer_account === requestRow.reviewer_account
+        && committedGrant.scopes_json === JSON.stringify(scopes)
+        && committedGrant.expires_at_ns === expiresAt.toString()
+        && committedGrant.hpke_enc_b64 === grant.hpke_enc_b64
+        && committedGrant.wrapped_key_b64 === grant.wrapped_key_b64
+        && committedGrant.content_iv_b64 === grant.content_iv_b64
+        && committedGrant.created_at_ns === now.toString()
+        && committedGrant.object_key === objectKey
+        && committedGrant.network === env.NETWORK
+        && committedGrant.contract_id === env.CONTRACT_ID
+        && committedGrant.commitment_id === requestRow.commitment_id
+        && committedGrant.evaluation_id === requestRow.evaluation_id
+        && committedGrant.evidence_digest === requestRow.evidence_digest
+        && committedGrant.ciphertext_sha256 === ciphertextDigest
+        && committedGrant.ciphertext_bytes === ciphertext.byteLength
+        && committedGrant.request_status === "approved"
+        && committedGrant.resolved_by === signed.account_id
+        && committedGrant.resolved_at_ns === now.toString()
+        && committedGrant.resolution_public_key === signed.public_key
+        && committedGrant.resolution_signature_b64 === signed.signature
+        && committedGrant.resolution_callback_url === (signed.callback_url ?? null)
+        && committedGrant.resolution_signed_record_json === expectedSignedRecord;
+      if (exactOperationCommitted) {
         return json({
-          grant_id: committedGrant.grant_id,
+          grant_id: grantId,
           status: "active",
           expires_at_ns: committedGrant.expires_at_ns,
           artifact: {
-            grant_id: committedGrant.grant_id,
+            grant_id: grantId,
             commitment_id: committedGrant.commitment_id,
             evaluation_id: committedGrant.evaluation_id,
             evidence_digest: committedGrant.evidence_digest,

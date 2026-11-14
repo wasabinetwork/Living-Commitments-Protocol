@@ -4,6 +4,9 @@ const RPC_PROVIDER_COUNT = 3;
 const RPC_QUORUM = 2;
 const RPC_TIMEOUT_MS = 8_000;
 const MAX_RPC_RESPONSE_BYTES = 4 * 1024 * 1024;
+const MAX_FINALIZED_HEAD_SKEW_BLOCKS = 5;
+const MAX_FINALIZED_AGE_NS = 60_000_000_000n;
+const MAX_FINALIZED_FUTURE_SKEW_NS = 15_000_000_000n;
 
 interface FinalizedSnapshot {
   blockHash: string;
@@ -166,20 +169,58 @@ function parseFinalizedSnapshot(value: unknown): FinalizedSnapshot | null {
 
 async function finalizedSnapshot(urls: string[]): Promise<FinalizedSnapshot> {
   const outcomes = await Promise.all(urls.map((url) => callProvider(url, "block", { finality: "final" })));
-  const snapshots = outcomes
-    .filter((outcome): outcome is RpcSuccess => outcome?.kind === "success")
-    .map((outcome) => parseFinalizedSnapshot(outcome.result))
-    .filter((snapshot): snapshot is FinalizedSnapshot => snapshot !== null);
-  if (snapshots.length < RPC_QUORUM) throw new NearUnavailableError("Finalized NEAR state is unavailable.");
+  const heads = outcomes.flatMap((outcome, index) => {
+    if (outcome?.kind !== "success") return [];
+    const snapshot = parseFinalizedSnapshot(outcome.result);
+    return snapshot ? [{ url: urls[index], snapshot }] : [];
+  });
+  if (heads.length < RPC_QUORUM) throw new NearUnavailableError("Finalized NEAR state is unavailable.");
 
-  // An isolated provider reporting a higher finalized height must not cause us to
-  // silently authorize against a stale lower quorum. Wait until peers agree.
-  const highestHeight = Math.max(...snapshots.map((snapshot) => snapshot.blockHeight));
-  const candidates = snapshots.filter((snapshot) => snapshot.blockHeight === highestHeight);
-  const groups = groupBy(candidates, (snapshot) => `${snapshot.blockHash}:${snapshot.timestampNs}`);
-  const agreed = [...groups.values()].find((group) => group.length >= RPC_QUORUM);
-  if (!agreed) throw new NearUnavailableError("Finalized NEAR providers did not agree on the current block.");
-  return agreed[0];
+  const heights = heads.map(({ snapshot }) => snapshot.blockHeight).sort((left, right) => left - right);
+  if (heights[heights.length - 1] - heights[0] > MAX_FINALIZED_HEAD_SKEW_BLOCKS) {
+    throw new NearUnavailableError("Finalized NEAR providers are too far apart to choose a fresh checkpoint.");
+  }
+  // Use the highest height covered by at least two current finalized heads
+  // (the median of three, or the lower of two). This tolerates ordinary
+  // one-to-few block propagation skew without trusting an isolated higher
+  // head or falling back to an unbounded stale quorum.
+  const checkpointHeight = heights[heights.length - RPC_QUORUM];
+  const sameHeightHeads = heads.filter(({ snapshot }) => snapshot.blockHeight === checkpointHeight);
+  if (new Set(sameHeightHeads.map(({ snapshot }) => `${snapshot.blockHash}:${snapshot.timestampNs}`)).size > 1) {
+    throw new NearUnavailableError("Finalized NEAR providers returned conflicting blocks at the same height.");
+  }
+
+  // Ask all providers for the same finalized height. Authorization reads will
+  // then be pinned to a checkpoint that at least two current finalized heads cover.
+  const checkpointOutcomes = await Promise.all(urls.map((url) => callProvider(url, "block", { block_id: checkpointHeight })));
+  const checkpoints = new Map<string, FinalizedSnapshot>();
+  for (let index = 0; index < checkpointOutcomes.length; index += 1) {
+    const outcome = checkpointOutcomes[index];
+    if (outcome?.kind !== "success") continue;
+    const snapshot = parseFinalizedSnapshot(outcome.result);
+    if (!snapshot) continue;
+    if (snapshot.blockHeight !== checkpointHeight) {
+      throw new NearUnavailableError("A NEAR provider returned a different height for the pinned finalized checkpoint.");
+    }
+    const sameProviderHead = heads.find(({ url }) => url === urls[index])?.snapshot;
+    if (sameProviderHead?.blockHeight === checkpointHeight
+        && (sameProviderHead.blockHash !== snapshot.blockHash || sameProviderHead.timestampNs !== snapshot.timestampNs)) {
+      throw new NearUnavailableError("A NEAR provider contradicted its finalized block at the pinned height.");
+    }
+    checkpoints.set(urls[index], snapshot);
+  }
+  const values = [...checkpoints.values()];
+  if (values.length < RPC_QUORUM) throw new NearUnavailableError("Finalized NEAR providers did not supply a checkpoint quorum.");
+  const agreed = values[0];
+  if (values.some((snapshot) => snapshot.blockHash !== agreed.blockHash || snapshot.timestampNs !== agreed.timestampNs)) {
+    throw new NearUnavailableError("Finalized NEAR providers returned conflicting blocks at the pinned height.");
+  }
+
+  const ageNs = BigInt(Date.now()) * 1_000_000n - agreed.timestampNs;
+  if (ageNs > MAX_FINALIZED_AGE_NS || ageNs < -MAX_FINALIZED_FUTURE_SKEW_NS) {
+    throw new NearUnavailableError("The agreed finalized NEAR checkpoint is stale or has an invalid timestamp.");
+  }
+  return agreed;
 }
 
 function groupBy<T>(values: T[], keyFor: (value: T) => string): Map<string, T[]> {
@@ -200,7 +241,7 @@ function isTransientRpcError(error: unknown): boolean {
   } catch {
     return true;
   }
-  return /rate.?limit|too many requests|temporar|timed? ?out|unavailable|overload|capacity|server error|internal error/i.test(text);
+  return /rate.?limit|too many requests|temporar|timed? ?out|unavailable|overload|capacity|server error|internal error|unknown block|block not found/i.test(text);
 }
 
 async function quorumQuery(
@@ -222,12 +263,17 @@ async function quorumQuery(
     }
     if (typeof outcome.result !== "object" || outcome.result === null) continue;
     const result = outcome.result as Record<string, unknown>;
-    if (result.block_hash !== snapshot.blockHash || result.block_height !== snapshot.blockHeight) continue;
+    if (typeof result.block_hash !== "string" || typeof result.block_height !== "number") continue;
+    if (result.block_hash !== snapshot.blockHash || result.block_height !== snapshot.blockHeight) {
+      throw new NearUnavailableError("A NEAR provider returned authorization state from a different block.");
+    }
     matching.push(outcome);
   }
   const groups = groupBy(matching, (outcome) => `${outcome.kind}:${canonicalJson(outcome.kind === "success" ? outcome.result : outcome.error)}`);
-  const agreed = [...groups.values()].find((group) => group.length >= RPC_QUORUM);
-  if (!agreed) throw new NearUnavailableError("Finalized NEAR providers did not agree on authorization state.");
+  if (matching.length < RPC_QUORUM || groups.size !== 1) {
+    throw new NearUnavailableError("Finalized NEAR providers did not agree on authorization state.");
+  }
+  const agreed = matching;
   if (agreed[0].kind === "rpc_error") throw new NearReadError("The requested NEAR state is unavailable.");
   return agreed[0].result;
 }

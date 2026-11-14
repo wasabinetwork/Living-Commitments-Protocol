@@ -1,0 +1,6 @@
+{
+  "substituted_backup_accepted": true,
+  "legitimate_key_can_decrypt": false,
+  "substituted_key_can_decrypt": true,
+  "requires_access_to_ciphertext": true
+}

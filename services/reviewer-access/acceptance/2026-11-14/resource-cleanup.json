@@ -1,0 +1,45 @@
+[
+  {
+    "resource_type": "worker",
+    "name": "lcp-reviewer-audit-20261114-ple",
+    "timestamp": null,
+    "exit_code": 0,
+    "deleted": true,
+    "time_note": "Successful deletion was observed before RPC mock cleanup; the exact command completion time was not captured."
+  },
+  {
+    "resource_type": "worker",
+    "name": "lcp-reviewer-audit-rpc1-ple",
+    "timestamp": "2026-11-14T19:47:14.717Z",
+    "exit_code": 0,
+    "deleted": true
+  },
+  {
+    "resource_type": "worker",
+    "name": "lcp-reviewer-audit-rpc2-ple",
+    "timestamp": "2026-11-14T19:47:18.411Z",
+    "exit_code": 0,
+    "deleted": true
+  },
+  {
+    "resource_type": "worker",
+    "name": "lcp-reviewer-audit-rpc3-ple",
+    "timestamp": "2026-11-14T19:47:22.703Z",
+    "exit_code": 0,
+    "deleted": true
+  },
+  {
+    "resource_type": "r2",
+    "name": "lcp-reviewer-audit-20261114-ple",
+    "timestamp": "2026-11-14T19:47:56.906Z",
+    "exit_code": 0,
+    "deleted": true
+  },
+  {
+    "resource_type": "d1",
+    "name": "lcp-reviewer-audit-20261114-ple",
+    "timestamp": "2026-11-14T19:47:59.352Z",
+    "exit_code": 0,
+    "deleted": true
+  }
+]
