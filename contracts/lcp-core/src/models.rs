@@ -12,6 +12,24 @@ pub type EvaluationId = u64;
 pub type ChallengeId = u64;
 pub type TransferId = u64;
 
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde", tag = "kind", rename_all = "snake_case")]
+pub enum SettlementAsset {
+    Near,
+    Nep141 {
+        token_account_id: AccountId,
+        decimals: u8,
+    },
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(crate = "near_sdk::serde", tag = "kind", rename_all = "snake_case")]
+pub enum SettlementAssetArgs {
+    Near,
+    Nep141 { token_account_id: AccountId },
+}
+
 pub const EVALUATION_REQUEST_SCHEMA: &str = "lcp.evaluation.request.v1";
 pub const EVALUATION_VERDICT_SCHEMA: &str = "lcp.evaluation.verdict.v2";
 pub const SERVICE_AVAILABILITY_REQUEST_SCHEMA: &str = "lcp.service_availability.request.v1";
@@ -197,6 +215,8 @@ pub struct TrancheView {
     pub commitment_id: U64,
     pub epoch: U64,
     pub amount_yocto: U128,
+    pub settlement_asset: SettlementAsset,
+    pub amount_raw: U128,
     pub status: TrancheStatus,
     pub transfer_id: Option<U64>,
 }
@@ -207,6 +227,8 @@ impl From<&Tranche> for TrancheView {
             commitment_id: U64(tranche.commitment_id),
             epoch: U64(u64::from(tranche.epoch)),
             amount_yocto: U128(tranche.amount_yocto),
+            settlement_asset: SettlementAsset::Near,
+            amount_raw: U128(tranche.amount_yocto),
             status: tranche.status,
             transfer_id: tranche.transfer_id.map(U64),
         }
@@ -690,6 +712,10 @@ pub struct BudgetPolicyArgs {
     pub epoch_ns: U64,
     pub max_epochs: u32,
     pub tranche_yocto: U128,
+    #[serde(default)]
+    pub settlement_asset: Option<SettlementAssetArgs>,
+    #[serde(default)]
+    pub tranche_amount_raw: Option<U128>,
 }
 
 #[derive(Serialize)]
@@ -736,6 +762,8 @@ pub struct CommitmentPolicyView {
     pub evidence: EvidencePolicyView,
     pub evaluator: EvaluatorPolicyView,
     pub budget: BudgetPolicyView,
+    pub settlement_asset: SettlementAsset,
+    pub tranche_amount_raw: U128,
 }
 
 #[derive(Serialize)]
@@ -771,6 +799,12 @@ pub struct CommitmentView {
     pub escrow_paid_yocto: U128,
     pub escrow_refunded_yocto: U128,
     pub escrow_pending_yocto: U128,
+    pub settlement_asset: SettlementAsset,
+    pub escrow_funded_raw: U128,
+    pub escrow_paid_raw: U128,
+    pub escrow_refunded_raw: U128,
+    pub escrow_pending_raw: U128,
+    pub tranche_amount_raw: U128,
     pub operations_funded_yocto: U128,
     pub operations_authorized_spend_yocto: U128,
     pub storage_deposit_yocto: U128,
@@ -786,6 +820,9 @@ pub struct CommitmentSummaryView {
     pub policy_version: u32,
     pub escrow_funded_yocto: U128,
     pub escrow_paid_yocto: U128,
+    pub settlement_asset: SettlementAsset,
+    pub escrow_funded_raw: U128,
+    pub escrow_paid_raw: U128,
 }
 
 #[derive(Serialize)]
@@ -797,6 +834,8 @@ pub struct ClaimEligibilityView {
     pub claimable_epoch: Option<U64>,
     pub claim_window_resumed: bool,
     pub amount_yocto: U128,
+    pub settlement_asset: SettlementAsset,
+    pub amount_raw: U128,
 }
 
 #[derive(Serialize)]
@@ -807,6 +846,12 @@ pub struct EscrowStatusView {
     pub refunded_yocto: U128,
     pub pending_yocto: U128,
     pub free_yocto: U128,
+    pub settlement_asset: SettlementAsset,
+    pub funded_raw: U128,
+    pub paid_raw: U128,
+    pub refunded_raw: U128,
+    pub pending_raw: U128,
+    pub free_raw: U128,
 }
 
 impl From<&TemporalPolicy> for TemporalPolicyView {
@@ -857,6 +902,8 @@ impl From<&CommitmentPolicy> for CommitmentPolicyView {
                 max_epochs: policy.budget.max_epochs,
                 tranche_yocto: U128(policy.budget.tranche_yocto),
             },
+            settlement_asset: SettlementAsset::Near,
+            tranche_amount_raw: U128(policy.budget.tranche_yocto),
         }
     }
 }

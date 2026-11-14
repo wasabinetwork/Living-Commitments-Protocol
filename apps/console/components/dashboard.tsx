@@ -22,6 +22,7 @@ import type {
   CommitmentView,
   EvaluationRecordView,
   EscrowStatusView,
+  FungibleTokenStorageBalance,
   NearTransactionRequest,
   NearTransactionSender,
   NearEd25519PublicKey,
@@ -35,12 +36,14 @@ import type {
   ServiceReportInboxView,
   ServicePolicyAmendmentView,
   ServiceAvailabilitySourceInput,
+  SettlementAsset,
+  SettlementAssetInput,
   TrancheView,
 } from "@lcp/sdk";
 import { ReviewerAccessPanel } from "./reviewer-access-panel";
 import { AuthorityAdapterCard, ServicePolicyAmendmentCard } from "./governance-panels";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
+import { Children, cloneElement, isValidElement, useCallback, useEffect, useId, useRef, useState } from "react";
+import type { ChangeEvent, FormEvent, ReactElement, ReactNode } from "react";
 
 type WalletAction =
   | {
@@ -104,7 +107,25 @@ type ChallengeAction = "open" | "uphold" | "invalidate" | "expire";
 type ClosureAction = "close" | "refund";
 
 const CONTRACT_ID = process.env.NEXT_PUBLIC_LCP_CONTRACT_ID?.trim() ?? "";
+const BUILD_SHA = process.env.NEXT_PUBLIC_BUILD_SHA?.trim() || "unknown";
+const GITHUB_REPOSITORY_URL = "https://github.com/wasabinetwork/Living-Commitments-Protocol";
 const NEAR_NETWORK_ID = process.env.NEXT_PUBLIC_NEAR_NETWORK_ID?.trim() === "mainnet" ? "mainnet" : "testnet";
+const USDC_TOKEN_ACCOUNT_ID = NEAR_NETWORK_ID === "mainnet"
+  ? "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"
+  : "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
+const USDC_DECIMALS = 6;
+const TESTNET_EVALUATOR_ARTIFACTS = {
+  heartbeat: {
+    wasmUrl: "https://artifacts.lcp.gama.works/2bf6e040e091a967fa5dc1129a9fe083b693d02474ea12531a76b0bcfed5b15b.wasm",
+    sha256: "2bf6e040e091a967fa5dc1129a9fe083b693d02474ea12531a76b0bcfed5b15b",
+    buildTarget: "wasm32-wasip1",
+  },
+  service_availability: {
+    wasmUrl: "https://artifacts.lcp.gama.works/service-availability/908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611.wasm",
+    sha256: "908ed60d3eeceb9e57b8cfebda6d3eed37a21f02aed4d192dda298073b87d611",
+    buildTarget: "wasm32-wasip2",
+  },
+} as const;
 const DEFAULT_RPC_URLS = NEAR_NETWORK_ID === "mainnet"
   ? ["https://free.rpc.fastnear.com", "https://near.drpc.org", "https://rpc.intea.rs"]
   : ["https://test.rpc.fastnear.com", "https://near-testnet.drpc.org", "https://testnet-rpc.intea.rs"];
@@ -127,10 +148,29 @@ const COMMITMENT_PAGE_SIZE = 10;
 const THEME_STORAGE_KEY = "lcp-color-theme";
 
 type ColorTheme = "light" | "dark";
+type SettlementCurrency = "near" | "usdc";
+type Nep141SettlementAsset = { kind: "nep141"; token_account_id: string; decimals?: number };
+
+interface TokenReadiness {
+  loading: boolean;
+  metadataValid: boolean | null;
+  contractRegistered: boolean | null;
+  sponsorRegistered: boolean | null;
+  beneficiaryRegistered: boolean | null;
+  minimumStorageDepositYocto: string | null;
+  error: string | null;
+}
 
 export function Dashboard() {
   const connectorRef = useRef<NearConnectorPort | null>(null);
   const connectorInitRef = useRef<Promise<NearConnectorPort> | null>(null);
+  const recordViewRef = useRef<HTMLDivElement | null>(null);
+  const advancedDetailsRef = useRef<HTMLDetailsElement | null>(null);
+  const displayedCommitmentIdRef = useRef<string | null>(null);
+  const dataRef = useRef<CommitmentData | null>(null);
+  const loadingRef = useRef(false);
+  const liveRefreshInFlightRef = useRef(false);
+  const liveRefreshRef = useRef<(id: string) => Promise<void>>(async () => undefined);
   const [theme, setTheme] = useState<ColorTheme | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
   const [commitments, setCommitments] = useState<CommitmentSummaryView[]>([]);
@@ -157,8 +197,14 @@ export function Dashboard() {
   const [escrowFundingNear, setEscrowFundingNear] = useState("0.03");
   const [operationsFundingNear, setOperationsFundingNear] = useState("0.01");
   const [activationStorageNear, setActivationStorageNear] = useState(DEFAULT_STORAGE_DEPOSIT);
+  const [tokenReadiness, setTokenReadiness] = useState<TokenReadiness | null>(null);
+  const [registeringTokenAccount, setRegisteringTokenAccount] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [liveSyncError, setLiveSyncError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const currentCommitmentId = data?.commitment.id ?? null;
+  dataRef.current = data;
+  loadingRef.current = loading;
 
   const ensureConnector = useCallback(async (): Promise<NearConnectorPort> => {
     if (connectorRef.current) return connectorRef.current;
@@ -218,6 +264,113 @@ export function Dashboard() {
     return () => { active = false; };
   }, [accountId]);
 
+  useEffect(() => {
+    let active = true;
+    const asset = commitmentSettlementAsset(data?.commitment, data?.policy);
+    const sponsor = data?.policy?.budget.sponsor;
+    const beneficiary = data?.policy?.budget.beneficiary;
+    if (!data || asset.kind !== "nep141" || !sponsor || !beneficiary || !CONTRACT_ID) {
+      setTokenReadiness(null);
+      return () => { active = false; };
+    }
+    setTokenReadiness({
+      loading: true,
+      metadataValid: null,
+      contractRegistered: null,
+      sponsorRegistered: null,
+      beneficiaryRegistered: null,
+      minimumStorageDepositYocto: null,
+      error: null,
+    });
+    void readTokenReadiness(asset, sponsor, beneficiary)
+      .then((readiness) => { if (active) setTokenReadiness(readiness); })
+      .catch((cause) => {
+        if (active) setTokenReadiness({
+          loading: false,
+          metadataValid: null,
+          contractRegistered: null,
+          sponsorRegistered: null,
+          beneficiaryRegistered: null,
+          minimumStorageDepositYocto: null,
+          error: cause instanceof Error ? cause.message : "USDC registration status could not be read.",
+        });
+      });
+    return () => { active = false; };
+  }, [data?.commitment.id, data?.policy?.budget.sponsor, data?.policy?.budget.beneficiary]);
+
+  async function registerSettlementAccount(targetAccountId: string, description: string) {
+    const connector = connectorRef.current;
+    const asset = commitmentSettlementAsset(data?.commitment, data?.policy);
+    if (!connector || !accountId) {
+      setError("Connect the wallet that owns the token account before registering it.");
+      return;
+    }
+    if (asset.kind !== "nep141" || !data?.policy) {
+      setError("Token registration is only used by USDC commitments.");
+      return;
+    }
+    const requiredSigner = targetAccountId === CONTRACT_ID ? data.policy.budget.sponsor : targetAccountId;
+    if (accountId !== requiredSigner) {
+      setError(`Connect ${requiredSigner} to register ${description.toLowerCase()} for USDC transfers.`);
+      return;
+    }
+
+    setRegisteringTokenAccount(targetAccountId);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+      const metadata = await client.getFungibleTokenMetadata(asset.token_account_id);
+      if (metadata.symbol.toUpperCase() !== "USDC" || metadata.decimals !== USDC_DECIMALS) {
+        throw new Error("The configured token contract did not return the expected USDC symbol and six decimals. No registration was submitted.");
+      }
+      const bounds = await client.getFungibleTokenStorageBounds(asset.token_account_id);
+      const minimum = BigInt(bounds.min);
+      if (minimum <= 0n || (bounds.max !== null && minimum > BigInt(bounds.max))) {
+        throw new Error("The USDC contract returned invalid NEP-145 storage bounds.");
+      }
+      const existing = await client.getFungibleTokenStorageBalance(asset.token_account_id, targetAccountId);
+      const existingTotal = existing ? BigInt(existing.total) : 0n;
+      if (existingTotal >= minimum) {
+        const readiness = await readTokenReadiness(asset, data.policy.budget.sponsor, data.policy.budget.beneficiary);
+        setTokenReadiness(readiness);
+        setActionMessage(`${description} has enough token storage to receive USDC.`);
+        return;
+      }
+      const storageShortfall = (minimum - existingTotal).toString();
+      const txClient = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({
+        rpcUrl: RPC_URL,
+        sendTransaction: createWalletSender(connector),
+      }));
+      await txClient.registerFungibleTokenAccount(
+        asset.token_account_id,
+        targetAccountId,
+        storageShortfall,
+        { gas: "100000000000000" },
+        existing === null,
+      );
+      const readiness = await readTokenReadiness(asset, data.policy.budget.sponsor, data.policy.budget.beneficiary);
+      setTokenReadiness(readiness);
+      setActionMessage(`${description} now has enough USDC token storage. The required deposit or top-up was paid in NEAR.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `${description} could not be registered for USDC.`);
+    } finally {
+      setRegisteringTokenAccount(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!currentCommitmentId) {
+      displayedCommitmentIdRef.current = null;
+      return;
+    }
+    if (displayedCommitmentIdRef.current === currentCommitmentId) return;
+    displayedCommitmentIdRef.current = currentCommitmentId;
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    const frame = window.requestAnimationFrame(() => recordViewRef.current?.scrollIntoView({ behavior, block: "start" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentCommitmentId]);
+
   function toggleTheme() {
     const currentTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
     const nextTheme: ColorTheme = currentTheme === "dark" ? "light" : "dark";
@@ -251,23 +404,29 @@ export function Dashboard() {
     }
   }
 
-  async function loadCommitment(id = commitmentId): Promise<boolean> {
+  async function loadCommitment(id = commitmentId, options: { quiet?: boolean } = {}): Promise<boolean> {
+    const quiet = options.quiet === true;
     const normalizedId = id.trim();
     const keepCurrentData = data?.commitment.id === normalizedId;
     if (!CONTRACT_ID) {
-      setError("Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local to connect the LCP Console to a deployed contract.");
+      const message = "Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local to connect the LCP Console to a deployed contract.";
+      if (quiet) setLiveSyncError(message);
+      else setError(message);
       return false;
     }
     if (!/^(0|[1-9][0-9]*)$/.test(normalizedId)) {
-      setError("Enter a commitment ID as a whole number, such as 1.");
+      if (!quiet) setError("Enter a commitment ID as a whole number, such as 1.");
       return false;
     }
 
-    setCommitmentId(normalizedId);
-    setLoading(true);
-    if (!keepCurrentData) setData(null);
-    setError(null);
-    setActionMessage(null);
+    if (!quiet) {
+      setCommitmentId(normalizedId);
+      setLoading(true);
+      if (!keepCurrentData) setData(null);
+      setError(null);
+      setLiveSyncError(null);
+      setActionMessage(null);
+    }
     try {
       const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
       const chainTimeSnapshotPromise = getFinalBlockTimestampNs(RPC_URL)
@@ -284,8 +443,10 @@ export function Dashboard() {
       ]);
 
       if (!commitment) {
-        setData(null);
-        setError(`Commitment ${normalizedId} was not found on ${CONTRACT_ID}.`);
+        if (!quiet) {
+          setData(null);
+          setError(`Commitment ${normalizedId} was not found on ${CONTRACT_ID}.`);
+        } else setLiveSyncError(`Commitment ${normalizedId} could not be found in the latest chain read.`);
         return false;
       }
 
@@ -336,20 +497,135 @@ export function Dashboard() {
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
       setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, amendmentRejectionSupported, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      setLiveSyncError(null);
       return true;
     } catch (cause) {
-      if (!keepCurrentData) setData(null);
-      setError(cause instanceof Error ? cause.message : "The commitment could not be loaded.");
+      const message = cause instanceof Error ? cause.message : "The commitment could not be loaded.";
+      if (quiet) setLiveSyncError(message);
+      else {
+        if (!keepCurrentData) setData(null);
+        setError(message);
+      }
       return false;
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }
+
+  async function refreshLiveSnapshot(id: string): Promise<void> {
+    const current = dataRef.current;
+    if (!CONTRACT_ID || !current || current.commitment.id !== id || loadingRef.current
+      || liveRefreshInFlightRef.current || document.visibilityState !== "visible") return;
+
+    liveRefreshInFlightRef.current = true;
+    try {
+      const client = readClient();
+      const chainTimeSnapshotPromise = getFinalBlockTimestampNs(RPC_URL)
+        .then((chainTimeNs) => ({ chainTimeNs, capturedAtMs: Date.now() }))
+        .catch(() => ({ chainTimeNs: null, capturedAtMs: Date.now() }));
+      const authorityViewPromise = client.getLatestBoundedPayoutAuthorityGrant(id)
+        .then((value) => ({ value, available: true as const }), () => ({ value: null, available: false as const }));
+      const amendmentViewPromise = current.policy?.version === 3
+        ? client.getLatestServicePolicyAmendment(id)
+          .then((value) => ({ value, available: true as const }), () => ({ value: current.servicePolicyAmendment, available: false as const }))
+        : Promise.resolve({ value: current.servicePolicyAmendment, available: true as const });
+      const [commitment, policy, evaluation, eligibility, escrow, epoch, chainTimeSnapshot, authorityView, amendmentView] = await Promise.all([
+        client.getCommitment(id),
+        client.getPolicy(id),
+        client.getLatestEvaluation(id),
+        client.canClaimTranche(id),
+        client.getEscrowStatus(id),
+        client.getCurrentEpoch(id),
+        chainTimeSnapshotPromise,
+        authorityViewPromise,
+        amendmentViewPromise,
+      ]);
+      if (!commitment) throw new Error(`Commitment ${id} was not found on ${CONTRACT_ID}.`);
+
+      const latest = dataRef.current;
+      if (!latest || latest.commitment.id !== id) return;
+      const policyChanged = JSON.stringify(policy) !== JSON.stringify(latest.policy);
+      const requiresFullRefresh = commitment.policy_hash !== latest.commitment.policy_hash
+        || commitment.policy_version !== latest.commitment.policy_version
+        || commitment.next_evaluation_id !== latest.commitment.next_evaluation_id
+        || commitment.pending_evaluation_id !== latest.commitment.pending_evaluation_id
+        || commitment.active_challenge_id !== latest.commitment.active_challenge_id
+        || commitment.lifecycle !== latest.commitment.lifecycle
+        || policyChanged;
+      if (requiresFullRefresh) {
+        await loadCommitment(id, { quiet: true });
+        return;
+      }
+
+      const trancheEpoch = eligibility?.claimable_epoch ?? epoch;
+      const [tranche, reportInboxState] = await Promise.all([
+        trancheEpoch ? client.getTranche(id, trancheEpoch) : Promise.resolve(null),
+        policy?.version === 3
+          ? client.getServiceReportInbox(id, commitment.next_evaluation_id)
+            .then((value) => ({ value, available: true as const }), () => ({ value: current.serviceReportInbox, available: current.serviceReportInboxAvailable }))
+          : Promise.resolve({ value: current.serviceReportInbox, available: current.serviceReportInboxAvailable }),
+      ]);
+
+      setData((previous) => {
+        if (!previous || previous.commitment.id !== id) return previous;
+        const evaluationHistory = [...previous.evaluationHistory];
+        if (evaluation) {
+          const existingIndex = evaluationHistory.findIndex((item) => item.evaluation_id === evaluation.evaluation_id);
+          if (existingIndex >= 0) evaluationHistory[existingIndex] = evaluation;
+          else evaluationHistory.unshift(evaluation);
+          evaluationHistory.sort((left, right) => BigInt(left.evaluation_id) > BigInt(right.evaluation_id) ? -1 : BigInt(left.evaluation_id) < BigInt(right.evaluation_id) ? 1 : 0);
+          evaluationHistory.splice(EVALUATION_HISTORY_LIMIT);
+        }
+        return {
+          ...previous,
+          commitment,
+          policy,
+          serviceReportInbox: reportInboxState.value,
+          serviceReportInboxAvailable: reportInboxState.available,
+          latestAuthorityGrant: authorityView.available ? authorityView.value : previous.latestAuthorityGrant,
+          servicePolicyAmendment: amendmentView.available ? amendmentView.value : previous.servicePolicyAmendment,
+          chainTimeNs: chainTimeSnapshot.chainTimeNs ?? previous.chainTimeNs,
+          chainTimeCapturedAtMs: chainTimeSnapshot.chainTimeNs
+            ? chainTimeSnapshot.capturedAtMs
+            : previous.chainTimeCapturedAtMs,
+          evaluation,
+          evaluationHistory,
+          eligibility,
+          escrow,
+          epoch,
+          tranche,
+        };
+      });
+      setLiveSyncError(null);
+    } catch (cause) {
+      setLiveSyncError(cause instanceof Error ? cause.message : "Live commitment updates could not be loaded.");
+    } finally {
+      liveRefreshInFlightRef.current = false;
+    }
+  }
+
+  liveRefreshRef.current = refreshLiveSnapshot;
 
   useEffect(() => {
     if (!accountId || !data?.commitment.id) return;
     void loadCommitment(data.commitment.id);
   }, [accountId, data?.commitment.id]);
+
+  useEffect(() => {
+    const id = currentCommitmentId;
+    if (!id) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void liveRefreshRef.current(id);
+    };
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [currentCommitmentId]);
 
   function connectedWalletClient(): LcpClient {
     const connector = connectorRef.current;
@@ -551,9 +827,22 @@ export function Dashboard() {
         sendTransaction: createWalletSender(connector),
       }));
       if (action === "escrow") {
-        const amount = parseNearToYocto(escrowFundingNear);
-        if (BigInt(amount) === 0n) throw new Error("Escrow funding must be greater than zero.");
-        await client.fundCommitment(commitment.id, amount, { gas: "100000000000000" });
+        const asset = commitmentSettlementAsset(commitment, policy);
+        if (asset.kind === "nep141") {
+          if (tokenReadiness?.metadataValid !== true) {
+            throw new Error(tokenReadiness?.error ?? "Confirm the configured USDC contract metadata before funding.");
+          }
+          if (tokenReadiness.contractRegistered !== true) {
+            throw new Error(`Register ${CONTRACT_ID} with the USDC contract before funding. The registration deposit is paid in NEAR.`);
+          }
+          const amount = parseAssetAmount(escrowFundingNear, asset);
+          if (BigInt(amount) === 0n) throw new Error("Escrow funding must be greater than zero.");
+          await client.fundCommitmentWithToken(commitment.id, asset.token_account_id, amount, { gas: "100000000000000" });
+        } else {
+          const amount = parseNearToYocto(escrowFundingNear);
+          if (BigInt(amount) === 0n) throw new Error("Escrow funding must be greater than zero.");
+          await client.fundCommitment(commitment.id, amount, { gas: "100000000000000" });
+        }
       } else if (action === "operations") {
         const amount = parseNearToYocto(operationsFundingNear);
         if (BigInt(amount) === 0n) throw new Error("Operations funding must be greater than zero.");
@@ -967,7 +1256,7 @@ export function Dashboard() {
         setError("This commitment is already closed.");
         return;
       }
-      if (commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(commitment.escrow_pending_yocto) > 0n) {
+      if (commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(data.escrow?.pending_raw ?? commitment.escrow_pending_yocto) > 0n) {
         setError("Resolve pending evaluations, challenges, and transfers before closing.");
         return;
       }
@@ -977,7 +1266,9 @@ export function Dashboard() {
       }
       if (data.eligibility?.eligible && accountId === beneficiary) {
         const epoch = data.eligibility.claimable_epoch ?? data.eligibility.current_epoch ?? "unknown";
-        if (!window.confirm(`Close commitment #${commitment.id}? This permanently forfeits the ${formatNear(data.eligibility.amount_yocto)} NEAR tranche for epoch ${epoch}, plus future support.`)) return;
+        const asset = commitmentSettlementAsset(commitment, policy);
+        const amount = data.eligibility.amount_raw ?? data.eligibility.amount_yocto;
+        if (!window.confirm(`Close commitment #${commitment.id}? This permanently forfeits the ${formatAssetValue(amount, asset)} tranche for epoch ${epoch}, plus future support.`)) return;
       }
     } else {
       if (commitment.lifecycle !== "Closed") {
@@ -988,7 +1279,7 @@ export function Dashboard() {
         setError(`Only ${policy.budget.sponsor} can refund residual escrow.`);
         return;
       }
-      if (BigInt(data.escrow?.free_yocto ?? "0") === 0n) {
+      if (BigInt(data.escrow?.free_raw ?? data.escrow?.free_yocto ?? "0") === 0n) {
         setError("There is no residual escrow to refund.");
         return;
       }
@@ -1009,16 +1300,22 @@ export function Dashboard() {
           ? `Commitment #${commitment.id} is closed. The sponsor may request any residual escrow refund.`
           : `Commitment #${commitment.id} was closed. Reload it to verify its current state.`);
       } else {
+        const asset = commitmentSettlementAsset(commitment, policy);
+        if (asset.kind === "nep141") {
+          if (!await hasSufficientTokenStorage(asset.token_account_id, policy.budget.sponsor)) {
+            throw new Error(`Register ${policy.budget.sponsor} or add the required USDC token storage before requesting the refund. The storage deposit is paid in NEAR.`);
+          }
+        }
         const deposit = parseNearToYocto(storageDeposit);
         if (BigInt(deposit) === 0n) throw new Error("Refund storage deposit must be greater than zero.");
-        const refundAmount = data.escrow?.free_yocto ?? "0";
+        const refundAmount = data.escrow?.free_raw ?? data.escrow?.free_yocto ?? "0";
         const transferId = await client.refundRemaining(commitment.id, {
           attachedDepositYocto: deposit,
           gas: "150000000000000",
         });
         const loaded = await loadCommitment(commitment.id);
         setActionMessage(loaded
-          ? `Residual refund transfer #${transferId} requested for ${formatNear(refundAmount)} NEAR.`
+          ? `Residual refund transfer #${transferId} requested for ${formatAssetValue(refundAmount, asset)}.`
           : `Residual refund transfer #${transferId} requested. Reload commitment #${commitment.id} to verify its state.`);
       }
     } catch (cause) {
@@ -1050,6 +1347,12 @@ export function Dashboard() {
         rpcUrl: RPC_URL,
         sendTransaction: createWalletSender(connector),
       });
+      const asset = commitmentSettlementAsset(data.commitment, data.policy);
+      if (asset.kind === "nep141") {
+        if (!await hasSufficientTokenStorage(asset.token_account_id, data.policy.budget.beneficiary)) {
+          throw new Error(`Register ${data.policy.budget.beneficiary} or add the required USDC token storage before claiming. The storage deposit is paid in NEAR.`);
+        }
+      }
       await new LcpClient(CONTRACT_ID, transport).claimTranche(data.commitment.id, {
         attachedDepositYocto: attachedDeposit,
         gas: "150000000000000",
@@ -1068,9 +1371,12 @@ export function Dashboard() {
   const failedTranche = data?.tranche?.status === "Failed";
   const retryingFailedPayout = failedTranche && claimAllowed;
   const correctBeneficiary = Boolean(accountId && data?.policy && accountId === data.policy.budget.beneficiary);
-  const canSubmitClaim = Boolean(data && claimAllowed && correctBeneficiary && !claiming);
+  const claimAsset = data ? commitmentSettlementAsset(data.commitment, data.policy) : { kind: "near" as const };
+  const canSubmitClaim = Boolean(data && claimAllowed && correctBeneficiary && !claiming
+    && (claimAsset.kind === "near" || tokenReadiness?.beneficiaryRegistered === true));
   const claimableEpoch = data?.eligibility?.claimable_epoch ?? null;
   const currentClaimEpoch = data?.eligibility?.current_epoch ?? null;
+  const readyInboxReportCount = data?.serviceReportInbox.filter((report) => !report.expired).length ?? 0;
   const claimWindowWasPaused = Boolean(
     claimAllowed && (data?.eligibility?.claim_window_resumed === true
       || (claimableEpoch !== null
@@ -1090,6 +1396,60 @@ export function Dashboard() {
       evidenceExpiresAtNs ? `expires ${formatDate(evidenceExpiresAtNs)}` : "expiration unavailable",
     ].join(" · ")
     : "No accepted compliant evidence";
+  const activeJourneyStep = data
+    ? data.commitment.lifecycle === "Draft"
+      ? "setup"
+      : data.commitment.lifecycle === "Closed" || data.eligibility?.eligible
+        ? "payout"
+        : data.commitment.active_challenge_id
+          ? "review"
+          : data.commitment.pending_evaluation_id
+            ? "evidence"
+            : data.evaluation?.status === "Accepted"
+              ? "review"
+              : "evidence"
+    : null;
+  const setupStageStatus = data?.commitment.lifecycle === "Draft"
+    ? "Action needed"
+    : data?.commitment.lifecycle === "Closed" ? "Closed" : "Ready";
+  const evidenceStageStatus = data?.commitment.pending_evaluation_id
+    ? "Evaluation running"
+    : data?.evaluation?.status === "Accepted"
+      ? `Accepted · ${data.evaluation?.verdict ?? "No verdict"}`
+      : readyInboxReportCount > 0
+        ? `${readyInboxReportCount} report${readyInboxReportCount === 1 ? "" : "s"} ready`
+        : "Evidence needed";
+  const reviewStageStatus = data?.commitment.active_challenge_id
+    ? "Challenge open"
+    : data?.challenge?.status ?? (data?.evaluation?.status === "Accepted" ? "Challenge window" : "No challenge");
+  const payoutStageStatus = data?.eligibility?.eligible
+    ? "Ready to claim"
+    : data?.commitment.lifecycle === "Closed" ? "Closed" : "Waiting";
+  const connectedRoles = data && accountId
+    ? [
+      accountId === data.commitment.creator ? "Creator" : null,
+      accountId === data.commitment.maintainer ? "Maintainer" : null,
+      accountId === data.policy?.budget.sponsor ? "Sponsor" : null,
+      accountId === data.commitment.arbiter ? "Arbiter" : null,
+      accountId === data.policy?.budget.beneficiary ? "Beneficiary" : null,
+      data.serviceAvailabilityPolicy?.sources.some((source) => source.operator_id === accountId) ? "Operator" : null,
+    ].filter((role): role is string => role !== null)
+    : [];
+  const nextStepCopy = !data
+    ? "Select a commitment to see its next action."
+    : data.commitment.lifecycle === "Draft"
+      ? "Fund the escrow and evaluator, then activate the commitment."
+      : data.commitment.lifecycle === "Closed"
+        ? "The commitment is closed. Review settlement and any residual refund."
+        : data.commitment.active_challenge_id
+          ? "A challenge is open. The arbiter can resolve it before the deadline; anyone can expire it afterward."
+          : data.commitment.pending_evaluation_id
+            ? "The evaluator is working. Refresh after its callback to read the result."
+            : data.eligibility?.eligible
+              ? `Epoch ${data.eligibility.claimable_epoch ?? data.eligibility.current_epoch ?? "This tranche"} is eligible; the beneficiary can claim it now.`
+              : data.evaluation?.status === "Accepted"
+                ? "Evidence was accepted. Follow the policy clock until the next tranche becomes eligible."
+                : "Collect operator reports and request an evaluation when the configured quorum is ready.";
 
   return (
     <main className="app-shell">
@@ -1151,10 +1511,23 @@ export function Dashboard() {
             Commitments stay alive through fresh evidence. On NEAR, that evidence can unlock support while the promise is being kept.
           </p>
           <div className="intro-proof"><span className="proof-icon">↗</span><span>Health and eligibility are read from the contract.</span></div>
+          <div className="intro-actions">
+            <a className="lookup-button" href="#commitment-id">Inspect a commitment <span aria-hidden="true">↓</span></a>
+            <a className="browser-button" href="#create-commitment">Create a commitment</a>
+          </div>
         </div>
         <div className="intro-art" aria-hidden="true">
           <div className="art-orbit orbit-one" /><div className="art-orbit orbit-two" />
-          <div className="art-core"><span className="art-leaf">↗</span></div>
+          <div className="art-core">
+            <svg className="art-mark" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="40" cy="40" r="31" stroke="#C1D9C1" strokeWidth="2" strokeDasharray="1 6" strokeLinecap="round" />
+              <circle cx="40" cy="9" r="4" fill="#E1EEE0" />
+              <circle cx="67" cy="56" r="4" fill="#E1EEE0" />
+              <circle cx="13" cy="56" r="4" fill="#E1EEE0" />
+              <path d="M40 17 55 22.5v14c0 11-5.8 19.4-15 25.5-9.2-6.1-15-14.5-15-25.5v-14L40 17Z" stroke="#F4F8F2" strokeWidth="2.5" strokeLinejoin="round" />
+              <path d="m32.5 39.5 5 5L48 33" stroke="#F4F8F2" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
           <span className="art-label label-top">EVIDENCE</span>
           <span className="art-label label-right">TIME</span>
           <span className="art-label label-bottom">CONSEQUENCE</span>
@@ -1228,7 +1601,7 @@ export function Dashboard() {
                       <span className="commitment-list-id">#{commitment.id}</span>
                       <span className="commitment-list-subject">{commitment.subject}</span>
                       <span className="commitment-list-status">{commitment.lifecycle} · {commitment.effective_health}</span>
-                      <span className="commitment-list-escrow">{formatNear(commitment.escrow_paid_yocto)} / {formatNear(commitment.escrow_funded_yocto)} NEAR paid</span>
+                      <span className="commitment-list-escrow">{formatAssetValue(commitment.escrow_paid_raw ?? commitment.escrow_paid_yocto, commitment.settlement_asset ?? { kind: "near" })} / {formatAssetValue(commitment.escrow_funded_raw ?? commitment.escrow_funded_yocto, commitment.settlement_asset ?? { kind: "near" })} paid</span>
                       <span className="commitment-list-arrow" aria-hidden="true">↗</span>
                     </button>
                   ))}
@@ -1245,7 +1618,7 @@ export function Dashboard() {
           )}
         </section>
 
-        <details className="create-commitment">
+        <details className="create-commitment" id="create-commitment">
           <summary><span className="create-plus">＋</span><span><strong>Create a commitment</strong><small>Set a policy and create a draft on NEAR Testnet</small></span><span className="summary-arrow">⌄</span></summary>
           <CreateCommitmentForm
             connectedAccountId={accountId}
@@ -1260,123 +1633,245 @@ export function Dashboard() {
         {actionMessage && <div className="notice notice-success" role="status"><span className="notice-icon">✓</span>{actionMessage}</div>}
 
         {data ? (
-          <div className="record-view">
-            {data.commitment.lifecycle === "Draft" && data.policy && (
-              <DraftSetupCard
-                data={data}
-                accountId={accountId}
-                escrowFundingNear={escrowFundingNear}
-                operationsFundingNear={operationsFundingNear}
-                activationStorageNear={activationStorageNear}
-                busyAction={setupAction}
-                onEscrowFundingChange={setEscrowFundingNear}
-                onOperationsFundingChange={setOperationsFundingNear}
-                onActivationStorageChange={setActivationStorageNear}
-                onAction={submitSetupAction}
-              />
-            )}
-            {data.commitment.lifecycle === "Active" && data.policy && (
-              <ActiveOperationsFundingCard
-                data={data}
-                accountId={accountId}
-                operationsFundingNear={operationsFundingNear}
-                busyAction={setupAction}
-                onOperationsFundingChange={setOperationsFundingNear}
-                onFund={submitSetupAction}
-              />
-            )}
-            {data.commitment.lifecycle === "Active" && data.policy && (data.policy.version === 3
-              ? (
-                <ServiceAvailabilityEvidenceCard
-                  key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+          <div className="record-view" ref={recordViewRef}>
+            <section className="journey-overview" id="journey-overview" aria-label="Commitment overview">
+              <section className={`health-panel health-${health?.toLowerCase() ?? "unknown"}`}>
+                <div className="health-panel-top">
+                  <div>
+                    <p className="eyebrow">EFFECTIVE HEALTH <span className="chain-source">NEAR · {data.commitment.lifecycle.toUpperCase()}</span></p>
+                    <div className="health-title-row"><span className="health-indicator" /><h3>{healthLabel(health)}</h3></div>
+                    <p className="health-copy">{healthDescription(health, data.eligibility)}</p>
+                  </div>
+                  <span className="commitment-number">#{data.commitment.id}</span>
+                </div>
+                <div className="health-divider" />
+                <div className="health-facts">
+                  <Fact label="SUBJECT" value={data.commitment.subject} />
+                  <Fact label="MAINTAINER" value={data.commitment.maintainer} mono />
+                  <Fact label="BENEFICIARY" value={data.policy?.budget.beneficiary ?? "Unknown"} mono />
+                  <Fact label="POLICY VERSION" value={`v${data.commitment.policy_version}`} mono />
+                </div>
+                {data.policy && [data.commitment.maintainer, data.policy.budget.sponsor, data.policy.budget.beneficiary].includes(data.commitment.arbiter) && (
+                  <div className="notice notice-warning" role="note">
+                    <span className="notice-icon">!</span>
+                    This commitment predates arbiter separation and assigns {data.commitment.arbiter} another direct role. The arbiter cannot open a challenge on this commitment, but can still resolve one. New commitments require an independent arbiter.
+                  </div>
+                )}
+              </section>
+              <div className="metrics-grid">
+                <MetricCard
+                  eyebrow="LAST COMPLIANT EVIDENCE"
+                  title={data.commitment.last_good_observed_at_ns ? formatDate(data.commitment.last_good_observed_at_ns) : "No accepted evidence"}
+                  detail={lastGoodEvidenceDetail}
+                  icon="◷"
+                />
+                <NextTrancheMetric data={data} />
+                <MetricCard
+                  eyebrow="AVAILABLE ESCROW"
+                  title={formatAssetValue(data.escrow?.free_raw ?? data.escrow?.free_yocto ?? "0", commitmentSettlementAsset(data.commitment, data.policy))}
+                  detail={`${formatAssetValue(data.escrow?.paid_raw ?? data.escrow?.paid_yocto ?? "0", commitmentSettlementAsset(data.commitment, data.policy))} released so far`}
+                  icon="◈"
+                />
+              </div>
+            </section>
+
+            <div className="journey-next-step">
+              <div><span className="journey-next-eyebrow">NEXT IN THIS COMMITMENT</span><strong>{nextStepCopy}</strong>
+                <small className="journey-wallet-context">{accountId
+                  ? `Connected wallet · ${shortenAccount(accountId)}${connectedRoles.length > 0 ? ` · ${connectedRoles.join(" / ")}` : " · not assigned to a commitment role"}`
+                  : "No wallet connected · connect the account named in the next step when a transaction is needed."}</small>
+              </div>
+              {activeJourneyStep && <a href={`#journey-${activeJourneyStep}`}>Go to next step <span aria-hidden="true">↓</span></a>}
+            </div>
+
+            <nav className="commitment-journey-nav" aria-label="Commitment journey">
+              <a className={activeJourneyStep === "setup" ? "is-current" : undefined} href="#journey-setup" aria-current={activeJourneyStep === "setup" ? "step" : undefined}>
+                <span className="journey-nav-index">01</span><span className="journey-nav-copy"><strong>Setup</strong><small>{setupStageStatus}</small></span>
+              </a>
+              <a className={activeJourneyStep === "evidence" ? "is-current" : undefined} href="#journey-evidence" aria-current={activeJourneyStep === "evidence" ? "step" : undefined}>
+                <span className="journey-nav-index">02</span><span className="journey-nav-copy"><strong>Evidence</strong><small>{evidenceStageStatus}</small></span>
+              </a>
+              <a className={activeJourneyStep === "review" ? "is-current" : undefined} href="#journey-review" aria-current={activeJourneyStep === "review" ? "step" : undefined}>
+                <span className="journey-nav-index">03</span><span className="journey-nav-copy"><strong>Review</strong><small>{reviewStageStatus}</small></span>
+              </a>
+              <a className={activeJourneyStep === "payout" ? "is-current" : undefined} href="#journey-payout" aria-current={activeJourneyStep === "payout" ? "step" : undefined}>
+                <span className="journey-nav-index">04</span><span className="journey-nav-copy"><strong>Payout</strong><small>{payoutStageStatus}</small></span>
+              </a>
+              <a className="journey-nav-secondary" href="#commitment-id">Choose another</a>
+              <a className="journey-nav-secondary" href="#create-commitment">Create new</a>
+            </nav>
+
+            <section className={`journey-stage ${activeJourneyStep === "setup" ? "journey-stage-current" : ""}`} id="journey-setup" aria-labelledby="journey-setup-title">
+              <JourneyStageHeading number="01" title="Set up and fund" description="Prepare the commitment before operators submit evidence." status={setupStageStatus} current={activeJourneyStep === "setup"} titleId="journey-setup-title" />
+              {data.commitment.lifecycle === "Draft" && data.policy && (
+                <DraftSetupCard
                   data={data}
                   accountId={accountId}
-                  busy={requestingEvaluation || expiringEvaluation || serviceInboxAction !== null || loading}
-                  pendingTimeoutNs={data.evaluationTimeoutNs}
-                  onRefresh={() => loadCommitment(data.commitment.id)}
-                  onExpire={expirePendingEvaluation}
-                  onSubmit={submitServiceEvaluation}
-                  onSubmitReport={submitServiceReport}
-                  onReclaimReport={reclaimServiceReport}
-                  onSignMessage={signWalletMessage}
+                  escrowFundingNear={escrowFundingNear}
+                  tokenReadiness={tokenReadiness}
+                  registeringTokenAccount={registeringTokenAccount}
+                  operationsFundingNear={operationsFundingNear}
+                  activationStorageNear={activationStorageNear}
+                  busyAction={setupAction}
+                  onEscrowFundingChange={setEscrowFundingNear}
+                  onRegisterTokenAccount={() => void registerSettlementAccount(CONTRACT_ID, "LCP contract")}
+                  onOperationsFundingChange={setOperationsFundingNear}
+                  onActivationStorageChange={setActivationStorageNear}
+                  onAction={submitSetupAction}
                 />
-              )
-              : (
-                <EvidenceSubmissionCard
-                  key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+              )}
+              {data.commitment.lifecycle === "Active" && data.policy && (
+                <ActiveOperationsFundingCard
                   data={data}
                   accountId={accountId}
-                  busy={requestingEvaluation || expiringEvaluation}
-                  pendingTimeoutNs={data.evaluationTimeoutNs}
-                  onExpire={expirePendingEvaluation}
-                  onSubmit={submitEvaluation}
-                  onSignMessage={signWalletMessage}
+                  operationsFundingNear={operationsFundingNear}
+                  busyAction={setupAction}
+                  onOperationsFundingChange={setOperationsFundingNear}
+                  onFund={submitSetupAction}
                 />
-              ))}
-            {data.commitment.lifecycle === "Active" && data.policy && (
-              <ChallengeControlsCard
-                data={data}
-                accountId={accountId}
-                busyAction={challengeAction}
-                onAction={submitChallengeAction}
-              />
-            )}
-            {data.policy && (
-              <ClosureControlsCard
-                data={data}
-                accountId={accountId}
-                busyAction={closureAction}
-                onAction={submitClosureAction}
-              />
-            )}
-            <section className={`health-panel health-${health?.toLowerCase() ?? "unknown"}`}>
-              <div className="health-panel-top">
-                <div>
-                  <p className="eyebrow">EFFECTIVE HEALTH <span className="chain-source">NEAR · {data.commitment.lifecycle.toUpperCase()}</span></p>
-                  <div className="health-title-row"><span className="health-indicator" /><h3>{healthLabel(health)}</h3></div>
-                  <p className="health-copy">{healthDescription(health, data.eligibility)}</p>
-                </div>
-                <span className="commitment-number">#{data.commitment.id}</span>
+              )}
+              {data.commitment.lifecycle === "Closed" && <p className="journey-stage-note">Setup is complete. This commitment is closed.</p>}
+            </section>
+
+            <section className={`journey-stage ${activeJourneyStep === "evidence" ? "journey-stage-current" : ""}`} id="journey-evidence" aria-labelledby="journey-evidence-title">
+              <JourneyStageHeading number="02" title="Collect and check evidence" description="Operators submit reports; the maintainer or sponsor requests an evaluation." status={evidenceStageStatus} current={activeJourneyStep === "evidence"} titleId="journey-evidence-title" />
+              {data.evaluation && (
+                <section className="journey-evaluation-summary" aria-label="Latest evaluation summary">
+                  <div><span className={`status-pill status-${data.evaluation.status.toLowerCase()}`}>{data.evaluation.status}</span><strong>Evaluation #{data.evaluation.evaluation_id} · {evaluationVerdictLabel(data.evaluation)}</strong></div>
+                  <p>{data.evaluation.service_availability
+                    ? `${data.evaluation.service_availability.source_counts.valid} of ${data.evaluation.service_availability.source_counts.configured} reports passed validation; ${(data.evaluation.service_availability.corroboration_bps / 100).toFixed(2)}% agreement coverage.`
+                    : evaluationExplanation(data.evaluation) ?? `Observed ${formatDate(data.evaluation.observed_at_ns)}.`}</p>
+                  <a
+                    href="#journey-evaluation-record"
+                    aria-controls="journey-evaluation-record"
+                    onClick={() => advancedDetailsRef.current?.setAttribute("open", "")}
+                  >
+                    Show full evaluation record and policy details ↓
+                  </a>
+                </section>
+              )}
+              {data.commitment.lifecycle === "Active" && data.policy && (data.policy.version === 3
+                ? (
+                  <ServiceAvailabilityEvidenceCard
+                    key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+                    data={data}
+                    accountId={accountId}
+                    busy={requestingEvaluation || expiringEvaluation || serviceInboxAction !== null || loading}
+                    pendingTimeoutNs={data.evaluationTimeoutNs}
+                    onRefresh={() => loadCommitment(data.commitment.id)}
+                    onExpire={expirePendingEvaluation}
+                    onSubmit={submitServiceEvaluation}
+                    onSubmitReport={submitServiceReport}
+                    onReclaimReport={reclaimServiceReport}
+                    onSignMessage={signWalletMessage}
+                  />
+                )
+                : (
+                  <EvidenceSubmissionCard
+                    key={`${data.commitment.id}:${data.commitment.next_evaluation_id}:${data.commitment.policy_hash}`}
+                    data={data}
+                    accountId={accountId}
+                    busy={requestingEvaluation || expiringEvaluation}
+                    pendingTimeoutNs={data.evaluationTimeoutNs}
+                    onExpire={expirePendingEvaluation}
+                    onSubmit={submitEvaluation}
+                    onSignMessage={signWalletMessage}
+                  />
+                ))}
+              {data.commitment.lifecycle !== "Active" && <p className="journey-stage-note">Evidence actions are available while the commitment is active.</p>}
+            </section>
+
+            <section className={`journey-stage ${activeJourneyStep === "review" ? "journey-stage-current" : ""}`} id="journey-review" aria-labelledby="journey-review-title">
+              <JourneyStageHeading number="03" title="Review and resolve" description="Challenges pause a claim until resolved or timed out. Follow the NEAR policy clock." status={reviewStageStatus} current={activeJourneyStep === "review"} titleId="journey-review-title" />
+              {data.commitment.lifecycle === "Active" && data.policy && (
+                <ChallengeControlsCard
+                  data={data}
+                  accountId={accountId}
+                  busyAction={challengeAction}
+                  onAction={submitChallengeAction}
+                />
+              )}
+              <details className="journey-timeline">
+                <summary>Health clock and recorded transitions</summary>
+                <HealthTimeline data={data} busy={loading} syncError={liveSyncError} onRefresh={() => void loadCommitment(data.commitment.id)} />
+              </details>
+            </section>
+
+            <section className={`journey-stage ${activeJourneyStep === "payout" ? "journey-stage-current" : ""}`} id="journey-payout" aria-labelledby="journey-payout-title">
+              <JourneyStageHeading number="04" title="Claim or close" description="Only the beneficiary can claim an eligible tranche. Closing is final." status={payoutStageStatus} current={activeJourneyStep === "payout"} titleId="journey-payout-title" />
+              <div className="journey-payout-grid">
+                <section className="content-card consequence-card">
+                  <div className="card-heading">
+                    <div><p className="eyebrow">ESCROW · CONTRACT SETTLEMENT</p><h3>Recurring support</h3></div>
+                    <span className="card-index">04</span>
+                  </div>
+                  <div className="escrow-stats">
+                    <Fact label="FUNDED" value={formatAssetValue(data.escrow?.funded_raw ?? data.escrow?.funded_yocto ?? "0", commitmentSettlementAsset(data.commitment, data.policy))} />
+                    <Fact label="PAID" value={formatAssetValue(data.escrow?.paid_raw ?? data.escrow?.paid_yocto ?? "0", commitmentSettlementAsset(data.commitment, data.policy))} />
+                    <Fact label="PENDING" value={formatAssetValue(data.escrow?.pending_raw ?? data.escrow?.pending_yocto ?? "0", commitmentSettlementAsset(data.commitment, data.policy))} />
+                    <Fact label="REFUNDED" value={formatAssetValue(data.escrow?.refunded_raw ?? data.escrow?.refunded_yocto ?? "0", commitmentSettlementAsset(data.commitment, data.policy))} />
+                  </div>
+                  <div className="claim-box">
+                    <div className="claim-copy">
+                      <span className={`eligibility-mark ${claimAllowed ? "is-eligible" : "is-blocked"}`}>{claimAllowed ? "✓" : "×"}</span>
+                      <div>
+                        <strong>{retryingFailedPayout ? "Previous payout failed; retry is available" : failedTranche ? "Previous payout failed; this epoch is currently blocked" : claimAllowed ? "A tranche can be claimed" : "A tranche is blocked"}</strong>
+                        <span>{retryingFailedPayout
+                          ? "The failed transfer was released back to escrow. Retry when the beneficiary account can receive funds."
+                          : claimWindowWasPaused
+                            ? `The claim window for epoch ${claimableEpoch} was paused while its challenge was unresolved. It resumes now.`
+                            : data.eligibility?.reason ?? "The contract has no current claim."}</span>
+                      </div>
+                    </div>
+                    {data.policy && data.eligibility?.eligible && commitmentSettlementAsset(data.commitment, data.policy).kind === "nep141" && tokenReadiness?.beneficiaryRegistered !== true && (
+                      <div className="token-registration-note">
+                        <small>{tokenReadiness?.loading ? "Checking beneficiary USDC storage…" : `The beneficiary needs sufficient storage with the token contract to receive this payout. Registering or topping up the storage deposit costs NEAR.`}</small>
+                        <button className="browser-button" type="button" onClick={() => void registerSettlementAccount(data.policy!.budget.beneficiary, "Beneficiary account")} disabled={!correctBeneficiary || tokenReadiness?.loading === true || registeringTokenAccount !== null}>
+                          {registeringTokenAccount === data.policy.budget.beneficiary ? "Updating beneficiary token storage…" : !correctBeneficiary ? "Beneficiary wallet required" : "Prepare beneficiary to receive USDC"}
+                        </button>
+                        {tokenReadiness?.error && <small role="alert">{tokenReadiness.error}</small>}
+                      </div>
+                    )}
+                    {data.eligibility?.eligible && (
+                      <div className="claim-controls">
+                        <div className="claim-form-row">
+                          <div className="claim-storage-deposit"><span>{claimAsset.kind === "nep141" ? "CLAIM STORAGE + TOKEN DEPOSIT" : "CLAIM REQUEST STORAGE BOND"}</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
+                          <button className="claim-button" onClick={() => void claimTranche()} disabled={!canSubmitClaim}>
+                            {claiming ? "Submitting…" : !accountId ? "Connect to claim" : !correctBeneficiary ? "Beneficiary wallet required" : retryingFailedPayout ? "Retry payout" : "Claim tranche"}
+                            <span aria-hidden="true">↗</span>
+                          </button>
+                        </div>
+                        <p className="claim-disclaimer">{claimAsset.kind === "nep141"
+                          ? `The app attaches ${DEFAULT_STORAGE_DEPOSIT} NEAR for claim storage and the token’s required 1 yoctoNEAR transfer deposit. Any excess is returned.`
+                          : `The app attaches ${DEFAULT_STORAGE_DEPOSIT} NEAR for claim storage, separate from the tranche payout. The contract calculates the required bond and returns any excess.`}</p>
+                      </div>
+                    )}
+                  </div>
+                  {data.tranche && <div className="tranche-line"><span>{claimAllowed ? "CLAIMABLE EPOCH" : "CURRENT EPOCH"} · {data.tranche.epoch}</span><strong>{data.tranche.status}</strong></div>}
+                </section>
               </div>
-              <div className="health-divider" />
-              <div className="health-facts">
-                <Fact label="SUBJECT" value={data.commitment.subject} />
-                <Fact label="MAINTAINER" value={data.commitment.maintainer} mono />
-                <Fact label="BENEFICIARY" value={data.policy?.budget.beneficiary ?? "Unknown"} mono />
-                <Fact label="POLICY VERSION" value={`v${data.commitment.policy_version}`} mono />
-              </div>
-              {data.policy && [data.commitment.maintainer, data.policy.budget.sponsor, data.policy.budget.beneficiary].includes(data.commitment.arbiter) && (
-                <div className="notice notice-warning" role="note">
-                  <span className="notice-icon">!</span>
-                  This commitment predates arbiter separation and assigns {data.commitment.arbiter} another direct role. The arbiter cannot open a challenge on this commitment, but can still resolve one. New commitments require an independent arbiter.
-                </div>
+              {data.policy && (
+                <ClosureControlsCard
+                  data={data}
+                  accountId={accountId}
+                  tokenReadiness={tokenReadiness}
+                  registeringTokenAccount={registeringTokenAccount}
+                  onRegisterTokenAccount={(targetAccountId, description) => void registerSettlementAccount(targetAccountId, description)}
+                  busyAction={closureAction}
+                  onAction={submitClosureAction}
+                />
               )}
             </section>
 
-            <HealthTimeline data={data} busy={loading} onRefresh={() => void loadCommitment(data.commitment.id)} />
-            {EVENT_INDEXER_URL && (
-              <IndexedEventHistory
-                key={data.commitment.id}
-                commitmentId={data.commitment.id}
-              />
-            )}
-
-            <div className="metrics-grid">
-              <MetricCard
-                eyebrow="LAST COMPLIANT EVIDENCE"
-                title={data.commitment.last_good_observed_at_ns ? formatDate(data.commitment.last_good_observed_at_ns) : "No accepted evidence"}
-                detail={lastGoodEvidenceDetail}
-                icon="◷"
-              />
-              <NextTrancheMetric data={data} />
-              <MetricCard
-                eyebrow="AVAILABLE ESCROW"
-                title={`${formatNear(data.escrow?.free_yocto ?? "0")} NEAR`}
-                detail={`${formatNear(data.escrow?.paid_yocto ?? "0")} NEAR released so far`}
-                icon="◈"
-              />
-            </div>
-
+            <details className="journey-advanced-details" id="journey-details" ref={advancedDetailsRef}>
+              <summary><span><strong>Policy, records, and advanced controls</strong><small>Full evaluation hashes, source rules, reviewer access, amendments, and payout adapters</small></span><span aria-hidden="true">⌄</span></summary>
+              <div className="journey-advanced-content">
+                {EVENT_INDEXER_URL && (
+                  <IndexedEventHistory
+                    key={data.commitment.id}
+                    commitmentId={data.commitment.id}
+                  />
+                )}
             <div className="details-grid">
               <section className="content-card policy-card">
                 <div className="card-heading">
@@ -1390,6 +1885,7 @@ export function Dashboard() {
                       <Fact label="GRACE PERIOD" value={formatDuration(data.policy.temporal.grace_ns)} />
                       <Fact label="RECOVERY" value={data.policy.temporal.recovery_allowed ? "Allowed by policy" : "Breach remains latched"} />
                       <Fact label="EVALUATOR" value={data.policy.evaluator.outlayer_account} mono />
+                      <Fact label="SETTLEMENT ASSET" value={settlementAssetSymbol(commitmentSettlementAsset(data.commitment, data.policy))} />
                       <Fact
                         label={data.policy.version >= 2 ? "MAINTAINER KEY FINGERPRINT" : "MAINTAINER KEY"}
                         value={data.policy.version >= 2
@@ -1398,6 +1894,17 @@ export function Dashboard() {
                         mono
                       />
                     </div>
+                    {data.policy.settlement_asset?.kind === "nep141" && (
+                      <div className="digest-row settlement-token-row">
+                        <span>USDC TOKEN CONTRACT</span>
+                        <div className="settlement-token-detail">
+                          <code>{data.policy.settlement_asset.token_account_id}</code>
+                          <a href={nearblocksTokenUrl(data.policy.settlement_asset.token_account_id)} target="_blank" rel="noopener noreferrer">
+                            View on NearBlocks ↗
+                          </a>
+                        </div>
+                      </div>
+                    )}
                     {data.policy.version === 3 && data.serviceAvailabilityPolicy && (
                       <div className="service-policy-details">
                         <p className="eyebrow">INDEPENDENT SERVICE SOURCES</p>
@@ -1420,7 +1927,7 @@ export function Dashboard() {
                 ) : <p className="empty-copy">Policy details are unavailable for this commitment.</p>}
               </section>
 
-              <section className="content-card evaluation-card">
+              <section className="content-card evaluation-card" id="journey-evaluation-record" tabIndex={-1}>
                 <div className="card-heading">
                   <div><p className="eyebrow">EVIDENCE, CHECKED</p><h3>Latest evaluation</h3></div>
                   <span className="card-index">02</span>
@@ -1565,46 +2072,6 @@ export function Dashboard() {
               />
             )}
 
-            <div className="bottom-grid">
-              <section className="content-card consequence-card">
-                <div className="card-heading">
-                  <div><p className="eyebrow">CONSEQUENCE, NOT PROMISE</p><h3>Recurring support</h3></div>
-                  <span className="card-index">03</span>
-                </div>
-                <div className="escrow-stats">
-                  <Fact label="FUNDED" value={`${formatNear(data.escrow?.funded_yocto ?? "0")} NEAR`} />
-                  <Fact label="PAID" value={`${formatNear(data.escrow?.paid_yocto ?? "0")} NEAR`} />
-                  <Fact label="PENDING" value={`${formatNear(data.escrow?.pending_yocto ?? "0")} NEAR`} />
-                  <Fact label="REFUNDED" value={`${formatNear(data.escrow?.refunded_yocto ?? "0")} NEAR`} />
-                </div>
-                <div className="claim-box">
-                  <div className="claim-copy">
-                    <span className={`eligibility-mark ${claimAllowed ? "is-eligible" : "is-blocked"}`}>{claimAllowed ? "✓" : "×"}</span>
-                    <div>
-                      <strong>{retryingFailedPayout ? "Previous payout failed; retry is available" : failedTranche ? "Previous payout failed; this epoch is currently blocked" : claimAllowed ? "A tranche can be claimed" : "A tranche is blocked"}</strong>
-                      <span>{retryingFailedPayout
-                        ? "The failed transfer was released back to escrow. Retry when the beneficiary account can receive funds."
-                        : claimWindowWasPaused
-                          ? `The claim window for epoch ${claimableEpoch} was paused while its challenge was unresolved. It resumes now.`
-                          : data.eligibility?.reason ?? "The contract has no current claim."}</span>
-                    </div>
-                  </div>
-                  {data.eligibility?.eligible && (
-                    <div className="claim-controls">
-                      <div className="claim-form-row">
-                        <div className="claim-storage-deposit"><span>CLAIM REQUEST STORAGE BOND</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
-                        <button className="claim-button" onClick={() => void claimTranche()} disabled={!canSubmitClaim}>
-                          {claiming ? "Submitting…" : !accountId ? "Connect to claim" : !correctBeneficiary ? "Beneficiary wallet required" : retryingFailedPayout ? "Retry payout" : "Claim tranche"}
-                          <span aria-hidden="true">↗</span>
-                        </button>
-                      </div>
-                      <p className="claim-disclaimer">The app attaches {DEFAULT_STORAGE_DEPOSIT} NEAR for claim storage, separate from the tranche payout. The contract calculates the required bond and returns any excess.</p>
-                    </div>
-                  )}
-                </div>
-                {data.tranche && <div className="tranche-line"><span>{claimAllowed ? "CLAIMABLE EPOCH" : "CURRENT EPOCH"} · {data.tranche.epoch}</span><strong>{data.tranche.status}</strong></div>}
-              </section>
-
               <section className="content-card integrity-card">
                 <div className="card-heading">
                   <div><p className="eyebrow">WHAT THIS MEANS</p><h3>Evidence has limits.</h3></div>
@@ -1613,7 +2080,8 @@ export function Dashboard() {
                 <p className="integrity-copy">A valid signature binds submitted data to the configured key. Even an attested evaluator can show only that configured code checked that data; it cannot prove the evidence source tells the truth about real-world service quality.</p>
                 <div className="integrity-footer"><span className="integrity-dot" />POLICY ENFORCED ON NEAR</div>
               </section>
-            </div>
+              </div>
+            </details>
           </div>
         ) : (
           <section className="empty-state">
@@ -1629,7 +2097,15 @@ export function Dashboard() {
       <footer className="footer">
         <div className="footer-topline">
           <a className="footer-brand" href="#top"><span className="brand-mark brand-mark-small"><span /></span>LCP <span>·</span> LIVING COMMITMENTS PROTOCOL</a>
-          <p>Health is time-derived. The contract is the authority.</p>
+          <div className="footer-provenance">
+            <p>Health is time-derived. The contract is the authority.</p>
+            <p className="footer-build-revision">
+              Source revision · {BUILD_SHA === "unknown"
+                ? <span>unavailable</span>
+                : <a href={`${GITHUB_REPOSITORY_URL}/commit/${BUILD_SHA}`} target="_blank" rel="noopener noreferrer" title={BUILD_SHA}>{BUILD_SHA.slice(0, 12)}</a>}
+              <span aria-hidden="true"> · </span><a href="/version.json">version.json</a>
+            </p>
+          </div>
         </div>
         <nav className="footer-links" aria-label="Project links">
           <a href="https://gama.works/" target="_blank" rel="noopener noreferrer">Built by GAMA Works</a>
@@ -1930,7 +2406,7 @@ function buildHealthTimeline(data: CommitmentData): HealthTimelinePoint[] {
   });
 }
 
-function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy: boolean; onRefresh: () => void }) {
+function HealthTimeline({ data, busy, syncError, onRefresh }: { data: CommitmentData; busy: boolean; syncError: string | null; onRefresh: () => void }) {
   const points = buildHealthTimeline(data);
   const chainTimeNs = data.chainTimeNs;
   const canHaveNextDeadline = data.commitment.lifecycle === "Active"
@@ -1948,8 +2424,20 @@ function HealthTimeline({ data, busy, onRefresh }: { data: CommitmentData; busy:
         <div><p className="eyebrow">RECORDED EVENTS &amp; POLICY TIME</p><h3 id="health-timeline-title">Health clock</h3></div>
         <div className="timeline-tools">
           <span className="timeline-snapshot">{data.chainTimeNs ? `FINALIZED · ${formatDate(data.chainTimeNs)}` : "BLOCK TIME UNAVAILABLE"}</span>
+          <span
+            className={`timeline-sync${syncError ? " timeline-sync-error" : ""}`}
+            role="status"
+            aria-live="polite"
+            title={syncError ?? "Commitment state checks automatically every 30 seconds while this page is visible."}
+          >
+            {syncError
+              ? "LIVE UPDATE ISSUE · SHOWING LAST SNAPSHOT"
+              : data.chainTimeCapturedAtMs
+                ? `AUTO-SYNC · UPDATED ${new Date(data.chainTimeCapturedAtMs).toISOString().slice(11, 19)} UTC`
+                : "AUTO-SYNC · WAITING FOR CHAIN TIME"}
+          </span>
           <button className="browser-text-button timeline-refresh" type="button" onClick={onRefresh} disabled={busy}>
-            {busy ? "Refreshing…" : "Refresh snapshot"}
+            {busy ? "Syncing…" : "Sync now"}
           </button>
         </div>
       </div>
@@ -2198,6 +2686,34 @@ function IndexedEventHistory({ commitmentId }: { commitmentId: string }) {
   );
 }
 
+function JourneyStageHeading({
+  number,
+  title,
+  description,
+  status,
+  current,
+  titleId,
+}: {
+  number: string;
+  title: string;
+  description: string;
+  status: string;
+  current: boolean;
+  titleId: string;
+}) {
+  return (
+    <div className={`journey-stage-heading ${current ? "is-current" : ""}`}>
+      <span className="journey-stage-number" aria-hidden="true">{number}</span>
+      <div className="journey-stage-copy">
+        <p className="eyebrow">STEP {number}{current ? " · UP NEXT" : ""}</p>
+        <h3 id={titleId}>{title}</h3>
+        <p>{description}</p>
+      </div>
+      <span className="journey-stage-status">{status}</span>
+    </div>
+  );
+}
+
 function MetricCard({ eyebrow, title, detail, icon }: { eyebrow: string; title: string; detail: ReactNode; icon: string }) {
   return (
     <section className="metric-card">
@@ -2217,6 +2733,8 @@ function NextTrancheMetric({ data }: { data: CommitmentData }) {
     return () => window.clearInterval(interval);
   }, []);
 
+  const settlementAsset = commitmentSettlementAsset(data.commitment, data.policy);
+  const claimAmount = data.eligibility?.amount_raw ?? data.eligibility?.amount_yocto ?? "0";
   const eligibility = data.eligibility;
   const pausedEpoch = Boolean(
     eligibility?.eligible
@@ -2236,7 +2754,7 @@ function NextTrancheMetric({ data }: { data: CommitmentData }) {
     return (
       <MetricCard
         eyebrow="NEXT TRANCHE"
-        title={eligibility?.eligible ? `${formatNear(eligibility.amount_yocto)} NEAR` : "Not eligible"}
+        title={eligibility?.eligible ? formatAssetValue(claimAmount, settlementAsset) : "Not eligible"}
         detail={reason}
         icon="↗"
       />
@@ -2303,7 +2821,7 @@ function NextTrancheMetric({ data }: { data: CommitmentData }) {
   return (
     <MetricCard
       eyebrow="NEXT TRANCHE"
-      title={eligibility?.eligible ? `${formatNear(eligibility.amount_yocto)} NEAR` : programEnded ? "Program ended" : "Not eligible"}
+      title={eligibility?.eligible ? formatAssetValue(claimAmount, settlementAsset) : programEnded ? "Program ended" : "Not eligible"}
       detail={detail}
       icon="↗"
     />
@@ -2336,6 +2854,7 @@ function ServiceAvailabilityEvidenceCard({
   const { commitment, policy, serviceAvailabilityPolicy } = data;
   const transactionAuthenticated = serviceAvailabilityPolicy?.schema === "lcp.service_availability.policy.v2";
   const connectedServiceSource = serviceAvailabilityPolicy?.sources.find((source) => source.operator_id === accountId) ?? null;
+  const [operatorReportOpen, setOperatorReportOpen] = useState(!transactionAuthenticated);
   const [reportsJson, setReportsJson] = useState("");
   const [selectedReportFiles, setSelectedReportFiles] = useState<string[]>([]);
   const [reportCount, setReportCount] = useState<number | null>(null);
@@ -2728,8 +3247,8 @@ function ServiceAvailabilityEvidenceCard({
           <small>Operators pay a temporary storage bond when submitting. It becomes a withdrawable credit after evaluation, replacement, or expiry; failed refunds can be retried.</small>
         </section>
       )}
-      <details className="operator-browser-probe" open>
-        <summary>{transactionAuthenticated ? "Submit an operator report" : "Create a signed report with a NEAR wallet"}</summary>
+      <details className="operator-browser-probe" open={operatorReportOpen} onToggle={(event) => setOperatorReportOpen(event.currentTarget.open)}>
+        <summary>{transactionAuthenticated ? "For operators: run and submit a report" : "Create a signed report with a NEAR wallet"}</summary>
         <p>{transactionAuthenticated
           ? "Operators participate independently. Open this commitment on your own device, connect the listed account, enter the authorized endpoint and private salt, then submit. Your NEAR transaction authorizes and records the report in one wallet approval."
           : "Connect a wallet listed as an operator in this policy. This browser-only check is limited to the same HTTPS origin as the Console, sends no credentials, follows no redirects, and reads no response body. Sign with NEP-413, then submit directly to the NEAR inbox."}</p>
@@ -3321,7 +3840,7 @@ function EvidenceSubmissionCard({
       <div className="form-grid evidence-form-grid">
         <FormField label="Evidence artifact file" wide>
           <input ref={artifactFileInputRef} className="artifact-file-input" type="file" onChange={(event) => void handleArtifactFileChange(event)} disabled={hashingArtifact || signing || busy} aria-describedby="artifact-file-help" />
-          <small id="artifact-file-help" className="artifact-help">Choose the report or record for this observation. SHA-256 is calculated in this browser; the file stays on this device and is not uploaded. Share it separately with reviewers who need to inspect it. Maximum size: 25 MiB.</small>
+          <small id="artifact-file-help" className="artifact-help">Choose the report or record for this observation. SHA-256 is calculated in this browser; the file stays on this device and is not uploaded. For a heartbeat, prepare the message below, sign it with the maintainer wallet, then request evaluation. The evaluator checks that signature and the file digest; it does not inspect file contents. Maximum size: 25 MiB.</small>
         </FormField>
         {hashingArtifact && <p className="artifact-file-status" role="status" aria-live="polite">Calculating SHA-256 locally…</p>}
         {artifactHash && (
@@ -3383,11 +3902,31 @@ function ChallengeControlsCard({
   const { commitment, policy, evaluation, challenge } = data;
   const [reason, setReason] = useState("");
   const [storageDepositNear, setStorageDepositNear] = useState(DEFAULT_STORAGE_DEPOSIT);
+  const [clientNowMs, setClientNowMs] = useState<number | null>(null);
   const canChallenge = Boolean(accountId
     && accountId !== commitment.arbiter
     && (accountId === commitment.maintainer || accountId === policy?.budget.sponsor));
   const canResolve = accountId === commitment.arbiter;
   const latestCompliant = Boolean(evaluation?.status === "Accepted" && evaluation.verdict === "Compliant" && evaluation.accepted_at_ns);
+  const resolutionDeadlineNs = challenge?.status === "Open" ? BigInt(challenge.resolution_deadline_ns) : null;
+  const estimatedChainNowNs = data.chainTimeNs && clientNowMs !== null
+    ? BigInt(data.chainTimeNs) + BigInt(Math.max(0, clientNowMs - data.chainTimeCapturedAtMs)) * 1_000_000n
+    : null;
+  const resolutionRemainingNs = resolutionDeadlineNs !== null && estimatedChainNowNs !== null
+    ? resolutionDeadlineNs - estimatedChainNowNs
+    : null;
+  const canExpireChallenge = resolutionRemainingNs !== null && resolutionRemainingNs <= -2_000_000_000n;
+
+  useEffect(() => {
+    if (challenge?.status !== "Open") {
+      setClientNowMs(null);
+      return;
+    }
+    const updateClock = () => setClientNowMs(Date.now());
+    updateClock();
+    const timer = window.setInterval(updateClock, 1_000);
+    return () => window.clearInterval(timer);
+  }, [challenge?.id, challenge?.status]);
 
   if (!challenge && !latestCompliant) return null;
 
@@ -3406,12 +3945,41 @@ function ChallengeControlsCard({
         <>
           <p className="challenge-intro">Challenge #{challenge.id} contests evaluation #{challenge.evaluation_id}. The designated arbiter may resolve it before the deadline; anyone may expire it after the deadline.</p>
           <div className="digest-row"><span>REASON HASH</span><code>{challenge.reason_hash}</code></div>
-          <div className="digest-row"><span>RESOLUTION DEADLINE · NS</span><code>{challenge.resolution_deadline_ns}</code></div>
+          <div className="challenge-deadline-panel">
+            <span className="challenge-deadline-label">RESOLUTION DEADLINE</span>
+            <time dateTime={new Date(Number(resolutionDeadlineNs! / 1_000_000n)).toISOString()}>
+              {clientNowMs === null ? "Loading local time…" : formatDate(challenge.resolution_deadline_ns)}
+            </time>
+            <p className="challenge-deadline-status">
+              {resolutionRemainingNs === null
+                ? "NEAR block time is unavailable. Refresh this commitment to check when expiration becomes available."
+                : resolutionRemainingNs > 0n
+                  ? `Anyone can expire this challenge in ${formatCountdown(resolutionRemainingNs.toString())}.`
+                  : resolutionRemainingNs > -2_000_000_000n
+                    ? "The deadline has arrived. Confirming finalized NEAR time before enabling expiration…"
+                    : "The deadline has passed. Any account can now expire this challenge."}
+            </p>
+            <small className="challenge-deadline-note">The countdown uses the latest finalized NEAR block time. NEAR time is checked again when you submit expiration.</small>
+            <details className="challenge-deadline-technical">
+              <summary>Technical timestamp</summary>
+              <code>{challenge.resolution_deadline_ns} ns</code>
+            </details>
+          </div>
           {!canResolve && <p className="form-wallet-hint">Connect the arbiter wallet ({commitment.arbiter}) to resolve this challenge.</p>}
           <div className="challenge-actions">
             <button type="button" onClick={() => void onAction("uphold")} disabled={busyAction !== null || !canResolve}>{busyAction === "uphold" ? "Resolving…" : "Uphold evaluation"}</button>
             <button type="button" onClick={() => void onAction("invalidate")} disabled={busyAction !== null || !canResolve}>{busyAction === "invalidate" ? "Resolving…" : "Invalidate evidence"}</button>
-            <button className="challenge-expire" type="button" onClick={() => void onAction("expire")} disabled={busyAction !== null}>{busyAction === "expire" ? "Expiring…" : "Expire after deadline"}</button>
+            <button className="challenge-expire" type="button" onClick={() => void onAction("expire")} disabled={busyAction !== null || !canExpireChallenge}>
+              {busyAction === "expire"
+                ? "Expiring…"
+                : resolutionRemainingNs === null
+                  ? "Checking NEAR time…"
+                  : resolutionRemainingNs > 0n
+                    ? `Available in ${formatCountdown(resolutionRemainingNs.toString())}`
+                    : !canExpireChallenge
+                      ? "Confirming deadline…"
+                      : "Expire after deadline"}
+            </button>
           </div>
           <small className="challenge-help">Upholding or timing out keeps accepted evidence. A timeout dismisses the challenge; its paused claim window resumes. Explicit invalidation removes the challenged evidence and any reserved claim window.</small>
         </>
@@ -3446,24 +4014,31 @@ function ChallengeControlsCard({
 function ClosureControlsCard({
   data,
   accountId,
+  tokenReadiness,
+  registeringTokenAccount,
+  onRegisterTokenAccount,
   busyAction,
   onAction,
 }: {
   data: CommitmentData;
   accountId: string | null;
+  tokenReadiness: TokenReadiness | null;
+  registeringTokenAccount: string | null;
+  onRegisterTokenAccount: (accountId: string, description: string) => void;
   busyAction: ClosureAction | null;
   onAction: (action: ClosureAction, storageDeposit?: string) => Promise<void>;
 }) {
   const { commitment, policy, escrow } = data;
+  const asset = commitmentSettlementAsset(commitment, policy);
   const beneficiary = policy?.budget.beneficiary;
   const canClose = Boolean(accountId && [commitment.creator, commitment.maintainer, commitment.arbiter, policy?.budget.sponsor, beneficiary].includes(accountId));
   const canRefund = accountId === policy?.budget.sponsor;
-  const residualYocto = escrow?.free_yocto ?? "0";
+  const residualYocto = escrow?.free_raw ?? escrow?.free_yocto ?? "0";
   const hasResidual = BigInt(residualYocto) > 0n;
-  const pendingYocto = escrow?.pending_yocto ?? "0";
+  const pendingYocto = escrow?.pending_raw ?? escrow?.pending_yocto ?? "0";
   const hasRefundPending = BigInt(pendingYocto) > 0n;
-  const refundedYocto = escrow?.refunded_yocto ?? "0";
-  const hasPending = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(commitment.escrow_pending_yocto) > 0n);
+  const refundedYocto = escrow?.refunded_raw ?? escrow?.refunded_yocto ?? "0";
+  const hasPending = Boolean(commitment.pending_evaluation_id || commitment.active_challenge_id || BigInt(pendingYocto) > 0n);
   const eligibleEpoch = data.eligibility?.eligible ? data.eligibility.claimable_epoch ?? data.eligibility.current_epoch : null;
   const beneficiaryHasClaimableTranche = Boolean(data.eligibility?.eligible && eligibleEpoch !== null);
   const beneficiaryConnected = Boolean(accountId && beneficiary && accountId === beneficiary);
@@ -3477,20 +4052,31 @@ function ClosureControlsCard({
       </div>
       {commitment.lifecycle === "Closed" ? (
         <>
-          <div className="closure-balance"><span>RESIDUAL ESCROW</span><strong>{formatNear(residualYocto)} NEAR</strong></div>
+          <div className="closure-balance"><span>RESIDUAL ESCROW</span><strong>{formatAssetValue(residualYocto, asset)}</strong></div>
           {hasResidual ? (
             <>
               {!canRefund && <p className="form-wallet-hint">Connect the sponsor wallet ({policy?.budget.sponsor}) to request the remaining refund.</p>}
+              {asset.kind === "nep141" && tokenReadiness?.sponsorRegistered !== true && (
+                <div className="token-registration-note">
+                  <small>{tokenReadiness?.loading ? "Checking sponsor USDC storage…" : `The sponsor needs sufficient storage with the token contract to receive the refund. Registering or topping up the storage deposit costs NEAR.`}</small>
+                  <button className="browser-button" type="button" onClick={() => policy && onRegisterTokenAccount(policy.budget.sponsor, "Sponsor account")} disabled={!canRefund || tokenReadiness?.loading === true || registeringTokenAccount !== null}>
+                    {registeringTokenAccount === policy?.budget.sponsor ? "Updating sponsor token storage…" : !canRefund ? "Sponsor wallet required" : "Prepare sponsor to receive USDC"}
+                  </button>
+                  {tokenReadiness?.error && <small role="alert">{tokenReadiness.error}</small>}
+                </div>
+              )}
               <div className="closure-refund-row">
-                <div className="closure-refund-deposit"><span>REFUND REQUEST STORAGE BOND</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
-                <button type="button" onClick={() => void onAction("refund", DEFAULT_STORAGE_DEPOSIT)} disabled={!canRefund || busyAction !== null}>{busyAction === "refund" ? "Requesting refund…" : "Refund residual escrow"}</button>
+                <div className="closure-refund-deposit"><span>{asset.kind === "nep141" ? "REFUND STORAGE + TOKEN DEPOSIT" : "REFUND REQUEST STORAGE BOND"}</span><strong>{DEFAULT_STORAGE_DEPOSIT} NEAR</strong></div>
+                <button type="button" onClick={() => void onAction("refund", DEFAULT_STORAGE_DEPOSIT)} disabled={!canRefund || busyAction !== null || (asset.kind === "nep141" && tokenReadiness?.sponsorRegistered !== true)}>{busyAction === "refund" ? "Requesting refund…" : "Refund residual escrow"}</button>
               </div>
-              <small className="closure-help">The refund sends {formatNear(residualYocto)} NEAR to {policy?.budget.sponsor}. The app attaches {DEFAULT_STORAGE_DEPOSIT} NEAR for storage; the contract calculates the required bond and returns any excess. The transfer settles asynchronously.</small>
+              <small className="closure-help">The refund sends {formatAssetValue(residualYocto, asset)} to {policy?.budget.sponsor}. {asset.kind === "nep141"
+                ? `The app attaches ${DEFAULT_STORAGE_DEPOSIT} NEAR for refund storage and the token’s required 1 yoctoNEAR transfer deposit; any excess is returned.`
+                : `The app attaches ${DEFAULT_STORAGE_DEPOSIT} NEAR for storage; the contract calculates the required bond and returns any excess.`} The transfer settles asynchronously.</small>
             </>
           ) : hasRefundPending ? (
-            <div className="closure-refund-pending"><strong>Refund transfer in progress</strong><span>{formatNear(pendingYocto)} NEAR is awaiting transfer reconciliation. Refresh after it settles.</span></div>
+            <div className="closure-refund-pending"><strong>Refund transfer in progress</strong><span>{formatAssetValue(pendingYocto, asset)} is awaiting transfer reconciliation. Refresh after it settles.</span></div>
           ) : BigInt(refundedYocto) > 0n ? (
-            <div className="closure-refund-pending"><strong>Refund complete</strong><span>{formatNear(refundedYocto)} NEAR has been returned to the sponsor.</span></div>
+            <div className="closure-refund-pending"><strong>Refund complete</strong><span>{formatAssetValue(refundedYocto, asset)} has been returned to the sponsor.</span></div>
           ) : <p className="closure-help">No residual escrow is available to refund.</p>}
         </>
       ) : (
@@ -3500,8 +4086,8 @@ function ClosureControlsCard({
             <div className="notice notice-warning" role="status">
               <span className="notice-icon">!</span>
               {beneficiaryConnected
-                ? `Closing now forfeits the eligible ${formatNear(data.eligibility!.amount_yocto)} NEAR tranche for epoch ${eligibleEpoch}, as well as all future support. Claim it first if you want to receive it.`
-                : `Epoch ${eligibleEpoch} has an eligible ${formatNear(data.eligibility!.amount_yocto)} NEAR tranche. The beneficiary must claim it before another participant can close.`}
+                ? `Closing now forfeits the eligible ${formatAssetValue(data.eligibility!.amount_raw ?? data.eligibility!.amount_yocto, asset)} tranche for epoch ${eligibleEpoch}, as well as all future support. Claim it first if you want to receive it.`
+                : `Epoch ${eligibleEpoch} has an eligible ${formatAssetValue(data.eligibility!.amount_raw ?? data.eligibility!.amount_yocto, asset)} tranche. The beneficiary must claim it before another participant can close.`}
             </div>
           )}
           {hasPending && <p className="form-wallet-hint">Resolve pending evaluations, challenges, and escrow transfers before closing.</p>}
@@ -3571,10 +4157,13 @@ function DraftSetupCard({
   data,
   accountId,
   escrowFundingNear,
+  tokenReadiness,
+  registeringTokenAccount,
   operationsFundingNear,
   activationStorageNear,
   busyAction,
   onEscrowFundingChange,
+  onRegisterTokenAccount,
   onOperationsFundingChange,
   onActivationStorageChange,
   onAction,
@@ -3582,18 +4171,23 @@ function DraftSetupCard({
   data: CommitmentData;
   accountId: string | null;
   escrowFundingNear: string;
+  tokenReadiness: TokenReadiness | null;
+  registeringTokenAccount: string | null;
   operationsFundingNear: string;
   activationStorageNear: string;
   busyAction: SetupAction | null;
   onEscrowFundingChange: (value: string) => void;
+  onRegisterTokenAccount: () => void;
   onOperationsFundingChange: (value: string) => void;
   onActivationStorageChange: (value: string) => void;
   onAction: (action: SetupAction) => Promise<void>;
 }) {
   const { commitment, policy } = data;
   if (!policy) return null;
-  const escrowTarget = BigInt(policy.budget.max_epochs) * BigInt(policy.budget.tranche_yocto);
-  const escrowFunded = BigInt(commitment.escrow_funded_yocto);
+  const asset = commitmentSettlementAsset(commitment, policy);
+  const trancheAmountRaw = policy.tranche_amount_raw ?? policy.budget.tranche_amount_raw ?? policy.budget.tranche_yocto;
+  const escrowTarget = BigInt(policy.budget.max_epochs) * BigInt(trancheAmountRaw);
+  const escrowFunded = BigInt(commitment.escrow_funded_raw ?? commitment.escrow_funded_yocto);
   const operationsTarget = BigInt(policy.evaluator.execution_deposit_yocto);
   const operationsFunded = BigInt(commitment.operations_funded_yocto);
   const escrowReady = escrowFunded >= escrowTarget;
@@ -3601,6 +4195,11 @@ function DraftSetupCard({
   const sponsorCanFund = accountId === policy.budget.sponsor;
   const canActivate = accountId === commitment.creator || accountId === commitment.maintainer || sponsorCanFund;
   const busy = busyAction !== null;
+  const assetLabel = settlementAssetSymbol(asset);
+  const tokenContractReady = asset.kind === "near"
+    || (tokenReadiness?.metadataValid === true
+      && tokenReadiness.contractRegistered === true
+      && tokenReadiness.error === null);
 
   return (
     <section className="content-card draft-setup">
@@ -3611,10 +4210,30 @@ function DraftSetupCard({
       <p className="draft-intro">Each step is a separate wallet transaction. The contract will not activate this commitment until its full escrow and one evaluator execution are funded.</p>
       <div className="setup-grid">
         <div className="setup-step">
-          <div className="setup-step-title"><span className={escrowReady ? "setup-check ready" : "setup-check"}>{escrowReady ? "✓" : "1"}</span><div><strong>Fund commitment escrow</strong><small>{formatNear(escrowFunded)} / {formatNear(escrowTarget)} NEAR</small></div></div>
-          <label htmlFor="escrow-funding">Amount to attach <span>NEAR</span></label>
-          <div className="setup-input-row"><input id="escrow-funding" inputMode="decimal" value={escrowFundingNear} onChange={(event) => onEscrowFundingChange(event.target.value)} /><button onClick={() => void onAction("escrow")} disabled={busy || !sponsorCanFund}>{busyAction === "escrow" ? "Sending…" : !sponsorCanFund ? "Sponsor wallet required" : escrowReady ? "Add escrow" : "Fund escrow"}</button></div>
-          <small className="setup-help">Target reserves {policy.budget.max_epochs} tranches at {formatNear(policy.budget.tranche_yocto)} NEAR each.</small>
+          <div className="setup-step-title"><span className={escrowReady ? "setup-check ready" : "setup-check"}>{escrowReady ? "✓" : "1"}</span><div><strong>Fund commitment escrow</strong><small>{formatAssetAmount(escrowFunded, asset)} / {formatAssetAmount(escrowTarget, asset)} {assetLabel}</small></div></div>
+          <label htmlFor="escrow-funding">Amount to transfer <span>{assetLabel}</span></label>
+          <div className="setup-input-row"><input id="escrow-funding" inputMode="decimal" value={escrowFundingNear} onChange={(event) => onEscrowFundingChange(event.target.value)} /><button onClick={() => void onAction("escrow")} disabled={busy || !sponsorCanFund || !tokenContractReady}>{busyAction === "escrow" ? "Sending…" : !sponsorCanFund ? "Sponsor wallet required" : !tokenContractReady ? "USDC setup required" : escrowReady ? "Add escrow" : "Fund escrow"}</button></div>
+          <small className="setup-help">Target reserves {policy.budget.max_epochs} tranches at {formatAssetAmount(BigInt(trancheAmountRaw), asset)} {assetLabel} each.</small>
+          {asset.kind === "nep141" && (
+            <div className="token-registration-note">
+              {tokenReadiness?.loading
+                ? <small>Checking the USDC contract and account registrations…</small>
+                : tokenReadiness?.error
+                  ? <small role="alert">{tokenReadiness.error} Funding is paused until the token checks pass.</small>
+                  : tokenReadiness?.metadataValid !== true
+                    ? <small role="alert">USDC contract metadata could not be verified. Funding is paused until it matches the supported token.</small>
+                  : tokenReadiness.contractRegistered
+                    ? <small>The LCP contract has enough USDC storage to receive escrow. Token funding uses USDC; gas and storage deposits use NEAR.</small>
+                    : <>
+                      <small>The LCP contract needs sufficient token storage before it can receive escrow. Registering or topping it up is paid in NEAR.</small>
+                      <button className="browser-button" type="button" onClick={onRegisterTokenAccount} disabled={busy || !sponsorCanFund || registeringTokenAccount !== null}>
+                        {registeringTokenAccount === CONTRACT_ID ? "Updating LCP token storage…" : !sponsorCanFund ? "Sponsor wallet required" : "Prepare LCP contract for USDC"}
+                      </button>
+                    </>}
+              <small>USDC funding also attaches the token's required 1 yoctoNEAR security deposit. It is separate from your USDC amount and NEAR gas.</small>
+              <small className="token-contract-id">USDC contract · <code>{asset.token_account_id}</code></small>
+            </div>
+          )}
         </div>
         <div className="setup-step">
           <div className="setup-step-title"><span className={operationsReady ? "setup-check ready" : "setup-check"}>{operationsReady ? "✓" : "2"}</span><div><strong>Fund evaluator operations</strong><small>{formatNear(operationsFunded)} / {formatNear(operationsTarget)} NEAR</small></div></div>
@@ -3633,6 +4252,48 @@ function DraftSetupCard({
   );
 }
 
+type DurationUnit = "seconds" | "minutes" | "hours" | "days";
+
+interface DurationValue {
+  amount: string;
+  unit: DurationUnit;
+}
+
+const DURATION_UNIT_SECONDS: Record<DurationUnit, bigint> = {
+  seconds: 1n,
+  minutes: 60n,
+  hours: 3_600n,
+  days: 86_400n,
+};
+
+function durationFromSeconds(seconds: string): DurationValue {
+  const raw = BigInt(seconds);
+  for (const unit of ["days", "hours", "minutes"] as const) {
+    const multiplier = DURATION_UNIT_SECONDS[unit];
+    if (raw > 0n && raw % multiplier === 0n) return { amount: (raw / multiplier).toString(), unit };
+  }
+  return { amount: seconds, unit: "seconds" };
+}
+
+function durationToSeconds(value: DurationValue, label: string, maximumSeconds?: bigint): string {
+  const amount = value.amount.trim();
+  const match = /^(?:(\d+)(?:\.(\d*))?|\.(\d+))$/.exec(amount);
+  if (!match) throw new Error(`${label} must be a positive number of ${value.unit}.`);
+  const whole = match[1] ?? "0";
+  const fraction = match[2] ?? match[3] ?? "";
+  const denominator = 10n ** BigInt(fraction.length);
+  const numerator = BigInt(`${whole}${fraction}`) * DURATION_UNIT_SECONDS[value.unit];
+  if (numerator % denominator !== 0n) {
+    throw new Error(`${label} must resolve to a whole second. Choose a smaller time unit instead of rounding.`);
+  }
+  const seconds = numerator / denominator;
+  if (seconds <= 0n) throw new Error(`${label} must be greater than zero.`);
+  if (maximumSeconds !== undefined && seconds > maximumSeconds) {
+    throw new Error(`${label} must be no more than ${maximumSeconds.toString()} seconds.`);
+  }
+  return seconds.toString();
+}
+
 interface CreationFields {
   subject: string;
   maintainer: string;
@@ -3642,21 +4303,22 @@ interface CreationFields {
   maintainerPublicKey: string;
   wasmUrl: string;
   wasmSha256: string;
-  initialWindowSeconds: string;
-  evidenceTtlSeconds: string;
-  graceSeconds: string;
-  maxSourceLagSeconds: string;
-  challengeWindowSeconds: string;
-  resolutionTimeoutSeconds: string;
+  initialWindow: DurationValue;
+  evidenceTtl: DurationValue;
+  gracePeriod: DurationValue;
+  maxSourceLag: DurationValue;
+  challengeWindow: DurationValue;
+  resolutionTimeout: DurationValue;
   recoveryAllowed: boolean;
-  epochSeconds: string;
+  epoch: DurationValue;
   maxEpochs: string;
   trancheNear: string;
+  settlementCurrency: SettlementCurrency;
   executionDepositNear: string;
   maxInstructions: string;
   maxMemoryMb: string;
-  maxExecutionSeconds: string;
-  requestTimeoutSeconds: string;
+  maxExecution: DurationValue;
+  requestTimeout: DurationValue;
   storageDepositNear: string;
 }
 
@@ -3673,14 +4335,14 @@ interface ServicePolicyDraft {
 type PolicyTemplateValues = Pick<
   CreationFields,
   | "subject"
-  | "initialWindowSeconds"
-  | "evidenceTtlSeconds"
-  | "graceSeconds"
-  | "maxSourceLagSeconds"
-  | "challengeWindowSeconds"
-  | "resolutionTimeoutSeconds"
+  | "initialWindow"
+  | "evidenceTtl"
+  | "gracePeriod"
+  | "maxSourceLag"
+  | "challengeWindow"
+  | "resolutionTimeout"
   | "recoveryAllowed"
-  | "epochSeconds"
+  | "epoch"
   | "maxEpochs"
   | "trancheNear"
 >;
@@ -3697,14 +4359,14 @@ const POLICY_TEMPLATES: ReadonlyArray<{
     description: "Short windows for the recurring service-maintenance walkthrough.",
     values: {
       subject: "Open-source service maintenance",
-      initialWindowSeconds: "60",
-      evidenceTtlSeconds: "240",
-      graceSeconds: "120",
-      maxSourceLagSeconds: "30",
-      challengeWindowSeconds: "60",
-      resolutionTimeoutSeconds: "120",
+      initialWindow: durationFromSeconds("60"),
+      evidenceTtl: durationFromSeconds("240"),
+      gracePeriod: durationFromSeconds("120"),
+      maxSourceLag: durationFromSeconds("30"),
+      challengeWindow: durationFromSeconds("60"),
+      resolutionTimeout: durationFromSeconds("120"),
       recoveryAllowed: true,
-      epochSeconds: "300",
+      epoch: durationFromSeconds("300"),
       maxEpochs: "3",
       trancheNear: "0.01",
     },
@@ -3715,14 +4377,14 @@ const POLICY_TEMPLATES: ReadonlyArray<{
     description: "Longer windows for recurring public-goods operations, such as community water access.",
     values: {
       subject: "Maintain the community water access service",
-      initialWindowSeconds: "604800",
-      evidenceTtlSeconds: "604800",
-      graceSeconds: "172800",
-      maxSourceLagSeconds: "86400",
-      challengeWindowSeconds: "43200",
-      resolutionTimeoutSeconds: "172800",
+      initialWindow: durationFromSeconds("604800"),
+      evidenceTtl: durationFromSeconds("604800"),
+      gracePeriod: durationFromSeconds("172800"),
+      maxSourceLag: durationFromSeconds("86400"),
+      challengeWindow: durationFromSeconds("43200"),
+      resolutionTimeout: durationFromSeconds("172800"),
       recoveryAllowed: true,
-      epochSeconds: "2592000",
+      epoch: durationFromSeconds("2592000"),
       maxEpochs: "12",
       trancheNear: "0.01",
     },
@@ -3751,23 +4413,24 @@ function CreateCommitmentForm({
     sponsor: "",
     beneficiary: "",
     maintainerPublicKey: "",
-    wasmUrl: "",
-    wasmSha256: "",
-    initialWindowSeconds: "60",
-    evidenceTtlSeconds: "240",
-    graceSeconds: "120",
-    maxSourceLagSeconds: "30",
-    challengeWindowSeconds: "60",
-    resolutionTimeoutSeconds: "120",
+    wasmUrl: NEAR_NETWORK_ID === "testnet" ? TESTNET_EVALUATOR_ARTIFACTS.heartbeat.wasmUrl : "",
+    wasmSha256: NEAR_NETWORK_ID === "testnet" ? TESTNET_EVALUATOR_ARTIFACTS.heartbeat.sha256 : "",
+    initialWindow: durationFromSeconds("60"),
+    evidenceTtl: durationFromSeconds("240"),
+    gracePeriod: durationFromSeconds("120"),
+    maxSourceLag: durationFromSeconds("30"),
+    challengeWindow: durationFromSeconds("60"),
+    resolutionTimeout: durationFromSeconds("120"),
     recoveryAllowed: true,
-    epochSeconds: "300",
+    epoch: durationFromSeconds("300"),
     maxEpochs: "3",
     trancheNear: "0.01",
+    settlementCurrency: "near",
     executionDepositNear: "0.01",
     maxInstructions: "1000000000",
     maxMemoryMb: "64",
-    maxExecutionSeconds: "10",
-    requestTimeoutSeconds: "180",
+    maxExecution: durationFromSeconds("10"),
+    requestTimeout: durationFromSeconds("180"),
     storageDepositNear: DEFAULT_STORAGE_DEPOSIT,
   });
   const [selectedTemplateId, setSelectedTemplateId] = useState(POLICY_TEMPLATES[0].id);
@@ -3833,14 +4496,14 @@ function CreateCommitmentForm({
       if (!pinnedKeyAccountId || pinnedKeyAccountId !== intendedAccountId) {
         throw new Error("Pin the connected maintainer wallet key before creating this commitment.");
       }
-      const baseArgs = buildCreateCommitmentArgs(fields, connectedAccountId);
+      const baseArgs = buildCreateCommitmentArgs(fields, connectedAccountId, evidenceMode);
       const args = evidenceMode === "service_availability"
         ? {
           ...baseArgs,
           service_availability: buildServiceAvailabilityPolicy(
             servicePolicy,
-            secondsToNanoseconds(fields.maxSourceLagSeconds, "Maximum source lag"),
-            secondsToNanoseconds(fields.evidenceTtlSeconds, "Evidence freshness TTL"),
+            durationToNanoseconds(fields.maxSourceLag, "Maximum source age"),
+            durationToNanoseconds(fields.evidenceTtl, "Evidence freshness"),
           ),
         }
         : baseArgs;
@@ -3852,7 +4515,7 @@ function CreateCommitmentForm({
     }
   }
 
-  const escrowPreview = previewEscrow(fields.maxEpochs, fields.trancheNear);
+  const escrowPreview = previewEscrow(fields.maxEpochs, fields.trancheNear, fields.settlementCurrency);
   const account = (value: string) => value || connectedAccountId || "";
   const selectedTemplate = POLICY_TEMPLATES.find((template) => template.id === selectedTemplateId);
 
@@ -3910,7 +4573,7 @@ function CreateCommitmentForm({
     <form className="creation-form" noValidate onSubmit={(event) => void handleSubmit(event)}>
       <div className="creation-intro"><p>Choose a starter policy, confirm who is involved, and add the evaluator artifact. Timing and runtime tuning use safe defaults and stay under Advanced settings.</p><span>GUIDED SETUP</span></div>
       {formError && <div ref={errorNoticeRef} className="notice notice-error form-notice" role="alert" tabIndex={-1}><span className="notice-icon">!</span>{formError}</div>}
-      <div className="form-grid">
+      <div className="form-grid" id="creation-model">
         <FormField label="Starter policy template" wide>
           <select value={selectedTemplateId} onChange={(event) => applyPolicyTemplate(event.target.value)}>
             {POLICY_TEMPLATES.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
@@ -3918,17 +4581,33 @@ function CreateCommitmentForm({
         </FormField>
       </div>
       <p className="policy-template-note">{selectedTemplate?.description} The starter sets the schedule and budget defaults. Review the people, evidence, and total escrow before creating the draft.</p>
+      <nav className="creation-step-nav" aria-label="Creation form sections">
+        <a href="#creation-model">Policy &amp; sources</a>
+        <a href="#creation-people">People</a>
+        <a href="#creation-evidence">Evidence</a>
+        <a href="#creation-funding">Funding</a>
+        <a href="#creation-advanced">Advanced</a>
+      </nav>
       <div className="form-grid">
         <FormField label="Evidence model" wide>
           <select value={evidenceMode} onChange={(event) => {
             const nextMode = event.target.value as "heartbeat" | "service_availability";
             setEvidenceMode(nextMode);
-            setFields((current) => ({
-              ...current,
-              storageDepositNear: nextMode === "service_availability"
-                ? DEFAULT_SERVICE_COMMITMENT_STORAGE_DEPOSIT
-                : DEFAULT_STORAGE_DEPOSIT,
-            }));
+            setFields((current) => {
+              const artifacts = NEAR_NETWORK_ID === "testnet" ? Object.values(TESTNET_EVALUATOR_ARTIFACTS) : [];
+              const usingBuiltInArtifact = artifacts.some((artifact) => current.wasmUrl === artifact.wasmUrl && current.wasmSha256 === artifact.sha256);
+              const artifactUnset = !current.wasmUrl && !current.wasmSha256;
+              const nextArtifact = NEAR_NETWORK_ID === "testnet" ? TESTNET_EVALUATOR_ARTIFACTS[nextMode] : null;
+              return {
+                ...current,
+                storageDepositNear: nextMode === "service_availability"
+                  ? DEFAULT_SERVICE_COMMITMENT_STORAGE_DEPOSIT
+                  : DEFAULT_STORAGE_DEPOSIT,
+                ...(nextArtifact && (usingBuiltInArtifact || artifactUnset)
+                  ? { wasmUrl: nextArtifact.wasmUrl, wasmSha256: nextArtifact.sha256 }
+                  : {}),
+              };
+            });
           }}>
             <option value="heartbeat">Maintainer-signed heartbeat · v2</option>
             <option value="service_availability">Independent service probes · v3</option>
@@ -3995,17 +4674,17 @@ function CreateCommitmentForm({
           </details>
         </section>
       )}
-      <div className="creation-section-heading"><span>01</span><div><h3>People and commitment</h3><small>Choose the accountable party, sponsor, reviewer, and beneficiary.</small></div></div>
+      <div className="creation-section-heading" id="creation-people"><span>01</span><div><h3>People and commitment</h3><small>Choose the accountable party, sponsor, reviewer, and beneficiary.</small></div></div>
       <p className="form-wallet-hint">The arbiter must be a separate account from the maintainer, sponsor, and beneficiary. NEAR enforces this before creating the commitment.</p>
       <div className="form-grid">
-        <FormField label="Commitment subject" wide><input maxLength={128} value={fields.subject} onChange={(event) => update("subject", event.target.value)} placeholder="e.g. Maintain the community API" required /></FormField>
-        <FormField label="Maintainer account"><input value={account(fields.maintainer)} onChange={(event) => update("maintainer", event.target.value)} placeholder="maintainer.testnet" required /></FormField>
-        <FormField label="Independent arbiter account"><input value={fields.arbiter} onChange={(event) => update("arbiter", event.target.value)} placeholder="arbiter.testnet" autoComplete="username" required /></FormField>
-        <FormField label="Sponsor account"><input value={account(fields.sponsor)} onChange={(event) => update("sponsor", event.target.value)} placeholder="sponsor.testnet" required /></FormField>
-        <FormField label="Beneficiary account"><input value={account(fields.beneficiary)} onChange={(event) => update("beneficiary", event.target.value)} placeholder="beneficiary.testnet" required /></FormField>
+        <FormField label="Commitment subject" wide help="A short public description of the service or responsibility being supported. It is stored on NEAR."><input maxLength={128} value={fields.subject} onChange={(event) => update("subject", event.target.value)} placeholder="e.g. Maintain the community API" required /></FormField>
+        <FormField label="Maintainer account" help="The account responsible for delivering the commitment and submitting or coordinating evidence."><input value={account(fields.maintainer)} onChange={(event) => update("maintainer", event.target.value)} placeholder="maintainer.testnet" required /></FormField>
+        <FormField label="Independent arbiter account" help="This account resolves challenges. It must be separate from the maintainer, sponsor, and beneficiary."><input value={fields.arbiter} onChange={(event) => update("arbiter", event.target.value)} placeholder="arbiter.testnet" autoComplete="username" required /></FormField>
+        <FormField label="Sponsor account" help="The account that funds the commitment and pays for evaluator operations."><input value={account(fields.sponsor)} onChange={(event) => update("sponsor", event.target.value)} placeholder="sponsor.testnet" required /></FormField>
+        <FormField label="Beneficiary account" help="The account eligible to receive each payment after the policy conditions are met."><input value={account(fields.beneficiary)} onChange={(event) => update("beneficiary", event.target.value)} placeholder="beneficiary.testnet" required /></FormField>
       </div>
 
-      <div className="creation-section-heading"><span>02</span><div><h3>Evidence and evaluator</h3><small>Pin the maintainer wallet and the exact evaluator artifact.</small></div></div>
+      <div className="creation-section-heading" id="creation-evidence"><span>02</span><div><h3>Evidence and evaluator</h3><small>Pin the maintainer wallet and the exact evaluator artifact.</small></div></div>
       <div className="form-grid">
         <div className="form-field form-field-wide">
           <label htmlFor="maintainer-wallet-key">Maintainer NEAR wallet key</label>
@@ -4018,28 +4697,39 @@ function CreateCommitmentForm({
           {keyFingerprint && <small className="form-wallet-hint">Pinned key fingerprint · <code>{keyFingerprint}</code> · signed by {pinnedKeyAccountId}</small>}
           {!connectedAccountId && <small className="form-wallet-hint">Connect the maintainer’s NEAR wallet first. The key is read from a NEP-413 wallet signature.</small>}
         </div>
-        <FormField label="Evaluator WASM HTTPS URL" wide><input value={fields.wasmUrl} onChange={(event) => update("wasmUrl", event.target.value)} placeholder={evidenceMode === "service_availability" ? "https://…/service-availability-evaluator.wasm" : "https://…/maintenance-heartbeat.wasm"} required /></FormField>
-        <FormField label="Evaluator WASM SHA-256 · 64 lowercase hex" wide><input className="mono-input" value={fields.wasmSha256} onChange={(event) => update("wasmSha256", event.target.value)} placeholder="Digest of the exact uploaded WASM file" required /></FormField>
+        <FormField label="Evaluator WASM HTTPS URL" wide help="OutLayer fetches this public WASM file when evaluating evidence. Use an immutable URL so the pinned digest keeps identifying the same artifact."><input value={fields.wasmUrl} onChange={(event) => update("wasmUrl", event.target.value)} placeholder={evidenceMode === "service_availability" ? "https://…/service-availability-evaluator.wasm" : "https://…/maintenance-heartbeat.wasm"} required /></FormField>
+        <FormField label="Evaluator WASM SHA-256 · 64 lowercase hex" wide help="The digest binds this commitment to the exact evaluator file. Changing the file requires a new digest and a new commitment or consented amendment."><input className="mono-input" value={fields.wasmSha256} onChange={(event) => update("wasmSha256", event.target.value)} placeholder="Digest of the exact uploaded WASM file" required /></FormField>
       </div>
 
-      <div className="creation-section-heading"><span>03</span><div><h3>Funding schedule</h3><small>Set recurring support and review the full escrow target.</small></div></div>
+      <div className="creation-section-heading" id="creation-funding"><span>03</span><div><h3>Funding schedule</h3><small>Set recurring support and review the full escrow target.</small></div></div>
       <div className="form-grid form-grid-3">
-        <FormField label="Payment interval · sec"><input type="number" min="1" step="1" value={fields.epochSeconds} onChange={(event) => update("epochSeconds", event.target.value)} required /></FormField>
-        <FormField label="Number of payments"><input type="number" min="1" max="64" step="1" value={fields.maxEpochs} onChange={(event) => update("maxEpochs", event.target.value)} required /></FormField>
-        <FormField label="Payment amount · NEAR"><input inputMode="decimal" value={fields.trancheNear} onChange={(event) => update("trancheNear", event.target.value)} required /></FormField>
+        <DurationField label="Payment interval" value={fields.epoch} onChange={(epoch) => update("epoch", epoch)} help="How often a new payment period begins. NEAR records this duration as whole seconds." />
+        <FormField label="Number of payments" help="The number of scheduled payments. The full amount is escrowed before activation."><input type="number" min="1" max="64" step="1" value={fields.maxEpochs} onChange={(event) => update("maxEpochs", event.target.value)} required /></FormField>
+        <FormField label="Commitment currency" help="Select the asset used for commitment escrow and beneficiary payouts. Gas, storage, and evaluator operations still use NEAR."><select value={fields.settlementCurrency} onChange={(event) => {
+          const nextCurrency = event.target.value as SettlementCurrency;
+          update("settlementCurrency", nextCurrency);
+          update("trancheNear", nextCurrency === "usdc" ? "10" : "0.01");
+        }}><option value="near">NEAR</option><option value="usdc">USDC</option></select></FormField>
+        <FormField label={`Payment amount · ${fields.settlementCurrency === "usdc" ? "USDC" : "NEAR"}`} help={`Amount paid per eligible period in ${fields.settlementCurrency === "usdc" ? "USDC" : "NEAR"}. The token amount is separate from NEAR gas and storage deposits.`}><input inputMode="decimal" value={fields.trancheNear} onChange={(event) => update("trancheNear", event.target.value)} required /></FormField>
       </div>
+      {fields.settlementCurrency === "usdc" && (
+        <p className="form-wallet-hint">
+          USDC uses six decimal places on {NEAR_NETWORK_ID}. Token transfers fund and settle the commitment; NEAR is still needed for gas, storage, and token-account registration. Contract: <code>{USDC_TOKEN_ACCOUNT_ID}</code>{" "}
+          <a href={nearblocksTokenUrl(USDC_TOKEN_ACCOUNT_ID)} target="_blank" rel="noopener noreferrer">View on NearBlocks ↗</a>
+        </p>
+      )}
 
-      <details className="guided-advanced creation-advanced-settings">
+      <details className="guided-advanced creation-advanced-settings" id="creation-advanced">
         <summary>Advanced policy and evaluator settings</summary>
         <p>Defaults come from the starter policy. Change them only when the commitment needs different timing or evaluator limits.</p>
         <div className="creation-section-heading"><span>A</span><div><h3>Timing and recovery</h3><small>These rules determine when evidence expires and whether health can recover.</small></div></div>
         <div className="form-grid form-grid-3">
-          <FormField label="Initial evidence window · sec"><input type="number" min="1" step="1" value={fields.initialWindowSeconds} onChange={(event) => update("initialWindowSeconds", event.target.value)} required /></FormField>
-          <FormField label="Evidence freshness · sec"><input type="number" min="1" step="1" value={fields.evidenceTtlSeconds} onChange={(event) => update("evidenceTtlSeconds", event.target.value)} required /></FormField>
-          <FormField label="Maximum source age · sec"><input type="number" min="1" step="1" value={fields.maxSourceLagSeconds} onChange={(event) => update("maxSourceLagSeconds", event.target.value)} required /></FormField>
-          <FormField label="Grace period · sec"><input type="number" min="1" step="1" value={fields.graceSeconds} onChange={(event) => update("graceSeconds", event.target.value)} required /></FormField>
-          <FormField label="Challenge window · sec"><input type="number" min="1" step="1" value={fields.challengeWindowSeconds} onChange={(event) => update("challengeWindowSeconds", event.target.value)} required /></FormField>
-          <FormField label="Arbiter resolution limit · sec"><input type="number" min="1" step="1" value={fields.resolutionTimeoutSeconds} onChange={(event) => update("resolutionTimeoutSeconds", event.target.value)} required /></FormField>
+          <DurationField label="Initial evidence window" value={fields.initialWindow} onChange={(initialWindow) => update("initialWindow", initialWindow)} help="Time allowed for the first qualifying evidence after activation." />
+          <DurationField label="Evidence freshness" value={fields.evidenceTtl} onChange={(evidenceTtl) => update("evidenceTtl", evidenceTtl)} help="How long accepted evidence remains current before the commitment becomes AtRisk." />
+          <DurationField label="Maximum source age" value={fields.maxSourceLag} onChange={(maxSourceLag) => update("maxSourceLag", maxSourceLag)} help="For service checks, reports older than this limit cannot contribute to a verdict." />
+          <DurationField label="Grace period" value={fields.gracePeriod} onChange={(gracePeriod) => update("gracePeriod", gracePeriod)} help="Extra time after evidence expires before the commitment becomes Breached." />
+          <DurationField label="Challenge window" value={fields.challengeWindow} onChange={(challengeWindow) => update("challengeWindow", challengeWindow)} help="Time in which an accepted evaluation can be challenged. It must be shorter than evidence freshness." />
+          <DurationField label="Arbiter resolution limit" value={fields.resolutionTimeout} onChange={(resolutionTimeout) => update("resolutionTimeout", resolutionTimeout)} help="Maximum time for the arbiter to resolve a challenge before the contract applies its timeout rule." />
           <label className="recovery-toggle"><input type="checkbox" checked={fields.recoveryAllowed} onChange={(event) => update("recoveryAllowed", event.target.checked)} /><span><strong>Allow recovery</strong><small>Fresh compliant evidence can restore future eligibility after a breach.</small></span></label>
         </div>
         <div className="creation-section-heading"><span>B</span><div><h3>Evaluator runtime</h3><small>OutLayer account and WASM target are fixed by this testnet Console.</small></div></div>
@@ -4047,13 +4737,13 @@ function CreateCommitmentForm({
           <FormField label="Evaluator execution budget · NEAR"><input inputMode="decimal" value={fields.executionDepositNear} onChange={(event) => update("executionDepositNear", event.target.value)} required /></FormField>
           <FormField label="Maximum instructions"><input inputMode="numeric" value={fields.maxInstructions} onChange={(event) => update("maxInstructions", event.target.value)} required /></FormField>
           <FormField label="Memory limit · MB"><input type="number" min="1" max="4096" step="1" value={fields.maxMemoryMb} onChange={(event) => update("maxMemoryMb", event.target.value)} required /></FormField>
-          <FormField label="Execution limit · sec"><input type="number" min="1" max="180" step="1" value={fields.maxExecutionSeconds} onChange={(event) => update("maxExecutionSeconds", event.target.value)} required /></FormField>
-          <FormField label="OutLayer response deadline · sec"><input type="number" min="1" max="180" step="1" value={fields.requestTimeoutSeconds} onChange={(event) => update("requestTimeoutSeconds", event.target.value)} required /><small>Default 180 seconds covers OutLayer execution and its callback to NEAR. If the deadline passes, the request ends without a verdict.</small></FormField>
+          <DurationField label="Execution limit" value={fields.maxExecution} onChange={(maxExecution) => update("maxExecution", maxExecution)} help="Maximum evaluator runtime. The current OutLayer configuration supports up to 180 seconds." units={["seconds", "minutes"]} />
+          <DurationField label="OutLayer response deadline" value={fields.requestTimeout} onChange={(requestTimeout) => update("requestTimeout", requestTimeout)} help="Default 180 seconds allows time for evaluation and the callback to NEAR. If it expires, the request ends without a verdict." units={["seconds", "minutes"]} />
           <FormField label="Draft storage bond · NEAR"><input inputMode="decimal" value={fields.storageDepositNear} onChange={(event) => update("storageDepositNear", event.target.value)} readOnly={evidenceMode === "service_availability"} required /><small>{evidenceMode === "service_availability" ? "Service policies attach a conservative 0.05 NEAR bond; the contract returns the unused amount." : "Any excess is returned by the contract."}</small></FormField>
         </div>
       </details>
 
-      <div className="creation-summary"><span>ESCROW REQUIRED AFTER DRAFT</span><strong>{escrowPreview} NEAR</strong><small>{fields.maxEpochs} payments × {fields.trancheNear} NEAR. This is funded separately after creation.</small></div>
+      <div className="creation-summary"><span>ESCROW REQUIRED AFTER DRAFT</span><strong>{escrowPreview} {fields.settlementCurrency === "usdc" ? "USDC" : "NEAR"}</strong><small>{fields.maxEpochs} payments × {fields.trancheNear} {fields.settlementCurrency === "usdc" ? "USDC" : "NEAR"}. This is funded separately after creation.</small></div>
       {!connectedAccountId && <p className="form-wallet-hint">Connect a testnet wallet to create the draft. Your wallet account becomes the on-chain creator.</p>}
       {!contractConfigured && <p className="form-wallet-hint">Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local before creating.</p>}
       <div className="creation-submit-row"><p>Creating stores an immutable policy and makes a Draft; it does not fund or activate it. Public policy fields and signed reports are visible on NEAR.</p><button className="lookup-button" type="submit" disabled={!hydrated || busy || !connectedAccountId || !contractConfigured}>{busy ? <><span className="spinner" />Creating draft</> : <>Review and create draft <span aria-hidden="true">↗</span></>}</button></div>
@@ -4061,8 +4751,89 @@ function CreateCommitmentForm({
   );
 }
 
-function FormField({ label, wide = false, children }: { label: string; wide?: boolean; children: ReactNode }) {
-  return <label className={`form-field ${wide ? "form-field-wide" : ""}`}><span>{label}</span>{children}</label>;
+function FieldHelp({ label, help }: { label: string; help: string }) {
+  return (
+    <details className="field-help">
+      <summary aria-label={`More information about ${label}`} title={`More information about ${label}`}>?</summary>
+      <div className="field-help-popover" role="note">{help}</div>
+    </details>
+  );
+}
+
+function FormField({ label, wide = false, help, children }: { label: string; wide?: boolean; help?: string; children: ReactNode }) {
+  const controlId = useId();
+  if (!help) return <label className={`form-field ${wide ? "form-field-wide" : ""}`}><span>{label}</span>{children}</label>;
+
+  let labelledControlId = controlId;
+  let foundControl = false;
+  const labelledChildren = Children.map(children, (child) => {
+    if (!foundControl && isValidElement(child) && typeof child.type === "string" && ["input", "select", "textarea"].includes(child.type)) {
+      foundControl = true;
+      const control = child as ReactElement<{ id?: string }>;
+      labelledControlId = control.props.id ?? controlId;
+      return cloneElement(control, { id: labelledControlId });
+    }
+    return child;
+  });
+
+  return (
+    <div className={`form-field ${wide ? "form-field-wide" : ""}`}>
+      <div className="form-field-label-row">
+        <label htmlFor={labelledControlId}>{label}</label>
+        <FieldHelp label={label} help={help} />
+      </div>
+      {labelledChildren}
+    </div>
+  );
+}
+
+function DurationField({
+  label,
+  value,
+  onChange,
+  help,
+  units = ["seconds", "minutes", "hours", "days"],
+}: {
+  label: string;
+  value: DurationValue;
+  onChange: (next: DurationValue) => void;
+  help: string;
+  units?: DurationUnit[];
+}) {
+  const inputId = useId();
+  const valueId = useId();
+  let protocolValue: string;
+  try {
+    protocolValue = `Protocol value: ${durationToSeconds(value, label)} seconds.`;
+  } catch {
+    protocolValue = "Enter a value that converts exactly to whole seconds.";
+  }
+
+  return (
+    <div className="form-field duration-field">
+      <div className="form-field-label-row">
+        <label htmlFor={inputId}>{label}</label>
+        <FieldHelp label={label} help={help} />
+      </div>
+      <div className="duration-input-row">
+        <input
+          id={inputId}
+          type="number"
+          min="0"
+          step="any"
+          inputMode="decimal"
+          value={value.amount}
+          aria-describedby={valueId}
+          onChange={(event) => onChange({ ...value, amount: event.target.value })}
+          required
+        />
+        <select aria-label={`${label} unit`} value={value.unit} onChange={(event) => onChange({ ...value, unit: event.target.value as DurationUnit })}>
+          {units.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+        </select>
+      </div>
+      <small className="duration-protocol-value" id={valueId} aria-live="polite">{protocolValue}</small>
+    </div>
+  );
 }
 
 function buildServiceAvailabilityPolicy(
@@ -4120,7 +4891,11 @@ async function fingerprintServiceTarget(rawUrl: string, saltHex: string): Promis
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: string | null): CreateCommitmentArgs {
+function buildCreateCommitmentArgs(
+  fields: CreationFields,
+  connectedAccountId: string | null,
+  evidenceMode: "heartbeat" | "service_availability",
+): CreateCommitmentArgs {
   const subject = fields.subject.trim();
   if (!subject || subject.length > 128 || !/^[\x20-\x7e]+$/.test(subject)) {
     throw new Error("Subject must be non-empty printable ASCII and no longer than 128 characters.");
@@ -4140,13 +4915,13 @@ function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: s
     throw new Error("Enter a valid HTTPS URL for the evaluator WASM file.");
   }
 
-  const initialWindow = secondsToNanoseconds(fields.initialWindowSeconds, "Initial evidence window");
-  const evidenceTtl = secondsToNanoseconds(fields.evidenceTtlSeconds, "Evidence freshness TTL");
-  const grace = secondsToNanoseconds(fields.graceSeconds, "Grace period");
-  const maxSourceLag = secondsToNanoseconds(fields.maxSourceLagSeconds, "Maximum source lag");
-  const challengeWindow = secondsToNanoseconds(fields.challengeWindowSeconds, "Challenge window");
-  const resolutionTimeout = secondsToNanoseconds(fields.resolutionTimeoutSeconds, "Resolution timeout");
-  const epoch = secondsToNanoseconds(fields.epochSeconds, "Budget epoch");
+  const initialWindow = durationToNanoseconds(fields.initialWindow, "Initial evidence window");
+  const evidenceTtl = durationToNanoseconds(fields.evidenceTtl, "Evidence freshness");
+  const grace = durationToNanoseconds(fields.gracePeriod, "Grace period");
+  const maxSourceLag = durationToNanoseconds(fields.maxSourceLag, "Maximum source age");
+  const challengeWindow = durationToNanoseconds(fields.challengeWindow, "Challenge window");
+  const resolutionTimeout = durationToNanoseconds(fields.resolutionTimeout, "Arbiter resolution limit");
+  const epoch = durationToNanoseconds(fields.epoch, "Payment interval");
   if (BigInt(challengeWindow) >= BigInt(evidenceTtl)) throw new Error("Challenge window must be shorter than evidence TTL.");
   if (BigInt(maxSourceLag) + BigInt(challengeWindow) >= BigInt(evidenceTtl)) {
     throw new Error("Evidence TTL must exceed maximum source lag plus the challenge window.");
@@ -4155,19 +4930,25 @@ function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: s
   if (BigInt(initialWindow) + BigInt(grace) > maximumU64 || BigInt(evidenceTtl) + BigInt(grace) > maximumU64) {
     throw new Error("Evidence windows and grace period exceed the supported timestamp range.");
   }
-  const executionSeconds = integerString(fields.maxExecutionSeconds, "Maximum execution time", 1, 180);
-  const requestTimeoutSeconds = integerString(fields.requestTimeoutSeconds, "Request timeout", 1, 180);
+  const executionSeconds = durationToSeconds(fields.maxExecution, "Execution limit", 180n);
+  const requestTimeoutSeconds = durationToSeconds(fields.requestTimeout, "OutLayer response deadline", 180n);
   if (BigInt(requestTimeoutSeconds) < BigInt(executionSeconds)) {
     throw new Error("Request timeout must cover the maximum execution time.");
   }
   const maxInstructions = integerString(fields.maxInstructions, "Maximum instructions", 1, 500_000_000_000);
   const maxMemoryMb = Number(integerString(fields.maxMemoryMb, "Memory limit", 1, 4096));
   const maxEpochs = Number(integerString(fields.maxEpochs, "Maximum epochs", 1, 64));
-  const trancheYocto = parseNearToYocto(fields.trancheNear);
+  const settlementAsset: SettlementAssetInput = fields.settlementCurrency === "usdc"
+    ? { kind: "nep141", token_account_id: USDC_TOKEN_ACCOUNT_ID }
+    : { kind: "near" };
+  const trancheAmountRaw = fields.settlementCurrency === "usdc"
+    ? parseAssetAmount(fields.trancheNear, settlementAsset)
+    : parseNearToYocto(fields.trancheNear);
+  const trancheYocto = fields.settlementCurrency === "near" ? trancheAmountRaw : "0";
   const executionDepositYocto = parseNearToYocto(fields.executionDepositNear);
-  if (BigInt(trancheYocto) === 0n) throw new Error("Tranche amount must be greater than zero.");
+  if (BigInt(trancheAmountRaw) === 0n) throw new Error("Tranche amount must be greater than zero.");
   if (BigInt(executionDepositYocto) === 0n) throw new Error("Evaluator execution deposit must be greater than zero.");
-  if (BigInt(trancheYocto) * BigInt(maxEpochs) > 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffffn) {
+  if (BigInt(trancheAmountRaw) * BigInt(maxEpochs) > 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffffn) {
     throw new Error("Total escrow target exceeds the supported 128-bit amount range.");
   }
 
@@ -4212,7 +4993,9 @@ function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: s
         outlayer_account: "outlayer.testnet",
         wasm_url: fields.wasmUrl,
         wasm_sha256_hex: fields.wasmSha256,
-        build_target: "wasm32-wasip2",
+        build_target: evidenceMode === "service_availability"
+          ? TESTNET_EVALUATOR_ARTIFACTS.service_availability.buildTarget
+          : TESTNET_EVALUATOR_ARTIFACTS.heartbeat.buildTarget,
         max_instructions: maxInstructions,
         max_memory_mb: maxMemoryMb,
         max_execution_seconds: executionSeconds,
@@ -4225,6 +5008,9 @@ function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: s
         epoch_ns: epoch,
         max_epochs: maxEpochs,
         tranche_yocto: trancheYocto,
+        ...(settlementAsset.kind === "nep141"
+          ? { settlement_asset: settlementAsset, tranche_amount_raw: trancheAmountRaw }
+          : {}),
       },
     },
   };
@@ -4237,6 +5023,10 @@ function secondsToNanoseconds(value: string, label: string): string {
   return nanoseconds.toString();
 }
 
+function durationToNanoseconds(value: DurationValue, label: string): string {
+  return secondsToNanoseconds(durationToSeconds(value, label), label);
+}
+
 function integerString(value: string, label: string, minimum: number, maximum: number): string {
   if (!/^(0|[1-9][0-9]*)$/.test(value)) throw new Error(`${label} must be a whole number.`);
   const parsed = BigInt(value);
@@ -4246,10 +5036,14 @@ function integerString(value: string, label: string, minimum: number, maximum: n
   return value;
 }
 
-function previewEscrow(maxEpochs: string, trancheNear: string): string {
+function previewEscrow(maxEpochs: string, trancheNear: string, currency: SettlementCurrency): string {
   try {
     const epochs = BigInt(maxEpochs);
-    return formatNear(epochs * BigInt(parseNearToYocto(trancheNear)));
+    const asset: SettlementAssetInput = currency === "usdc"
+      ? { kind: "nep141", token_account_id: USDC_TOKEN_ACCOUNT_ID }
+      : { kind: "near" };
+    const amount = currency === "usdc" ? parseAssetAmount(trancheNear, asset) : parseNearToYocto(trancheNear);
+    return formatAssetAmount(epochs * BigInt(amount), asset);
   } catch {
     return "—";
   }
@@ -4297,6 +5091,103 @@ function decodeTransactionOutcome<T>(outcome: unknown): T {
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   const output = new TextDecoder().decode(bytes);
   return JSON.parse(output) as T;
+}
+
+function commitmentSettlementAsset(
+  commitment: Pick<CommitmentView, "settlement_asset"> | null | undefined,
+  policy: Pick<CommitmentPolicyView, "settlement_asset" | "budget"> | null | undefined,
+): SettlementAsset | SettlementAssetInput {
+  return commitment?.settlement_asset
+    ?? policy?.settlement_asset
+    ?? policy?.budget.settlement_asset
+    ?? { kind: "near" };
+}
+
+function settlementAssetSymbol(asset: SettlementAsset | SettlementAssetInput): string {
+  return asset.kind === "near" ? "NEAR" : "USDC";
+}
+
+function nearblocksTokenUrl(tokenAccountId: string): string {
+  return `https://${NEAR_NETWORK_ID === "testnet" ? "testnet." : ""}nearblocks.io/tokens/${tokenAccountId}`;
+}
+
+function settlementAssetDecimals(asset: SettlementAsset | SettlementAssetInput): number {
+  return asset.kind === "near" ? 24 : ("decimals" in asset ? asset.decimals : USDC_DECIMALS);
+}
+
+function formatAssetAmount(raw: bigint, asset: SettlementAsset | SettlementAssetInput): string {
+  if (asset.kind === "near") return formatNear(raw);
+  const decimals = settlementAssetDecimals(asset);
+  const scale = 10n ** BigInt(decimals);
+  const whole = raw / scale;
+  const fraction = (raw % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fraction ? `${whole.toLocaleString()}.${fraction}` : whole.toLocaleString();
+}
+
+function formatAssetValue(raw: bigint | string, asset: SettlementAsset | SettlementAssetInput): string {
+  return `${formatAssetAmount(typeof raw === "bigint" ? raw : BigInt(raw), asset)} ${settlementAssetSymbol(asset)}`;
+}
+
+function parseAssetAmount(amount: string, asset: SettlementAsset | SettlementAssetInput): string {
+  if (asset.kind === "near") return parseNearToYocto(amount);
+  const decimals = settlementAssetDecimals(asset);
+  const match = new RegExp(`^(0|[1-9][0-9]*)(?:\\.([0-9]{0,${decimals}}))?$`).exec(amount.trim());
+  if (!match) throw new Error(`Enter a non-negative ${settlementAssetSymbol(asset)} amount with up to ${decimals} decimal places.`);
+  const fraction = (match[2] ?? "").padEnd(decimals, "0");
+  const raw = `${match[1]}${fraction}`.replace(/^0+(?=[0-9])/, "");
+  if (BigInt(raw) > 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffffn) {
+    throw new Error(`${settlementAssetSymbol(asset)} amount exceeds the supported 128-bit range.`);
+  }
+  return raw;
+}
+
+async function readTokenReadiness(
+  asset: Nep141SettlementAsset,
+  sponsorAccountId: string,
+  beneficiaryAccountId: string,
+): Promise<TokenReadiness> {
+  const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+  const [metadata, contractBalance, sponsorBalance, beneficiaryBalance, bounds] = await Promise.all([
+    client.getFungibleTokenMetadata(asset.token_account_id),
+    client.getFungibleTokenStorageBalance(asset.token_account_id, CONTRACT_ID),
+    client.getFungibleTokenStorageBalance(asset.token_account_id, sponsorAccountId),
+    client.getFungibleTokenStorageBalance(asset.token_account_id, beneficiaryAccountId),
+    client.getFungibleTokenStorageBounds(asset.token_account_id),
+  ]);
+  const metadataValid = asset.token_account_id === USDC_TOKEN_ACCOUNT_ID
+    && metadata.symbol.toUpperCase() === "USDC"
+    && metadata.decimals === USDC_DECIMALS
+    && settlementAssetDecimals(asset) === USDC_DECIMALS;
+  const minimum = BigInt(bounds.min);
+  const boundsValid = minimum > 0n && (bounds.max === null || minimum <= BigInt(bounds.max));
+  const storageReady = (balance: FungibleTokenStorageBalance | null) =>
+    boundsValid && balance !== null && BigInt(balance.total) >= minimum;
+  return {
+    loading: false,
+    metadataValid,
+    contractRegistered: storageReady(contractBalance),
+    sponsorRegistered: storageReady(sponsorBalance),
+    beneficiaryRegistered: storageReady(beneficiaryBalance),
+    minimumStorageDepositYocto: bounds.min,
+    error: !metadataValid
+      ? "The token contract or metadata does not match the supported network USDC asset."
+      : !boundsValid
+        ? "The USDC contract returned invalid NEP-145 storage bounds."
+        : null,
+  };
+}
+
+async function hasSufficientTokenStorage(tokenAccountId: string, accountId: string): Promise<boolean> {
+  const client = new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
+  const [balance, bounds] = await Promise.all([
+    client.getFungibleTokenStorageBalance(tokenAccountId, accountId),
+    client.getFungibleTokenStorageBounds(tokenAccountId),
+  ]);
+  const minimum = BigInt(bounds.min);
+  return minimum > 0n
+    && (bounds.max === null || minimum <= BigInt(bounds.max))
+    && balance !== null
+    && BigInt(balance.total) >= minimum;
 }
 
 function parseNearToYocto(amount: string): string {
@@ -4441,9 +5332,11 @@ function EvaluationProofReference({
         }
       }
       const reportId = attestationRecord.task_id;
-      const reportUrl = (typeof reportId === "string" || typeof reportId === "number")
-        ? `https://app.outlayer.ai/attestation/${encodeURIComponent(String(reportId))}`
-        : null;
+      const reportUrl = NEAR_NETWORK_ID === "testnet"
+        ? `${apiUrl}/attestations/by-tx/${encodeURIComponent(transactionHash)}`
+        : (typeof reportId === "string" || typeof reportId === "number")
+          ? `https://app.outlayer.ai/attestation/${encodeURIComponent(String(reportId))}`
+          : null;
       const message = mismatches.length > 0
         ? `Record found, but ${mismatches.join(", ")} binding${mismatches.length === 1 ? " differs" : "s differ"}.`
         : unavailableChecks.length > 0
@@ -4470,7 +5363,7 @@ function EvaluationProofReference({
           NEAR transaction ↗
         </a>
         {attestation.kind === "found" && attestation.reportUrl ? (
-          <a href={attestation.reportUrl} target="_blank" rel="noopener noreferrer">Open OutLayer report ↗</a>
+          <a href={attestation.reportUrl} target="_blank" rel="noopener noreferrer">{NEAR_NETWORK_ID === "testnet" ? "Open testnet attestation record ↗" : "Open OutLayer report ↗"}</a>
         ) : (
           <a href="https://app.outlayer.ai/docs/trust-verification" target="_blank" rel="noopener noreferrer">OutLayer verification guide ↗</a>
         )}

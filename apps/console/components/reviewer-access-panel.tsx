@@ -24,6 +24,7 @@ const SERVICE_URL = process.env.NEXT_PUBLIC_LCP_REVIEWER_ACCESS_URL?.trim() ?? "
 const ACCESS_RECIPIENT = process.env.NEXT_PUBLIC_LCP_REVIEWER_ACCESS_RECIPIENT?.trim() || "lcp.gama.works/reviewer-access";
 const VAULT_DB = "lcp-reviewer-key-vaults-v1";
 const VAULT_STORE = "vaults";
+const LIST_SIGNATURE_TTL_NS = 5n * 60n * 1_000_000_000n;
 
 interface Props {
   accountId: string | null;
@@ -199,7 +200,12 @@ export function ReviewerAccessPanel(props: Props) {
     clearNotice();
     setBusy(true);
     try {
-      const signed = await signPayload({ schema: "lcp.reviewer-request-list.v1", commitment_id: props.commitmentId });
+      if (!props.chainTimeNs) throw new Error("Refresh the commitment to read finalized NEAR time before listing requests.");
+      const signed = await signPayload({
+        schema: "lcp.reviewer-request-list.v1",
+        commitment_id: props.commitmentId,
+        auth_expires_at_ns: (BigInt(props.chainTimeNs) + LIST_SIGNATURE_TTL_NS).toString(),
+      });
       const result = await client().listRequests(signed.payload, signed.signed_message);
       const rows = result.requests as unknown as ReviewerRequestRow[];
       setRequests(rows);
@@ -216,7 +222,12 @@ export function ReviewerAccessPanel(props: Props) {
     clearNotice();
     setBusy(true);
     try {
-      const signed = await signPayload({ schema: "lcp.reviewer-grant-list.v1", commitment_id: props.commitmentId });
+      if (!props.chainTimeNs) throw new Error("Refresh the commitment to read finalized NEAR time before listing grants.");
+      const signed = await signPayload({
+        schema: "lcp.reviewer-grant-list.v1",
+        commitment_id: props.commitmentId,
+        auth_expires_at_ns: (BigInt(props.chainTimeNs) + LIST_SIGNATURE_TTL_NS).toString(),
+      });
       const result = await client().listGrants(signed.payload, signed.signed_message);
       const rows = result.grants as unknown as ReviewerGrantRow[];
       setGrants(rows);

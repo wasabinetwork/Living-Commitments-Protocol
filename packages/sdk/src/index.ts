@@ -18,6 +18,34 @@ export type EvaluationStatus = "Pending" | "Accepted" | "Rejected" | "Failed" | 
 export type ChallengeStatus = "Open" | "Upheld" | "Invalidated" | "TimedOut";
 export type TrancheStatus = "Unclaimed" | "Pending" | "Paid" | "Failed";
 
+export type SettlementAsset =
+  | { kind: "near" }
+  | { kind: "nep141"; token_account_id: string; decimals: number };
+
+export type SettlementAssetInput =
+  | { kind: "near" }
+  | { kind: "nep141"; token_account_id: string };
+
+export interface FungibleTokenMetadataView {
+  spec: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+  reference?: string | null;
+  reference_hash?: string | null;
+  icon?: string | null;
+}
+
+export interface FungibleTokenStorageBalance {
+  total: YoctoNear;
+  available: YoctoNear;
+}
+
+export interface FungibleTokenStorageBounds {
+  min: YoctoNear;
+  max: YoctoNear | null;
+}
+
 export interface TemporalPolicyInput {
   initial_window_ns: Nanoseconds;
   evidence_ttl_ns: Nanoseconds;
@@ -52,6 +80,8 @@ export interface BudgetPolicyInput {
   epoch_ns: Nanoseconds;
   max_epochs: number;
   tranche_yocto: YoctoNear;
+  settlement_asset?: SettlementAssetInput;
+  tranche_amount_raw?: DecimalString;
 }
 
 export interface CreateCommitmentArgs {
@@ -419,6 +449,12 @@ export interface CommitmentView {
   escrow_paid_yocto: YoctoNear;
   escrow_refunded_yocto: YoctoNear;
   escrow_pending_yocto: YoctoNear;
+  settlement_asset?: SettlementAsset;
+  escrow_funded_raw?: DecimalString;
+  escrow_paid_raw?: DecimalString;
+  escrow_refunded_raw?: DecimalString;
+  escrow_pending_raw?: DecimalString;
+  tranche_amount_raw?: DecimalString;
   operations_funded_yocto: YoctoNear;
   operations_authorized_spend_yocto: YoctoNear;
   storage_deposit_yocto: YoctoNear;
@@ -432,6 +468,9 @@ export interface CommitmentSummaryView {
   policy_version: number;
   escrow_funded_yocto: YoctoNear;
   escrow_paid_yocto: YoctoNear;
+  settlement_asset?: SettlementAsset;
+  escrow_funded_raw?: DecimalString;
+  escrow_paid_raw?: DecimalString;
 }
 
 export interface TemporalPolicyView extends Omit<TemporalPolicyInput, "recovery_allowed"> {
@@ -448,6 +487,8 @@ export interface CommitmentPolicyView {
   };
   evaluator: Omit<EvaluatorPolicyInput, "wasm_sha256_hex"> & { wasm_sha256_hex: Sha256Hex };
   budget: BudgetPolicyInput;
+  settlement_asset?: SettlementAsset;
+  tranche_amount_raw?: DecimalString;
 }
 
 export interface EvaluationRecordView {
@@ -483,6 +524,8 @@ export interface TrancheView {
   commitment_id: CommitmentId;
   epoch: DecimalString;
   amount_yocto: YoctoNear;
+  settlement_asset?: SettlementAsset;
+  amount_raw?: DecimalString;
   status: TrancheStatus;
   transfer_id: TransferId | null;
 }
@@ -494,6 +537,8 @@ export interface ClaimEligibilityView {
   claimable_epoch: DecimalString | null;
   claim_window_resumed: boolean;
   amount_yocto: YoctoNear;
+  settlement_asset?: SettlementAsset;
+  amount_raw?: DecimalString;
 }
 
 export interface EscrowStatusView {
@@ -502,6 +547,12 @@ export interface EscrowStatusView {
   refunded_yocto: YoctoNear;
   pending_yocto: YoctoNear;
   free_yocto: YoctoNear;
+  settlement_asset?: SettlementAsset;
+  funded_raw?: DecimalString;
+  paid_raw?: DecimalString;
+  refunded_raw?: DecimalString;
+  pending_raw?: DecimalString;
+  free_raw?: DecimalString;
 }
 
 export interface LcpEvent<TData extends Record<string, unknown> = Record<string, unknown>> {
@@ -983,6 +1034,50 @@ export class LcpClient {
       { commitment_id: id },
       { ...options, attachedDepositYocto: amountYocto },
     );
+  }
+
+  fundCommitmentWithToken(
+    id: CommitmentId,
+    tokenAccountId: string,
+    amountRaw: DecimalString,
+    options: Omit<ContractCallOptions, "attachedDepositYocto"> = {},
+  ): Promise<unknown> {
+    return this.transport.call<unknown>(tokenAccountId, "ft_transfer_call", {
+      receiver_id: this.contractId,
+      amount: amountRaw,
+      msg: JSON.stringify({ schema: "lcp.funding.v1", commitment_id: id }),
+    }, { ...options, attachedDepositYocto: "1" });
+  }
+
+  getFungibleTokenMetadata(tokenAccountId: string): Promise<FungibleTokenMetadataView> {
+    return this.transport.view<FungibleTokenMetadataView>(tokenAccountId, "ft_metadata", {});
+  }
+
+  getFungibleTokenStorageBalance(
+    tokenAccountId: string,
+    accountId: string,
+  ): Promise<FungibleTokenStorageBalance | null> {
+    return this.transport.view<FungibleTokenStorageBalance | null>(tokenAccountId, "storage_balance_of", {
+      account_id: accountId,
+    });
+  }
+
+  getFungibleTokenStorageBounds(tokenAccountId: string): Promise<FungibleTokenStorageBounds> {
+    return this.transport.view<FungibleTokenStorageBounds>(tokenAccountId, "storage_balance_bounds", {});
+  }
+
+  // registration_only=true is for fresh registration; NEP-145 refunds deposits sent for an existing account.
+  registerFungibleTokenAccount(
+    tokenAccountId: string,
+    accountId: string,
+    depositYocto: YoctoNear,
+    options: Omit<ContractCallOptions, "attachedDepositYocto"> = {},
+    registrationOnly = true,
+  ): Promise<FungibleTokenStorageBalance> {
+    return this.transport.call<FungibleTokenStorageBalance>(tokenAccountId, "storage_deposit", {
+      account_id: accountId,
+      registration_only: registrationOnly,
+    }, { ...options, attachedDepositYocto: depositYocto });
   }
 
   fundOperations(id: CommitmentId, amountYocto: YoctoNear, options: Omit<ContractCallOptions, "attachedDepositYocto"> = {}): Promise<void> {

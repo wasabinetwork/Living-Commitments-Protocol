@@ -21,15 +21,27 @@ jobs:
       - name: Install pinned Rust toolchain and WASM targets
         run: |
           toolchain="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
-          rustup toolchain install "$toolchain" --profile minimal --component clippy --component rustfmt --target wasm32-unknown-unknown --target wasm32-wasip2
+          rustup toolchain install "$toolchain" --profile minimal --component clippy --component rustfmt --target wasm32-unknown-unknown --target wasm32-wasip1 --target wasm32-wasip2
+      - name: Install pinned cargo-near CLI
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output /tmp/cargo-near-installer.sh \
+            https://github.com/near/cargo-near/releases/download/cargo-near-v0.23.0/cargo-near-installer.sh
+          echo '76ae71bc6a99864a09cc67c1c0bf82a2b7812d8ab4c93034b680235df6d22028  /tmp/cargo-near-installer.sh' | sha256sum --check
+          sh /tmp/cargo-near-installer.sh
+          cargo near --version
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run Rust tests
         run: cargo test --workspace --locked
-      - name: Build NEAR contracts
-        run: cargo build -p lcp-core -p lcp-bounded-payout-adapter --target wasm32-unknown-unknown --release --locked
+      - name: Check NEAR contracts with on-chain configuration
+        run: |
+          cargo near check --locked --manifest-path contracts/lcp-core/Cargo.toml
+          cargo near check --locked --manifest-path contracts/bounded-payout-adapter/Cargo.toml
       - name: Build evaluator WASM
-        run: cargo build -p maintenance-heartbeat -p service-availability-evaluator --target wasm32-wasip2 --release --locked
+        run: |
+          cargo build -p maintenance-heartbeat --target wasm32-wasip1 --release --locked
+          cargo build -p service-availability-evaluator --target wasm32-wasip2 --release --locked
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit Rust dependencies
