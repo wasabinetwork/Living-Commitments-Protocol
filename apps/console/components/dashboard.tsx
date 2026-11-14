@@ -4354,7 +4354,7 @@ function CreateCommitmentForm({
       if (!pinnedKeyAccountId || pinnedKeyAccountId !== intendedAccountId) {
         throw new Error("Pin the connected maintainer wallet key before creating this commitment.");
       }
-      const baseArgs = buildCreateCommitmentArgs(fields, connectedAccountId);
+      const baseArgs = buildCreateCommitmentArgs(fields, connectedAccountId, evidenceMode);
       const args = evidenceMode === "service_availability"
         ? {
           ...baseArgs,
@@ -4749,7 +4749,11 @@ async function fingerprintServiceTarget(rawUrl: string, saltHex: string): Promis
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function buildCreateCommitmentArgs(fields: CreationFields, connectedAccountId: string | null): CreateCommitmentArgs {
+function buildCreateCommitmentArgs(
+  fields: CreationFields,
+  connectedAccountId: string | null,
+  evidenceMode: "heartbeat" | "service_availability",
+): CreateCommitmentArgs {
   const subject = fields.subject.trim();
   if (!subject || subject.length > 128 || !/^[\x20-\x7e]+$/.test(subject)) {
     throw new Error("Subject must be non-empty printable ASCII and no longer than 128 characters.");
