@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 
 const YOCTO_PER_NEAR = 10n ** 24n;
 const NS_PER_HOUR = 60n * 60n * 1_000_000_000n;
-const BOUNDED_ADAPTER_WASM_SHA256 = "3379e0b6bddb6b5da2fdf78e6b1fe5bc5216a2d4ab09fad9a525ef5140d87cd0";
+const BOUNDED_ADAPTER_WASM_SHA256 = "148f752999a6613c39675540717b3cb21feee4ae1c8618703513712912a6b0a6";
 
 interface AmendmentProps {
   accountId: string | null;
