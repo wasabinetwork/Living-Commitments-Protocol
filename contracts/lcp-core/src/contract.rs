@@ -1820,7 +1820,8 @@ impl Contract {
     pub fn sandbox_seed_outlayer_service_dispatch_commitment(
         &mut self,
         commitment_id: U64,
-        source_public_key_hex: String,
+        transaction_authenticated: bool,
+        source_public_key_hex: Option<String>,
         operations_funded_yocto: U128,
         execution_deposit_yocto: U128,
     ) {
@@ -1840,19 +1841,34 @@ impl Contract {
             commitment_id.0 > 0 && self.commitments.get(&commitment_id.0).is_none(),
             "fixture commitment ID must be positive and unused"
         );
-        let source_public_key = decode_32_byte_hex(&source_public_key_hex)
-            .unwrap_or_else(|| env::panic_str("fixture source key must be 32-byte hex"));
-        require!(
-            encode_hex(&source_public_key) == source_public_key_hex,
-            "fixture source key must use lowercase hex"
-        );
+        let source_public_key_hex = if transaction_authenticated {
+            require!(
+                source_public_key_hex.is_none(),
+                "transaction-authenticated fixture must not pin an operator key"
+            );
+            None
+        } else {
+            let key_hex = source_public_key_hex
+                .unwrap_or_else(|| env::panic_str("legacy fixture requires a source public key"));
+            let source_public_key = decode_32_byte_hex(&key_hex)
+                .unwrap_or_else(|| env::panic_str("fixture source key must be 32-byte hex"));
+            require!(
+                encode_hex(&source_public_key) == key_hex,
+                "fixture source key must use lowercase hex"
+            );
+            Some(key_hex)
+        };
         require!(
             execution_deposit_yocto.0 > 0 && operations_funded_yocto.0 <= execution_deposit_yocto.0,
             "fixture operations funding must not exceed a positive evaluator deposit"
         );
 
         let service_policy = ServiceAvailabilityPolicy {
-            schema: "lcp.service_availability.policy.v1".to_string(),
+            schema: if transaction_authenticated {
+                "lcp.service_availability.policy.v2".to_string()
+            } else {
+                "lcp.service_availability.policy.v1".to_string()
+            },
             target_id: "74".repeat(32),
             max_source_lag_ns: "60000000000".to_string(),
             expected_status_min: 200,
@@ -1864,12 +1880,12 @@ impl Contract {
                 crate::models::ServiceAvailabilitySource {
                     source_id: "source-a".to_string(),
                     operator_id: "sandbox".to_string(),
-                    public_key_hex: Some(source_public_key_hex),
+                    public_key_hex: source_public_key_hex.clone(),
                 },
                 crate::models::ServiceAvailabilitySource {
                     source_id: "source-b".to_string(),
                     operator_id: "service-operator-b.sandbox".to_string(),
-                    public_key_hex: Some("22".repeat(32)),
+                    public_key_hex: (!transaction_authenticated).then(|| "22".repeat(32)),
                 },
             ],
         };

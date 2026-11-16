@@ -102,10 +102,35 @@ measured storage bond dispatches to an evaluator account with no code; its
 failed receipt returns the 0.01 NEAR deposit while operations spend remains
 charged. A one-yocto-short storage bond and one-yocto-short operations balance
 both reject without dispatch. This covers the legacy signed-report route; it
-does not cover `request_service_evaluation_from_inbox`, hosted OutLayer
-execution, or service evaluator result validation. See the captured
+does not cover hosted OutLayer execution or service evaluator result
+validation. See the captured
 [service-dispatch receipt and state](service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json)
 and its [checksum manifest](service-outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256).
+
+To exercise the transaction-authenticated service report inbox path, run:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_SERVICE_INBOX_OUTLAYER_DISPATCH_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_SERVICE_INBOX_OUTLAYER_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+This mode fixture-seeds a v2 service policy with transaction-authenticated
+operator provenance, then stages reports through the production
+`submit_service_report` method. An underfunded-operations attempt and a
+one-yocto-short evaluation storage bond both fail without consuming the staged
+report. The exact storage bond dispatches through production
+`request_service_evaluation_from_inbox` and `schedule_service_evaluation` to
+the same no-code evaluator. Successful scheduling consumes the funded inbox
+report and converts its full 0.012 NEAR storage deposit into the operator's
+refund credit; the failed evaluator action returns its 0.01 NEAR execution
+deposit, while operations spend remains charged and the refund liability stays
+accounted. The other report's inbox entry remains staged after its rejected
+request. This verifies the local inbox dispatch and cash-accounting path, not
+hosted OutLayer execution or service verdict validation. See the captured
+[inbox-dispatch receipt and state](service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.json)
+and its [checksum manifest](service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256).
 
 Regenerate the service-dispatch capture manifest after a rerun or any source
 or document change:
@@ -124,6 +149,25 @@ shasum -a 256 tests/sandbox-usdc-callbacks/service-outlayer-dispatch-sandbox-acc
   contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
   TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
   > tests/sandbox-usdc-callbacks/service-outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256
+```
+
+Regenerate the inbox-dispatch capture manifest after a rerun or any source or
+document change:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs \
+  evaluators/service-availability/src/main.rs evaluators/service-availability/probe.mjs \
+  evaluators/service-availability/test/probe.test.mjs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+  > tests/sandbox-usdc-callbacks/service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256
 ```
 
 Regenerate the capture manifest after a rerun or any source/document change:

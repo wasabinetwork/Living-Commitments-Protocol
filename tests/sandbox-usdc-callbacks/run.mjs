@@ -2370,7 +2370,8 @@ async function main() {
       return;
     }
 
-    if (process.env.LCP_SERVICE_OUTLAYER_DISPATCH_ONLY === "1") {
+    const serviceInboxMode = process.env.LCP_SERVICE_INBOX_OUTLAYER_DISPATCH_ONLY === "1";
+    if (serviceInboxMode || process.env.LCP_SERVICE_OUTLAYER_DISPATCH_ONLY === "1") {
       const fundedCommitmentId = "779";
       const underfundedCommitmentId = "780";
       const executionDeposit = ONE_NEAR / 100n;
@@ -2394,7 +2395,10 @@ async function main() {
           CORE_ID,
           [actionFunctionCall("sandbox_seed_outlayer_service_dispatch_commitment", {
             commitment_id: commitmentId,
-            source_public_key_hex: serviceOperator.publicKeyBytes.toString("hex"),
+            transaction_authenticated: serviceInboxMode,
+            source_public_key_hex: serviceInboxMode
+              ? null
+              : serviceOperator.publicKeyBytes.toString("hex"),
             operations_funded_yocto: operationsFunded.toString(),
             execution_deposit_yocto: executionDeposit.toString(),
           }, 120n * TERA)],
@@ -2410,8 +2414,10 @@ async function main() {
           view(CORE_ID, "get_service_availability_policy", { commitment_id: commitmentId }),
         ]);
         const source = policy.sources[0];
-        assert.equal(source.public_key_hex, serviceOperator.publicKeyBytes.toString("hex"),
-          "service policy must pin the generated report signing key");
+        if (!serviceInboxMode) {
+          assert.equal(source.public_key_hex, serviceOperator.publicKeyBytes.toString("hex"),
+            "service policy must pin the generated report signing key");
+        }
         const sourcePolicyHash = createHash("sha256")
           .update(Buffer.from(JSON.stringify(policy), "utf8"))
           .digest("hex");
@@ -2434,31 +2440,32 @@ async function main() {
             tls_verified: true,
           },
         };
-        const signatureHex = sign(
-          null,
-          Buffer.from(JSON.stringify(payload), "utf8"),
-          serviceOperator.privateKeyObject,
-        ).toString("hex");
-        const verificationKey = createPublicKey({
-          key: Buffer.concat([
-            Buffer.from("302a300506032b6570032100", "hex"),
-            serviceOperator.publicKeyBytes,
-          ]),
-          format: "der",
-          type: "spki",
-        });
-        assert.ok(verify(
-          null,
-          Buffer.from(JSON.stringify(payload), "utf8"),
-          verificationKey,
-          Buffer.from(signatureHex, "hex"),
-        ), "service report signature must verify against the key pinned in its policy");
+        let report = { payload };
+        if (!serviceInboxMode) {
+          const signatureHex = sign(
+            null,
+            Buffer.from(JSON.stringify(payload), "utf8"),
+            serviceOperator.privateKeyObject,
+          ).toString("hex");
+          const verificationKey = createPublicKey({
+            key: Buffer.concat([
+              Buffer.from("302a300506032b6570032100", "hex"),
+              serviceOperator.publicKeyBytes,
+            ]),
+            format: "der",
+            type: "spki",
+          });
+          assert.ok(verify(
+            null,
+            Buffer.from(JSON.stringify(payload), "utf8"),
+            verificationKey,
+            Buffer.from(signatureHex, "hex"),
+          ), "service report signature must verify against the key pinned in its policy");
+          report = { ...report, signature_hex: signatureHex };
+        }
         return {
           policy,
-          report: {
-            payload,
-            signature_hex: signatureHex,
-          },
+          report,
         };
       };
       const fundedReportFixture = await makeProbeReport(fundedCommitmentId);
@@ -2467,12 +2474,44 @@ async function main() {
       const underfundedReport = underfundedReportFixture.report;
       const requestArgs = (commitmentId, report) => ({
         commitment_id: commitmentId,
-        reports: [report],
+        ...(serviceInboxMode ? {} : { reports: [report] }),
       });
+      const requestServiceMethod = serviceInboxMode
+        ? "request_service_evaluation_from_inbox"
+        : "request_service_evaluation";
 
       const margin = await setNativeFreeMargin(0n, "service OutLayer dispatch boundary");
+      const reportStorageDeposits = {};
+      if (serviceInboxMode) {
+        for (const [commitmentId, report] of [
+          [fundedCommitmentId, fundedReport],
+          [underfundedCommitmentId, underfundedReport],
+        ]) {
+          const storageDeposit = BigInt(await view(CORE_ID, "get_service_report_storage_deposit", {
+            commitment_id: commitmentId,
+            report,
+          }));
+          const cashBeforeSubmission = await nativeCashSnapshot();
+          await serviceRootCall(
+            "submit_service_report",
+            { commitment_id: commitmentId, report },
+            `stage transaction-authenticated service report for ${commitmentId}`,
+            storageDeposit,
+          );
+          const cashAfterSubmission = await nativeCashSnapshot();
+          const storageGrowth = cashAfterSubmission[1] - cashBeforeSubmission[1];
+          assert.ok(storageDeposit >= storageGrowth,
+            "service report storage deposit must cover measured inbox storage growth");
+          reportStorageDeposits[commitmentId] = {
+            deposit_yocto: storageDeposit.toString(),
+            storage_growth_yocto: storageGrowth.toString(),
+            unallocated_surplus_yocto: (storageDeposit - storageGrowth).toString(),
+          };
+        }
+      }
+      const cashAfterReportStaging = await nativeCashSnapshot();
       const underfundedBudgetFailure = await serviceRootCall(
-        "request_service_evaluation",
+        requestServiceMethod,
         requestArgs(underfundedCommitmentId, underfundedReport),
         "reject service evaluation without its full operations budget",
         0n,
@@ -2492,15 +2531,24 @@ async function main() {
         commitment_id: underfundedCommitmentId,
         evaluation_id: "1",
       }), null, "underfunded service request must not create an evaluation");
+      let underfundedInboxAfterRejection = null;
+      if (serviceInboxMode) {
+        underfundedInboxAfterRejection = await view(CORE_ID, "get_service_report_inbox", {
+          commitment_id: underfundedCommitmentId,
+          evaluation_id: "1",
+        });
+        assert.equal(underfundedInboxAfterRejection.length, 1,
+        "failed underfunded inbox scheduling must roll back report consumption");
+      }
 
       const requestService = (commitmentId, report, deposit) => actionFunctionCall(
-        "request_service_evaluation",
+        requestServiceMethod,
         requestArgs(commitmentId, report),
         220n * TERA,
         deposit,
       );
       const discoveryFailure = await serviceRootCall(
-        "request_service_evaluation",
+        requestServiceMethod,
         requestArgs(fundedCommitmentId, fundedReport),
         "measure service evaluation storage bond",
         0n,
@@ -2523,7 +2571,7 @@ async function main() {
       ), false, "service storage-bond discovery must not dispatch the evaluator");
 
       const oneShortFailure = await serviceRootCall(
-        "request_service_evaluation",
+        requestServiceMethod,
         requestArgs(fundedCommitmentId, fundedReport),
         "reject one-yocto-short service evaluation storage deposit",
         storageBond - 1n,
@@ -2538,10 +2586,24 @@ async function main() {
       assert.equal(stateAfterStorageRejection.pending_evaluation_id, null);
       assert.equal(stateAfterStorageRejection.next_evaluation_id, "1");
       assert.equal(stateAfterStorageRejection.operations_authorized_spend_yocto, "0");
+      let fundedInboxAfterStorageRejection = null;
+      if (serviceInboxMode) {
+        fundedInboxAfterStorageRejection = await view(CORE_ID, "get_service_report_inbox", {
+          commitment_id: fundedCommitmentId,
+          evaluation_id: "1",
+        });
+        assert.equal(fundedInboxAfterStorageRejection.length, 1,
+        "failed storage-bond attempts must leave the staged report available");
+      }
 
       const cashBeforeDispatch = await nativeCashSnapshot();
-      assert.equal(nativeFreeMargin(cashBeforeDispatch), 0n,
-        "service dispatch fixture must begin at zero free cash");
+      if (serviceInboxMode) {
+        assert.equal(nativeFreeMargin(cashBeforeDispatch), nativeFreeMargin(cashAfterReportStaging),
+          "rejected inbox requests must preserve cash margin and staged report bonds");
+      } else {
+        assert.equal(nativeFreeMargin(cashBeforeDispatch), 0n,
+          "service dispatch fixture must begin at zero free cash");
+      }
       const evaluatorBalanceBefore = await accountBalance(NO_CODE_TOKEN_ID);
       const requestTx = await sendTransaction(
         "sandbox",
@@ -2580,11 +2642,28 @@ async function main() {
         "failed service evaluator receipt must not retain its attached deposit");
       assert.equal(cashAfterFailure[0] - cashBeforeDispatch[0], storageBond,
         "failed service OutLayer action must return its evaluator deposit while retaining the storage bond");
+      let inboxRefundBalance = null;
+      let fundedInboxAfterDispatch = null;
+      if (serviceInboxMode) {
+        fundedInboxAfterDispatch = await view(CORE_ID, "get_service_report_inbox", {
+          commitment_id: fundedCommitmentId,
+          evaluation_id: "1",
+        });
+        assert.equal(fundedInboxAfterDispatch.length, 0,
+          "successful inbox scheduling must consume the staged report");
+        inboxRefundBalance = await view(CORE_ID, "get_service_report_refund_balance", {
+          account_id: "sandbox",
+        });
+        assert.equal(inboxRefundBalance, reportStorageDeposits[fundedCommitmentId].deposit_yocto,
+          "consumed inbox storage deposit must become the operator's refund credit");
+        assert.equal(cashAfterFailure[3] - cashBeforeDispatch[3], BigInt(inboxRefundBalance),
+          "inbox report refund credit must be included in the storage-refund liability");
+      }
 
       fixtures.service_outlayer_dispatch_acceptance = {
         funded_commitment_id: fundedCommitmentId,
         underfunded_commitment_id: underfundedCommitmentId,
-        dispatch_method: "request_service_evaluation",
+        dispatch_method: requestServiceMethod,
         evaluator_account: NO_CODE_TOKEN_ID,
         evaluator_has_code: false,
         execution_deposit_yocto: executionDeposit.toString(),
@@ -2592,8 +2671,11 @@ async function main() {
         exact_evaluation_storage_bond_yocto: storageBond.toString(),
         free_cash_margin_before_dispatch_yocto: nativeFreeMargin(cashBeforeDispatch).toString(),
         service_policy: fundedReportFixture.policy,
-        service_source_public_key_hex: serviceOperator.publicKeyBytes.toString("hex"),
+        service_source_public_key_hex: serviceInboxMode
+          ? null
+          : serviceOperator.publicKeyBytes.toString("hex"),
         service_report: fundedReport,
+        report_storage_deposits: reportStorageDeposits,
         storage_bond_discovery_transaction: discoveryFailure,
         one_yocto_underfunded_transaction: oneShortFailure,
         underfunded_operations_transaction: underfundedBudgetFailure,
@@ -2601,24 +2683,33 @@ async function main() {
         failed_outlayer_receipt: outlayerReceipt,
         evaluation_after_failure: failedEvaluation,
         commitment_after_failure: fundedStateAfterFailure,
+        funded_report_inbox_after_dispatch: fundedInboxAfterDispatch,
+        funded_report_inbox_after_storage_rejection: fundedInboxAfterStorageRejection,
+        underfunded_report_inbox_after_rejection: underfundedInboxAfterRejection,
+        inbox_operator_refund_balance_after_dispatch: inboxRefundBalance,
         native_cash_before_dispatch: cashBeforeDispatch.map(String),
         native_cash_after_failure: cashAfterFailure.map(String),
         evaluator_balance_before: evaluatorBalanceBefore.toString(),
         evaluator_balance_after: (await accountBalance(NO_CODE_TOKEN_ID)).toString(),
         core_balance_delta_yocto: (cashAfterFailure[0] - cashBeforeDispatch[0]).toString(),
         operations_liability_reduction_yocto: (cashBeforeDispatch[5] - cashAfterFailure[5]).toString(),
-        note: "Isolated Sandbox only. The active v3 service commitment is fixture-seeded because OutLayer's canonical account cannot be installed locally. The production request_service_evaluation and schedule_service_evaluation paths are executed; the evaluator receiver intentionally has no code. Hosted OutLayer behavior is not tested.",
+        note: `Isolated Sandbox only. The active v3 service commitment is fixture-seeded because OutLayer's canonical account cannot be installed locally. The production ${requestServiceMethod} and schedule_service_evaluation paths are executed; the evaluator receiver intentionally has no code. Hosted OutLayer behavior is not tested.`,
       };
-      const fixturePath = process.env.LCP_SERVICE_OUTLAYER_FIXTURE_OUTPUT
-        ?? join(here, "service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json");
+      const fixturePath = serviceInboxMode
+        ? process.env.LCP_SERVICE_INBOX_OUTLAYER_FIXTURE_OUTPUT
+          ?? join(here, "service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.json")
+        : process.env.LCP_SERVICE_OUTLAYER_FIXTURE_OUTPUT
+          ?? join(here, "service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json");
       await writeFile(fixturePath, `${JSON.stringify({
-        fixture_schema: "lcp.service-outlayer-dispatch-sandbox-acceptance.v1",
+        fixture_schema: serviceInboxMode
+          ? "lcp.service-inbox-outlayer-dispatch-sandbox-acceptance.v1"
+          : "lcp.service-outlayer-dispatch-sandbox-acceptance.v1",
         captured_at: new Date().toISOString(),
         node: fixtures.node,
         wasm_artifacts: fixtures.artifacts,
         scenario: fixtures.service_outlayer_dispatch_acceptance,
       }, null, 2)}\n`);
-      console.log("PASS production request_service_evaluation dispatches service evidence at zero free cash with the exact storage bond");
+      console.log(`PASS production ${requestServiceMethod} dispatches service evidence with the exact storage bond`);
       console.log("PASS failed service evaluator execution keeps its deposit charged to operations spend");
       console.log("PASS one-yocto-short service storage and operations budgets emit no evaluator request");
       console.log(`CAPTURED ${fixturePath}`);
