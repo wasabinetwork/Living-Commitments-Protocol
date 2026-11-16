@@ -181,17 +181,24 @@ This run passed callback-first finality, certificate-first settlement after a
 1 Tgas callback runs out of gas, rejection of mutations to every one of the 28
 `RecoveryCertificateV1` fields, 0–3-signature and five-invalid-signature
 certificates, valid 4-of-5 and 5-of-5 certificates, wrong-domain and replayed
-certificate rejection, callback/certificate races, failed-transfer recovery
-and retry, storage-reserve revaluation, failed and exact-margin credit
-withdrawals, two simultaneous native outflows, aggregation of multiple failed
-refund callbacks, committee rotation, canceled-proposal replay rejection,
-permanent key non-reuse after old epoch retirement, and rollback after an
-overflow panic. Each changed-field envelope reused the original quorum
-signatures; all were rejected while the intent, escrow, and token balance stayed
-unchanged. Permissionless intent finalization was forced to fail at 1 Tgas; its
+certificate rejection, duplicate/unsorted/unpinned signer rejection,
+noncanonical Ed25519 `S`, small-order `R`, malformed Base64/Borsh and
+size-boundary rejection, callback/certificate races,
+failed-transfer recovery and retry, storage-reserve revaluation, failed and
+exact-margin credit withdrawals, two simultaneous native outflows, aggregation
+of multiple failed refund callbacks, committee rotation, canceled-proposal
+replay rejection, permanent key non-reuse after old epoch retirement, and
+rollback after an overflow panic. A weak committee key was rejected at
+bootstrap without consuming the one-time setup authority. All 56 negative
+envelope cases were rejected without changing the pending intent, escrow, or
+token balance. A 1,202-byte decoded input
+passed the outer size gate and failed structural parsing, while 1,203 bytes and
+1,608 Base64 characters were rejected by their respective limits. A well-formed
+maximum-size positive contract envelope remains open. Permissionless intent
+finalization was forced to fail at 1 Tgas; its
 terminal intent and payer credit remained unchanged, then finalization
 succeeded on retry. The latest captured recovery settlement receipts used
-15.500 Tgas for 4-of-5 and 17.447 Tgas for 5-of-5. These are observed cases, not a
+15.531 Tgas for 4-of-5 and 17.475 Tgas for 5-of-5. These are observed cases, not a
 worst-case method gas bound. The runner escalates a lingering local Sandbox
 process from SIGTERM to SIGKILL after five seconds so Docker exits after results
 are written; this affects only the isolated local process. The capture is

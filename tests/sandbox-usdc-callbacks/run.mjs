@@ -212,6 +212,110 @@ function envelopeWithOriginalSignatures(envelope, certificate) {
   ]).toString("base64");
 }
 
+function recoveryEnvelopeAdversarialCases(envelope, intentBytes, committee) {
+  const raw = Buffer.from(envelope, "base64");
+  const certificateLength = raw.readUInt32LE(0);
+  const certificate = raw.subarray(4, 4 + certificateLength);
+  const signatureCountOffset = 4 + certificateLength;
+  const signatureCount = raw.readUInt32LE(signatureCountOffset);
+  const signatures = Array.from({ length: signatureCount }, (_, index) => {
+    const offset = signatureCountOffset + 4 + (index * 96);
+    return Buffer.from(raw.subarray(offset, offset + 96));
+  });
+  const encode = (message = certificate, entries = signatures) => Buffer.concat([
+    borshBytes(message),
+    u32(entries.length),
+    ...entries,
+  ]).toString("base64");
+
+  const duplicateSignatures = signatures.map((entry) => Buffer.from(entry));
+  duplicateSignatures[1].set(duplicateSignatures[0].subarray(0, 32), 0);
+  const unsortedSignatures = signatures.map((entry) => Buffer.from(entry));
+  [unsortedSignatures[0], unsortedSignatures[1]] = [unsortedSignatures[1], unsortedSignatures[0]];
+  const unpinnedSignatures = signatures.map((entry) => Buffer.from(entry));
+  const outsider = newKey();
+  assert.equal(committee.some((member) => member.publicKeyBytes.equals(outsider.publicKeyBytes)), false);
+  unpinnedSignatures[0].set(outsider.publicKeyBytes, 0);
+  unpinnedSignatures.sort((left, right) => Buffer.compare(left.subarray(0, 32), right.subarray(0, 32)));
+  const noncanonicalScalarSignatures = signatures.map((entry) => Buffer.from(entry));
+  noncanonicalScalarSignatures[0].set(
+    Buffer.from("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010", "hex"),
+    64,
+  );
+  const smallOrderRSignatures = signatures.map((entry) => Buffer.from(entry));
+  smallOrderRSignatures[0].set(Buffer.concat([Buffer.from([1]), Buffer.alloc(31)]), 32);
+
+  let intentCursor = 1;
+  const skipString = () => {
+    const length = intentBytes.readUInt32LE(intentCursor);
+    intentCursor += 4 + length;
+  };
+  skipString();
+  intentCursor += 32;
+  const coreLength = intentBytes.readUInt32LE(intentCursor);
+  intentCursor += 4;
+  const coreAccountOffset = intentCursor;
+  intentCursor += coreLength + 32 + 4 + 8 + 8;
+  const kindOffset = intentCursor;
+  intentCursor += 1;
+  const optionTagOffset = intentCursor;
+  assert.equal(intentBytes[optionTagOffset], 1, "claim fixture must have a Some tranche epoch");
+
+  const badOption = Buffer.from(certificate);
+  badOption[1 + optionTagOffset] = 2;
+  const badKind = Buffer.from(certificate);
+  badKind[1 + kindOffset] = 2;
+  const badAccount = Buffer.from(certificate);
+  badAccount[1 + coreAccountOffset] = 0x4c; // Uppercase the first account-ID byte.
+  const badStringLength = Buffer.from(certificate);
+  badStringLength.writeUInt32LE(0xffff_ffff, 2); // intent schema byte, then chain_id length.
+
+  const invalidLength = Buffer.from(raw);
+  invalidLength.writeUInt32LE(715, 0);
+  const invalidCount = Buffer.from(raw);
+  invalidCount.writeUInt32LE(6, signatureCountOffset);
+  const truncated = raw.subarray(0, raw.length - 1).toString("base64");
+  const trailing = Buffer.concat([raw, Buffer.from([0])]).toString("base64");
+  const oversizedBase64 = "A".repeat(1_608);
+  const oversizedDecoded = Buffer.alloc(1_203).toString("base64");
+  const atDecodedLimit = Buffer.alloc(1_202).toString("base64");
+  let noncanonicalSource = Buffer.from(envelope, "base64");
+  while (noncanonicalSource.length % 3 === 0) {
+    noncanonicalSource = Buffer.concat([noncanonicalSource, Buffer.from([0])]);
+  }
+  const canonicalWithPadding = noncanonicalSource.toString("base64");
+  const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const padding = canonicalWithPadding.endsWith("==") ? 2 : canonicalWithPadding.endsWith("=") ? 1 : 0;
+  assert.ok(padding > 0);
+  const unusedBits = padding === 2 ? 0x0f : 0x03;
+  const lastDataIndex = canonicalWithPadding.length - padding - 1;
+  const lastDataValue = base64Alphabet.indexOf(canonicalWithPadding[lastDataIndex]);
+  const noncanonicalBase64 = `${canonicalWithPadding.slice(0, lastDataIndex)}${base64Alphabet[(lastDataValue & ~unusedBits) | 1]}${canonicalWithPadding.slice(lastDataIndex + 1)}`;
+
+  return [
+    ["duplicate signer key", encode(certificate, duplicateSignatures)],
+    ["unsorted signer keys", encode(certificate, unsortedSignatures)],
+    ["unpinned signer key", encode(certificate, unpinnedSignatures)],
+    ["noncanonical Ed25519 S scalar", encode(certificate, noncanonicalScalarSignatures)],
+    ["small-order Ed25519 R point", encode(certificate, smallOrderRSignatures)],
+    ["malformed Base64 alphabet", `${envelope.slice(0, -1)}!`],
+    ["noncanonical Base64 padding bits", noncanonicalBase64],
+    ["truncated Borsh envelope", truncated],
+    ["trailing Borsh envelope byte", trailing],
+    ["invalid certificate length field", invalidLength.toString("base64")],
+    ["invalid signature count", invalidCount.toString("base64")],
+    ["certificate with trailing Borsh byte", encode(Buffer.concat([certificate, Buffer.from([0])]))],
+    ["oversized certificate body", encode(Buffer.alloc(715), signatures)],
+    ["invalid Borsh chain string length", encode(badStringLength)],
+    ["invalid Borsh option tag", encode(badOption)],
+    ["invalid Borsh transfer kind", encode(badKind)],
+    ["noncanonical intent account ID", encode(badAccount)],
+    ["decoded envelope at maximum byte bound", atDecodedLimit],
+    ["decoded envelope above byte bound", oversizedDecoded],
+    ["Base64 above encoded byte bound", oversizedBase64],
+  ];
+}
+
 function buildRotationMessage(config, chainId, genesisHash, coreAccountId, oldEpoch, newEpoch, generation, keys, activateAtNs) {
   return Buffer.concat([
     u8(2),
@@ -373,7 +477,33 @@ async function main() {
     const signature = sign(null, digest, key.privateKeyObject);
     const signedTransaction = Buffer.concat([transactionBytes, Buffer.from([0]), signature]);
     const method = options.broadcastMethod ?? "broadcast_tx_commit";
-    const result = await rpc(method, [signedTransaction.toString("base64")]);
+    let result;
+    try {
+      result = await rpc(method, [signedTransaction.toString("base64")]);
+    } catch (error) {
+      if (method !== "broadcast_tx_commit" || !/(?:PENDING|TIMEOUT_ERROR|Timeout)/i.test(String(error))) {
+        throw error;
+      }
+      const transactionHash = base58Encode(digest);
+      result = await waitFor(`${description} final receipt after commit RPC timeout`, async () => {
+        try {
+          const status = await rpc("tx", [transactionHash, signerId]);
+          const complete = status.status && (
+            Object.hasOwn(status.status, "SuccessValue")
+            || Object.hasOwn(status.status, "Failure")
+          );
+          return complete
+            ? { done: true, value: status }
+            : { done: false, value: status.status };
+        } catch (lookupError) {
+          if (/unknown transaction|does not exist|not found/i.test(String(lookupError))) {
+            return { done: false, value: String(lookupError) };
+          }
+          throw lookupError;
+        }
+      }, 120_000);
+      result.transaction ??= { hash: transactionHash };
+    }
     if (method === "broadcast_tx_commit") {
       if (options.expectFailure) {
         assert.ok(hasFailedExecution(result),
@@ -605,6 +735,27 @@ async function main() {
       approved_usdc_code_hashes: [tokenCodeHash],
       active_usdc_code_hash: tokenCodeHash,
     };
+    const weakPublicBytes = Buffer.alloc(32);
+    weakPublicBytes[0] = 1;
+    const weakCommittee = [
+      ...committee.slice(0, 4),
+      { publicKeyBytes: weakPublicBytes, publicKey: `ed25519:${base58Encode(weakPublicBytes)}` },
+    ].sort((left, right) => Buffer.compare(left.publicKeyBytes, right.publicKeyBytes));
+    const rejectedWeakBootstrap = await functionCall(
+      CORE_ID,
+      coreKey,
+      "bootstrap_receipt_recovery",
+      { args: { ...bootstrapArgs, committee_keys: weakCommittee.map((key) => key.publicKey) } },
+      220n * TERA,
+      ONE_NEAR,
+      { expectFailure: true },
+    );
+    assert.equal(await view(CORE_ID, "receipt_recovery_configuration", {}), null,
+      "weak-key bootstrap must leave recovery unconfigured and retryable");
+    results.weak_committee_bootstrap = {
+      rejected_transaction_hash: rejectedWeakBootstrap.transaction.hash,
+      configuration_unchanged: true,
+    };
     results.bootstrap = await functionCall(
       CORE_ID, coreKey, "bootstrap_receipt_recovery", { args: bootstrapArgs }, 220n * TERA, ONE_NEAR,
     );
@@ -715,6 +866,7 @@ async function main() {
       })()],
       ...recoveryCertificateFieldMutations(validCertFirst.certificate, validCertFirst.intentBytes)
         .map(([label, certificate]) => [label, envelopeWithOriginalSignatures(validCertFirst.envelope, certificate)]),
+      ...recoveryEnvelopeAdversarialCases(validCertFirst.envelope, validCertFirst.intentBytes, committee),
     ];
     for (const [label, envelope] of invalidEnvelopes) {
       await rootCall("recover_nep141_transfer", {
@@ -750,7 +902,7 @@ async function main() {
         .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n).toString(),
       recipient_token_balance: (await tokenBalance(CASH_RECIPIENT_ID)).toString(),
     };
-    console.log("PASS certificate-first recovery settles after callback OOG; malformed and replayed certificates leave state unchanged");
+    console.log("PASS certificate-first recovery settles after callback OOG; 56 malformed, mutated, or replayed envelopes leave state unchanged");
 
     const fiveOfFiveBalanceBefore = await tokenBalance(CASH_RECIPIENT_ID);
     const fiveOfFiveTransfer = await queueRecovery(105, 1, "five-of-five recovery certificate");
