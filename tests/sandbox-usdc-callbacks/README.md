@@ -171,7 +171,7 @@ Build the fixture-enabled recovery core and both mock-token variants. Install
 the pinned Cargo NEAR CLI if needed, then use its Wasm optimization step for the
 recovery core. Plain `cargo build` output is 1,575,617 bytes and exceeds the
 local Sandbox RPC server's HTTP request-body limit during deployment; the
-optimized fixture from the November 16 run is 1,125,310 bytes and deploys
+optimized fixture from the November 16 run is 1,129,401 bytes and deploys
 successfully. This is a local harness transport constraint, not a NEAR
 consensus size-limit result.
 The following enables receipt recovery and the test-only ten-second governance
@@ -229,8 +229,15 @@ exact credit to `refund_pending` with its accrued amount unchanged and no
 transfer scheduled. After a second attempt began, the prior nonce could not
 settle it; a subsequent exact failed callback restored the credit again, and a
 duplicate callback left that retryable state unchanged. The later real payer
-withdrawal succeeded at the exact cash margin. A replay after successful settlement found
-no credit, emitted only its failed method receipt, and scheduled no second
+withdrawal succeeded at the exact cash margin. A duplicate successful callback
+after settlement also left the deleted credit row absent. A separate case used an actual
+Sandbox transfer followed by a production callback limited to 1 Tgas. The
+transfer succeeded, the callback failed with `Exceeded the prepaid gas.`, the
+payer received exactly the accrued amount after transaction gas, and the credit
+remained `withdrawing` and unavailable. A second withdrawal was rejected
+without changing the credit. This fail-closed case leaves an unknown callback
+pending; it does not provide receipt-proof recovery. A replay after successful
+settlement found no credit, emitted only its failed method receipt, and scheduled no second
 transfer or callback. A weak committee key was rejected at bootstrap without
 consuming the one-time setup
 authority. All 56 negative

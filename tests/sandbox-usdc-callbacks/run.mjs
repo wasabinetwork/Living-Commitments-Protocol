@@ -1410,6 +1410,16 @@ async function main() {
     });
     assert.equal(payerBalanceAfter + withdrawalFees, payerBalanceBefore + withdrawable,
       "payer balance delta must equal the recovery credit after accounting for transaction gas");
+    const duplicateSettledCallbackNonce = retryCallbackNonce + 1n;
+    const duplicateSettledCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: withdrawable.toString(),
+      nonce: duplicateSettledCallbackNonce.toString(),
+      result_count: 1,
+      result_succeeds: true,
+    }, "ignore recovery-credit callback replay after successful settlement", 220n * TERA);
+    assert.equal(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), null,
+      "duplicate callback after settlement must not recreate the closed credit row");
 
     const duplicateWithdrawal = await creditPayerCall("withdraw_receipt_recovery_credit", {
       credit_id_hex: creditId,
@@ -1457,6 +1467,8 @@ async function main() {
       blocked_during_revaluation: true,
       one_yocto_short_rejected: true,
       exact_withdrawal_transaction_hash: exactWithdrawal.transaction.hash,
+      duplicate_settled_callback_transaction_hash: duplicateSettledCallbackTx.transaction.hash,
+      duplicate_settled_callback_did_not_recreate_credit: true,
       payer_balance_before: payerBalanceBefore.toString(),
       payer_balance_after: payerBalanceAfter.toString(),
       payer_transaction_gas_fee_yocto: withdrawalFees.toString(),
@@ -1743,6 +1755,98 @@ async function main() {
       receipt_status: overflowResult.receipt?.outcome?.status ?? null,
     };
     console.log("PASS overflow panic rolls back failed-attempt deletion in an actual Sandbox callback receipt");
+
+    const callbackOogSource = await queueRecovery(108, 20, "create a recovery credit for callback-OOG acceptance");
+    const callbackOogTerminal = await waitFor("callback-OOG source transfer settlement", async () => {
+      const [state, intent] = await Promise.all([
+        escrow(108), recoveryIntent(callbackOogSource.transferId),
+      ]);
+      return state && intent?.terminal_outcome === "success" && BigInt(state.paid_raw) === AMOUNT
+        ? { done: true, value: { state, intent } }
+        : { done: false, value: { state, terminal_outcome: intent?.terminal_outcome } };
+    });
+    const callbackOogFinalizeTx = await rootCall("finalize_receipt_recovery_intent", {
+      transfer_id: callbackOogSource.transferId,
+    }, "finalize callback-OOG source recovery intent", 220n * TERA);
+    assert.equal(returnedJson(callbackOogFinalizeTx), true);
+    const callbackOogCreditId = callbackOogTerminal.intent.refund_credit_id;
+    const callbackOogCreditBefore = await view(CORE_ID, "receipt_recovery_credit", {
+      credit_id_hex: callbackOogCreditId,
+    });
+    const callbackOogAmount = BigInt(callbackOogCreditBefore.accrued_yocto);
+    assert.equal(callbackOogCreditBefore.state, "available");
+    assert.ok(callbackOogAmount > 0n);
+    await setNativeFreeMargin(ONE_NEAR / 10n, "recovery-credit callback-OOG withdrawal");
+    const callbackOogCreditReady = await view(CORE_ID, "receipt_recovery_credit", {
+      credit_id_hex: callbackOogCreditId,
+    });
+    assert.ok(callbackOogCreditReady.withdrawal_available,
+      "funded callback-OOG scenario must pass the production withdrawal gate");
+    const callbackOogPayerBalanceBefore = await accountBalance(CASH_RECIPIENT_ID);
+    const callbackOogWithdrawal = await creditPayerCall(
+      "sandbox_withdraw_recovery_credit_callback_oog_fixture",
+      { credit_id_hex: callbackOogCreditId },
+      "pay recovery credit with an underfunded callback",
+      150n * TERA,
+    );
+    assert.ok(hasFailedExecution(callbackOogWithdrawal),
+      "the intentionally underfunded recovery-credit callback must fail");
+    const callbackOogReceipt = (callbackOogWithdrawal.receipts_outcome ?? []).find((item) =>
+      item.outcome?.executor_id === CORE_ID && isFailedExecution(item.outcome?.status));
+    assert.ok(callbackOogReceipt, "missing failed recovery-credit callback receipt");
+    const callbackOogFailure = JSON.stringify(callbackOogReceipt.outcome.status.Failure);
+    assert.match(callbackOogFailure, /gas|prepaid|exceed/i,
+      `the one-Tgas callback should fail because it is underfunded: ${callbackOogFailure}`);
+    assert.ok(BigInt(callbackOogReceipt.outcome.gas_burnt) > 0n);
+    const callbackOogTransferReceipt = (callbackOogWithdrawal.receipts_outcome ?? []).find((item) =>
+      item.outcome?.executor_id === CASH_RECIPIENT_ID
+      && item.outcome?.status && Object.hasOwn(item.outcome.status, "SuccessValue"));
+    assert.ok(callbackOogTransferReceipt, "the payer transfer must succeed before callback OOG");
+    const callbackOogFees = BigInt(callbackOogWithdrawal.transaction_outcome?.outcome?.tokens_burnt ?? 0)
+      + (callbackOogWithdrawal.receipts_outcome ?? []).reduce(
+        (sum, receipt) => sum + BigInt(receipt.outcome?.tokens_burnt ?? 0), 0n,
+      );
+    const callbackOogPayerBalanceAfter = await waitFor("callback-OOG payer transfer", async () => {
+      const balance = await accountBalance(CASH_RECIPIENT_ID);
+      return balance + callbackOogFees >= callbackOogPayerBalanceBefore + callbackOogAmount
+        ? { done: true, value: balance }
+        : { done: false, value: balance.toString() };
+    });
+    assert.equal(callbackOogPayerBalanceAfter + callbackOogFees,
+      callbackOogPayerBalanceBefore + callbackOogAmount,
+      "the transfer must pay exactly the accrued credit after transaction gas");
+    const callbackOogCreditAfter = await view(CORE_ID, "receipt_recovery_credit", {
+      credit_id_hex: callbackOogCreditId,
+    });
+    assert.equal(callbackOogCreditAfter.state, "withdrawing");
+    assert.equal(callbackOogCreditAfter.accrued_yocto, callbackOogCreditBefore.accrued_yocto);
+    assert.equal(BigInt(callbackOogCreditAfter.in_flight_yocto), callbackOogAmount);
+    assert.equal(callbackOogCreditAfter.withdrawal_available, false);
+    const replayAfterCallbackOog = await creditPayerCall("withdraw_receipt_recovery_credit", {
+      credit_id_hex: callbackOogCreditId,
+    }, "block second payment while the recovery callback is unresolved", 150n * TERA, true);
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", {
+      credit_id_hex: callbackOogCreditId,
+    }), callbackOogCreditAfter,
+    "an unresolved callback must keep the paid credit reserved and block a second transfer");
+    results.recovery_credit_callback_oog = {
+      source_transfer_transaction_hash: callbackOogSource.tx.transaction.hash,
+      intent_finalization_transaction_hash: callbackOogFinalizeTx.transaction.hash,
+      callback_oog_withdrawal_transaction_hash: callbackOogWithdrawal.transaction.hash,
+      callback_oog_receipt_id: callbackOogReceipt.id,
+      callback_oog_gas_burnt: String(callbackOogReceipt.outcome.gas_burnt),
+      callback_oog_failure: callbackOogFailure,
+      transfer_receipt_id: callbackOogTransferReceipt.id,
+      amount_yocto: callbackOogAmount.toString(),
+      payer_balance_before: callbackOogPayerBalanceBefore.toString(),
+      payer_balance_after: callbackOogPayerBalanceAfter.toString(),
+      total_transaction_gas_fee_yocto: callbackOogFees.toString(),
+      successful_transfer_callback_failed: true,
+      credit_remains_withdrawing_and_reserved: true,
+      replay_transaction_hash: replayAfterCallbackOog.transaction.hash,
+      replay_rejected_without_state_change: true,
+    };
+    console.log("PASS successful recovery-credit transfer plus callback OOG leaves its liability reserved and blocks replay");
 
     return results;
   }

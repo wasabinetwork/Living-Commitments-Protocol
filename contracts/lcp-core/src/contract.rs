@@ -1293,6 +1293,47 @@ impl Contract {
         drop(callback_chain);
     }
 
+    /// Schedules the real payer credit transfer with an intentionally
+    /// underfunded callback gas limit. Sandbox acceptance verifies that a
+    /// successful transfer plus callback OOG keeps the liability in flight.
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    pub fn sandbox_withdraw_recovery_credit_callback_oog_fixture(&mut self, credit_id_hex: String) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        let credit_id = crate::recovery_config::parse_credit_id(&credit_id_hex);
+        let credit = crate::recovery_accounting::read_persisted_refund_credit(&credit_id)
+            .unwrap_or_else(|| env::panic_str("refund credit does not exist"));
+        require!(
+            env::predecessor_account_id() == credit.payer,
+            "fixture must be called by the credit payer"
+        );
+        let attempt = crate::recovery_accounting::begin_persisted_refund_withdrawal(credit_id);
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "credit_id_hex": credit_id_hex,
+            "amount": U128(attempt.amount_yocto),
+            "nonce": U64(attempt.nonce),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize fixture credit callback"));
+        let _withdrawal = Promise::new(credit.payer)
+            .transfer(NearToken::from_yoctonear(attempt.amount_yocto))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_receipt_recovery_credit_withdrawal".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(1),
+            ));
+        native_cash::assert_solvency();
+    }
+
     #[cfg(all(
         feature = "sandbox-callback-fixture",
         feature = "usdc-receipt-recovery"
