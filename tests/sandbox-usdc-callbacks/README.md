@@ -178,18 +178,23 @@ docker run --rm --init --platform linux/amd64 \
 ```
 
 This run passed callback-first finality, certificate-first settlement after a
-1 Tgas callback runs out of gas, rejection of 0–3-signature and five-invalid-
-signature certificates, valid 4-of-5 and 5-of-5 certificates, malformed and
-replayed certificate rejection, callback/certificate races, failed-transfer
-recovery and retry, storage-reserve revaluation, failed and exact-margin credit
+1 Tgas callback runs out of gas, rejection of mutations to every one of the 28
+`RecoveryCertificateV1` fields, 0–3-signature and five-invalid-signature
+certificates, valid 4-of-5 and 5-of-5 certificates, wrong-domain and replayed
+certificate rejection, callback/certificate races, failed-transfer recovery
+and retry, storage-reserve revaluation, failed and exact-margin credit
 withdrawals, two simultaneous native outflows, aggregation of multiple failed
 refund callbacks, committee rotation, canceled-proposal replay rejection,
 permanent key non-reuse after old epoch retirement, and rollback after an
-overflow panic. Permissionless intent finalization was forced to fail at 1 Tgas;
-its terminal intent and payer credit remained unchanged, then finalization
-succeeded on retry. The measured recovery settlement receipts used 15.512 Tgas
-for 4-of-5 and 17.472 Tgas for 5-of-5. These are observed cases, not a
-worst-case method gas bound. The capture is
+overflow panic. Each changed-field envelope reused the original quorum
+signatures; all were rejected while the intent, escrow, and token balance stayed
+unchanged. Permissionless intent finalization was forced to fail at 1 Tgas; its
+terminal intent and payer credit remained unchanged, then finalization
+succeeded on retry. The latest captured recovery settlement receipts used
+15.500 Tgas for 4-of-5 and 17.447 Tgas for 5-of-5. These are observed cases, not a
+worst-case method gas bound. The runner escalates a lingering local Sandbox
+process from SIGTERM to SIGKILL after five seconds so Docker exits after results
+are written; this affects only the isolated local process. The capture is
 [`receipt-recovery-sandbox-acceptance-2026-11-16.json`](receipt-recovery-sandbox-acceptance-2026-11-16.json),
 with hashes in
 [`receipt-recovery-sandbox-acceptance-2026-11-16.sha256`](receipt-recovery-sandbox-acceptance-2026-11-16.sha256).

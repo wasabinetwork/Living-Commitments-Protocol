@@ -142,6 +142,76 @@ function recoveryCertificate(intentView, outcome, committee, domain = "LCP/NEP14
   };
 }
 
+function recoveryCertificateFieldMutations(certificate, intentBytes) {
+  const offsets = { certificate_schema_version: 0, intent_schema_version: 1 };
+  let intentOffset = 0;
+  const readString = (field) => {
+    const length = intentBytes.readUInt32LE(intentOffset);
+    intentOffset += 4;
+    offsets[field] = 1 + intentOffset;
+    intentOffset += length;
+  };
+  const skipFixed = (field, length) => {
+    offsets[field] = 1 + intentOffset;
+    intentOffset += length;
+  };
+  const skip = (length) => { intentOffset += length; };
+
+  skip(1); // RecoveryIntentV1.schema_version
+  readString("intent_chain_id");
+  skipFixed("intent_genesis_hash", 32);
+  readString("intent_core_account_id");
+  skipFixed("intent_instance_id", 32);
+  offsets.intent_committee_epoch = 1 + intentOffset; skip(4);
+  offsets.intent_transfer_id = 1 + intentOffset; skip(8);
+  offsets.intent_commitment_id = 1 + intentOffset; skip(8);
+  offsets.intent_kind = 1 + intentOffset; skip(1);
+  assert.equal(intentBytes[intentOffset], 1, "claim fixture must include tranche_epoch");
+  offsets.intent_tranche_epoch = 1 + intentOffset + 1; skip(5);
+  readString("intent_token_account_id");
+  readString("intent_recipient_id");
+  offsets.intent_amount_raw = 1 + intentOffset; skip(16);
+  offsets.intent_origin_method = 1 + intentOffset; skip(1);
+  skipFixed("intent_token_code_hash", 32);
+  offsets.intent_ft_transfer_deposit = 1 + intentOffset; skip(16);
+  offsets.intent_ft_transfer_gas = 1 + intentOffset; skip(8);
+  assert.equal(intentOffset, intentBytes.length, "intent field offsets must cover canonical Borsh bytes");
+
+  let certificateOffset = 1 + intentBytes.length;
+  const certificateFields = [
+    ["intent_hash", 32],
+    ["origin_transaction_hash", 32],
+    ["origin_receipt_id", 32],
+    ["origin_block_hash", 32],
+    ["origin_block_height", 8],
+    ["token_receipt_id", 32],
+    ["token_action_index", 4],
+    ["outcome_block_hash", 32],
+    ["outcome_block_height", 8],
+    ["outcome", 1],
+  ];
+  for (const [field, length] of certificateFields) {
+    offsets[field] = certificateOffset;
+    certificateOffset += length;
+  }
+  assert.equal(certificateOffset, certificate.length, "certificate field offsets must cover canonical Borsh bytes");
+
+  return Object.entries(offsets).map(([field, offset]) => {
+    const changed = Buffer.from(certificate);
+    changed[offset] ^= 1;
+    return [`mutated ${field}`, changed];
+  });
+}
+
+function envelopeWithOriginalSignatures(envelope, certificate) {
+  const original = Buffer.from(envelope, "base64");
+  const originalCertificateLength = original.readUInt32LE(0);
+  return Buffer.concat([
+    borshBytes(certificate),
+    original.subarray(4 + originalCertificateLength),
+  ]).toString("base64");
+}
+
 function buildRotationMessage(config, chainId, genesisHash, coreAccountId, oldEpoch, newEpoch, generation, keys, activateAtNs) {
   return Buffer.concat([
     u8(2),
@@ -643,6 +713,8 @@ async function main() {
         bytes[bytes.length - 1] ^= 1;
         return bytes.toString("base64");
       })()],
+      ...recoveryCertificateFieldMutations(validCertFirst.certificate, validCertFirst.intentBytes)
+        .map(([label, certificate]) => [label, envelopeWithOriginalSignatures(validCertFirst.envelope, certificate)]),
     ];
     for (const [label, envelope] of invalidEnvelopes) {
       await rootCall("recover_nep141_transfer", {
@@ -2397,7 +2469,20 @@ async function main() {
     }
     console.log("All local NEAR Sandbox callback checks passed; no testnet transaction was sent.");
   } finally {
-    await sandbox.tearDown();
+    const teardown = sandbox.tearDown();
+    let timeout;
+    const stoppedGracefully = await Promise.race([
+      teardown.then(() => true),
+      new Promise((resolve) => { timeout = setTimeout(() => resolve(false), 5_000); }),
+    ]);
+    clearTimeout(timeout);
+    if (!stoppedGracefully) {
+      const childProcess = sandbox.childProcess;
+      if (childProcess.exitCode === null && childProcess.signalCode === null) {
+        childProcess.kill("SIGKILL");
+      }
+      await teardown;
+    }
   }
 }
 
