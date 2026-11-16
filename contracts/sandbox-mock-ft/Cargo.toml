@@ -1,0 +1,14 @@
+[package]
+name = "sandbox-mock-ft"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+variant-b = []
+
+[dependencies]
+near-sdk.workspace = true

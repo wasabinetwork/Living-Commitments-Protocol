@@ -1,0 +1,74 @@
+{
+  "review_subject": "USDC receipt-recovery specification v2",
+  "baseline_git_commit": "f4c4fccf5f6d0a2d268425e9722eaeea2fd49bed",
+  "working_tree_dirty": true,
+  "created_date": "2026-11-15",
+  "review_inputs": [
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-DESIGN.md",
+      "sha256": "42b6e2b43fd4f0252cf7fb4e97982c7c57451baf9b23b4a63d96c47152269545"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-FOLLOWUP-REVIEW.md",
+      "sha256": "016e7819145a4a529b0b41e3f662f01391f21634fe3c39890abf4f7ac4b5c80c"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-AUDIT.md",
+      "sha256": "e8658be9c3afd95416313bd309a6e8c61ec030cfd9dc152e8028aa79f3187928"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-SPEC-V2-REVIEW-BRIEF.md",
+      "sha256": "d88f6d41a552708fb2dc3fd2a3f5b821262f742870a6b84512d5f61acf88f31a"
+    },
+    {
+      "path": "P2-USDC-INDEPENDENT-AUDIT-REPORT.md",
+      "sha256": "f331de22899a7017d6a8698fae997d85296fc0840abd5ebdb5bbc42be6df54ff"
+    },
+    {
+      "path": "P2-USDC-INDEPENDENT-AUDIT-FOLLOWUP.md",
+      "sha256": "440a6ddc1914fb07422fba41564c7d4eb391f1c12f408c150584d4e648fb5ebc"
+    },
+    {
+      "path": "P2-ASSET-ARCHITECTURE.md",
+      "sha256": "e0afd8aaf1d94e417c99bb281a363930357a2eed5279b66b8e70b976ebf048d3"
+    },
+    {
+      "path": "TODO.md",
+      "sha256": "0431532336a8f3d51212325e0df50d1782e3a0479e0ea468947274833bfef99f"
+    },
+    {
+      "path": "contracts/lcp-core/src/contract.rs",
+      "sha256": "aa2cf07e8e8b1782a20be576fff19771de2b498560563fe444d2878eb7581b28"
+    },
+    {
+      "path": "contracts/lcp-core/src/models.rs",
+      "sha256": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603"
+    },
+    {
+      "path": "contracts/lcp-core/Cargo.toml",
+      "sha256": "db5377ddaecf04182ed6838b76a837d459e45d579544826d837b9b60b3a25c22"
+    },
+    {
+      "path": "contracts/sandbox-mock-ft/src/lib.rs",
+      "sha256": "3e62024a827f997ea66ad7e43e72b6dc924320d0c527d94bcc93f8b6df9f6933"
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/run.mjs",
+      "sha256": "535db5cec8e9a4bc9f6281067f6d35a6ae2dc70bcfda28be438e7a5a81f32038"
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/README.md",
+      "sha256": "bd22206bf2486c4e0635ac84546442d1741da622c29f4aae57428c3d24c1e481"
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/package.json",
+      "sha256": "d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548"
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/package-lock.json",
+      "sha256": "c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e"
+    }
+  ],
+  "recovery_verifier_implemented": false,
+  "testnet_or_mainnet_transactions": false
+}

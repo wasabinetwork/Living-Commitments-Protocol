@@ -1,0 +1,238 @@
+{
+  "format": "lcp.receipt-recovery.v1.golden-vectors",
+  "generated_by": "generate.mjs using Node.js built-in Ed25519 and SHA-256",
+  "test_only": true,
+  "warning": "All fields, hashes, accounts, keys, and signatures are synthetic. Public deterministic seeds are embedded in the generator. Never use these vectors or keys for a real NEAR network or committee.",
+  "encodings": {
+    "integer_endianness": "little-endian",
+    "strings": "u32 byte length followed by UTF-8 bytes",
+    "hashes_and_keys": "raw bytes in field order",
+    "signed_message": "Ed25519 signs the 32-byte domain-separated SHA-256 digest directly",
+    "signatures_sorted_by": "raw public-key bytes ascending"
+  },
+  "committee_public_keys_hex": [
+    "1fa4c571de94354b2828dbf6bc79afca0fb7c4d7606d491efa51756c129f802b",
+    "25ec7fe6f19e9b59da2e985cec1db7daf89de7b9115d0505186ce20d4a08b59d",
+    "43e5b2cf76ce87e80fb41b7a69687796e83c10875486ab2df10e420206284b7d",
+    "d2e9ebed65a92597df517ae0f76e0443fd14586c0d88b41cc13ec01b331d066f",
+    "fca260d57695589ef514a178b91c3fc95be5cf11b80e9a8fced82e6283854ea1"
+  ],
+  "recovery": {
+    "intent": {
+      "schema_version": 1,
+      "chain_id": "lcp-vector-test",
+      "genesis_hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "core_account_id": "lcp-core-vector.testnet",
+      "instance_id": "2222222222222222222222222222222222222222222222222222222222222222",
+      "committee_epoch": 7,
+      "transfer_id": "9007199254740993",
+      "commitment_id": "42",
+      "kind": 0,
+      "tranche_epoch": 2,
+      "token_account_id": "usdc-vector.testnet",
+      "recipient_id": "beneficiary-vector.testnet",
+      "amount_raw": "9007199254740993",
+      "origin_method": 0,
+      "token_code_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "ft_transfer_deposit_yocto": "1",
+      "ft_transfer_gas_tgas": "25"
+    },
+    "intent_domain_hex": "4c43502f4e45503134312f494e54454e542f563100",
+    "intent_borsh_hex": "010f0000006c63702d766563746f722d74657374a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1170000006c63702d636f72652d766563746f722e746573746e657422222222222222222222222222222222222222222222222222222222222222220700000001000000000020002a0000000000000000010200000013000000757364632d766563746f722e746573746e65741a00000062656e65666963696172792d766563746f722e746573746e657401000000000020000000000000000000003333333333333333333333333333333333333333333333333333333333333333010000000000000000000000000000001900000000000000",
+    "intent_sha256_hex": "540dbe17818d75bcac71c4ff054fee0180d154f4b08573374a7e9957c7ef8446",
+    "certificate": {
+      "schema_version": 1,
+      "intent": {
+        "schema_version": 1,
+        "chain_id": "lcp-vector-test",
+        "genesis_hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "core_account_id": "lcp-core-vector.testnet",
+        "instance_id": "2222222222222222222222222222222222222222222222222222222222222222",
+        "committee_epoch": 7,
+        "transfer_id": "9007199254740993",
+        "commitment_id": "42",
+        "kind": 0,
+        "tranche_epoch": 2,
+        "token_account_id": "usdc-vector.testnet",
+        "recipient_id": "beneficiary-vector.testnet",
+        "amount_raw": "9007199254740993",
+        "origin_method": 0,
+        "token_code_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+        "ft_transfer_deposit_yocto": "1",
+        "ft_transfer_gas_tgas": "25"
+      },
+      "intent_hash": "540dbe17818d75bcac71c4ff054fee0180d154f4b08573374a7e9957c7ef8446",
+      "origin_transaction_hash": "4444444444444444444444444444444444444444444444444444444444444444",
+      "origin_receipt_id": "5555555555555555555555555555555555555555555555555555555555555555",
+      "origin_block_hash": "6666666666666666666666666666666666666666666666666666666666666666",
+      "origin_block_height": "300000000",
+      "token_receipt_id": "7777777777777777777777777777777777777777777777777777777777777777",
+      "token_action_index": 0,
+      "outcome_block_hash": "8888888888888888888888888888888888888888888888888888888888888888",
+      "outcome_block_height": "300000001",
+      "outcome": 0
+    },
+    "certificate_domain_hex": "4c43502f4e45503134312f5245434f564552592f563100",
+    "certificate_borsh_hex": "01010f0000006c63702d766563746f722d74657374a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1170000006c63702d636f72652d766563746f722e746573746e657422222222222222222222222222222222222222222222222222222222222222220700000001000000000020002a0000000000000000010200000013000000757364632d766563746f722e746573746e65741a00000062656e65666963696172792d766563746f722e746573746e657401000000000020000000000000000000003333333333333333333333333333333333333333333333333333333333333333010000000000000000000000000000001900000000000000540dbe17818d75bcac71c4ff054fee0180d154f4b08573374a7e9957c7ef844644444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555666666666666666666666666666666666666666666666666666666666666666600a3e11100000000777777777777777777777777777777777777777777777777777777777777777700000000888888888888888888888888888888888888888888888888888888888888888801a3e1110000000000",
+    "certificate_digest_hex": "7e51ac583ca58677ced772072b8ab63ede023ea930ff451fab9c19578216cdca",
+    "signatures": [
+      {
+        "public_key_hex": "1fa4c571de94354b2828dbf6bc79afca0fb7c4d7606d491efa51756c129f802b",
+        "signature_hex": "fe8bd7751a5435edf45fd6204a87f3ea3794b90a87f45577a320ac2368ad7194ebfb35861c402fac642273818707fdf9d6d340e539325bbfd9cae306bf8d0e06"
+      },
+      {
+        "public_key_hex": "25ec7fe6f19e9b59da2e985cec1db7daf89de7b9115d0505186ce20d4a08b59d",
+        "signature_hex": "2658e03624d315c76ae8a0b86cb7a1fc3cbbfac9115c46712249f416991df1c495d118355c0c48115c5abcec7830d5340fc389a376887e1aa4c16441ebdcc608"
+      },
+      {
+        "public_key_hex": "43e5b2cf76ce87e80fb41b7a69687796e83c10875486ab2df10e420206284b7d",
+        "signature_hex": "77000444fa43d5ad318cf87fad93183c55e5f63aed3f72a6cacd0666aef8ea70518337eafd8221ba6b27497f7d3067a9b0c974108f06575eda8b51ef51d3f20e"
+      },
+      {
+        "public_key_hex": "d2e9ebed65a92597df517ae0f76e0443fd14586c0d88b41cc13ec01b331d066f",
+        "signature_hex": "f9cf6bd9edcbafc431341248da39409749d6577e35e7b136b969c73910dfd56223fa466e64bd6c0fd453b91661f598e0106519bd4b976608a2769363eb95dd06"
+      }
+    ],
+    "envelope_borsh_hex": "dd01000001010f0000006c63702d766563746f722d74657374a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1170000006c63702d636f72652d766563746f722e746573746e657422222222222222222222222222222222222222222222222222222222222222220700000001000000000020002a0000000000000000010200000013000000757364632d766563746f722e746573746e65741a00000062656e65666963696172792d766563746f722e746573746e657401000000000020000000000000000000003333333333333333333333333333333333333333333333333333333333333333010000000000000000000000000000001900000000000000540dbe17818d75bcac71c4ff054fee0180d154f4b08573374a7e9957c7ef844644444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555666666666666666666666666666666666666666666666666666666666666666600a3e11100000000777777777777777777777777777777777777777777777777777777777777777700000000888888888888888888888888888888888888888888888888888888888888888801a3e1110000000000040000001fa4c571de94354b2828dbf6bc79afca0fb7c4d7606d491efa51756c129f802bfe8bd7751a5435edf45fd6204a87f3ea3794b90a87f45577a320ac2368ad7194ebfb35861c402fac642273818707fdf9d6d340e539325bbfd9cae306bf8d0e0625ec7fe6f19e9b59da2e985cec1db7daf89de7b9115d0505186ce20d4a08b59d2658e03624d315c76ae8a0b86cb7a1fc3cbbfac9115c46712249f416991df1c495d118355c0c48115c5abcec7830d5340fc389a376887e1aa4c16441ebdcc60843e5b2cf76ce87e80fb41b7a69687796e83c10875486ab2df10e420206284b7d77000444fa43d5ad318cf87fad93183c55e5f63aed3f72a6cacd0666aef8ea70518337eafd8221ba6b27497f7d3067a9b0c974108f06575eda8b51ef51d3f20ed2e9ebed65a92597df517ae0f76e0443fd14586c0d88b41cc13ec01b331d066ff9cf6bd9edcbafc431341248da39409749d6577e35e7b136b969c73910dfd56223fa466e64bd6c0fd453b91661f598e0106519bd4b976608a2769363eb95dd06",
+    "envelope_base64": "3QEAAAEBDwAAAGxjcC12ZWN0b3ItdGVzdKGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhFwAAAGxjcC1jb3JlLXZlY3Rvci50ZXN0bmV0IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIHAAAAAQAAAAAAIAAqAAAAAAAAAAABAgAAABMAAAB1c2RjLXZlY3Rvci50ZXN0bmV0GgAAAGJlbmVmaWNpYXJ5LXZlY3Rvci50ZXN0bmV0AQAAAAAAIAAAAAAAAAAAAAAzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMwEAAAAAAAAAAAAAAAAAAAAZAAAAAAAAAFQNvheBjXW8rHHE/wVP7gGA0VT0sIVzN0p+mVfH74RGRERERERERERERERERERERERERERERERERERERERERERVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVWZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAKPhEQAAAAB3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3dwAAAACIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiAGj4REAAAAAAAQAAAAfpMVx3pQ1Sygo2/a8ea/KD7fE12BtSR76UXVsEp+AK/6L13UaVDXt9F/WIEqH8+o3lLkKh/RVd6MgrCNorXGU6/s1hhxAL6xkInOBhwf9+dbTQOU5Mlu/2crjBr+NDgYl7H/m8Z6bWdoumFzsHbfa+J3nuRFdBQUYbOINSgi1nSZY4DYk0xXHauiguGy3ofw8u/rJEVxGcSJJ9BaZHfHEldEYNVwMSBFcWrzseDDVNA/DiaN2iH4apMFkQevcxghD5bLPds6H6A+0G3ppaHeW6DwQh1SGqy3xDkICBihLfXcABET6Q9WtMYz4f62TGDxV5fY67T9ypsrNBmau+OpwUYM36v2CIbprJ0l/fTBnqbDJdBCPBlde2otR71HT8g7S6evtZakll99ReuD3bgRD/RRYbA2ItBzBPsAbMx0Gb/nPa9nty6/EMTQSSNo5QJdJ1ld+NeexNrlpxzkQ39ViI/pGbmS9bA/UU7kWYfWY4BBlGb1Ll2YIonaTY+uV3QY="
+  },
+  "governance": {
+    "rotation": {
+      "message": {
+        "schema_version": 2,
+        "chain_id": "lcp-vector-test",
+        "genesis_hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "core_account_id": "lcp-core-vector.testnet",
+        "instance_id": "2222222222222222222222222222222222222222222222222222222222222222",
+        "old_epoch": 7,
+        "new_epoch": 8,
+        "proposal_generation": "3",
+        "new_keys": [
+          "321eac0265a4a780659020aaabd1f77f95124878ace92779f1a1f12d91f8e27c",
+          "68ced269c661952e98d300f26d5f4557172bfc224a5736c485a23fe9f591938f",
+          "7b3a3bca74eede0dfdf0052270401940c240db4d4fcbc65d6a9fc778a373a1e9",
+          "dc795c6630c0acab54b5d23b578b99c7efbcd27eca7c0c9c2f2f16787811427b",
+          "fcbd43ad5e4f6831703f700fdf5e8d95e30ce43ac0ff1de23a86acb25b3d600a"
+        ],
+        "activate_at_ns": "1800000000000000000"
+      },
+      "domain_hex": "4c43502f4e45503134312f434f4d4d49545445452d524f544154494f4e2f563200",
+      "borsh_hex": "020f0000006c63702d766563746f722d74657374a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1170000006c63702d636f72652d766563746f722e746573746e6574222222222222222222222222222222222222222222222222222222222222222207000000080000000300000000000000321eac0265a4a780659020aaabd1f77f95124878ace92779f1a1f12d91f8e27c68ced269c661952e98d300f26d5f4557172bfc224a5736c485a23fe9f591938f7b3a3bca74eede0dfdf0052270401940c240db4d4fcbc65d6a9fc778a373a1e9dc795c6630c0acab54b5d23b578b99c7efbcd27eca7c0c9c2f2f16787811427bfcbd43ad5e4f6831703f700fdf5e8d95e30ce43ac0ff1de23a86acb25b3d600a0000b49376e2fa18",
+      "digest_hex": "0448dbbedb885f3321e3226ce0d94c2288a06fdc1d431f7104953055bd336b91",
+      "signatures": [
+        {
+          "public_key_hex": "1fa4c571de94354b2828dbf6bc79afca0fb7c4d7606d491efa51756c129f802b",
+          "signature_hex": "694d03941a8d7a591158af4e227ac97e5a5fff9c21d5d0a62266aaf54a0881109152b763c013f938a6ce179926f4eae81696cc431bafb0a02df29d2aa2744a06"
+        },
+        {
+          "public_key_hex": "25ec7fe6f19e9b59da2e985cec1db7daf89de7b9115d0505186ce20d4a08b59d",
+          "signature_hex": "bdb7bbfab0403d07d7700ac178985c3687082d5405dc75fe08df7968bf602a07f08ad4ffc951abef3602baa184f9409bdf5a9e2d403ee1b89782b51f5adaf302"
+        },
+        {
+          "public_key_hex": "43e5b2cf76ce87e80fb41b7a69687796e83c10875486ab2df10e420206284b7d",
+          "signature_hex": "11e2ac43d3d0851de27b417c3d120b9ff93922801a877180a1cab1e0ab2f34cd95178ade018ffc72277c3ffb5d1cb09ec03036758495f9b5fa3ef470609acf02"
+        },
+        {
+          "public_key_hex": "d2e9ebed65a92597df517ae0f76e0443fd14586c0d88b41cc13ec01b331d066f",
+          "signature_hex": "6b8f5018632bc21e97f228a65e3b35da633af7d54c1793c0fc1896c50036700077a42aab3ce90a00d39d097779150700f48944996ab78a83966d7bdf388b9802"
+        }
+      ],
+      "envelope_borsh_hex": "27010000020f0000006c63702d766563746f722d74657374a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1170000006c63702d636f72652d766563746f722e746573746e6574222222222222222222222222222222222222222222222222222222222222222207000000080000000300000000000000321eac0265a4a780659020aaabd1f77f95124878ace92779f1a1f12d91f8e27c68ced269c661952e98d300f26d5f4557172bfc224a5736c485a23fe9f591938f7b3a3bca74eede0dfdf0052270401940c240db4d4fcbc65d6a9fc778a373a1e9dc795c6630c0acab54b5d23b578b99c7efbcd27eca7c0c9c2f2f16787811427bfcbd43ad5e4f6831703f700fdf5e8d95e30ce43ac0ff1de23a86acb25b3d600a0000b49376e2fa18040000001fa4c571de94354b2828dbf6bc79afca0fb7c4d7606d491efa51756c129f802b694d03941a8d7a591158af4e227ac97e5a5fff9c21d5d0a62266aaf54a0881109152b763c013f938a6ce179926f4eae81696cc431bafb0a02df29d2aa2744a0625ec7fe6f19e9b59da2e985cec1db7daf89de7b9115d0505186ce20d4a08b59dbdb7bbfab0403d07d7700ac178985c3687082d5405dc75fe08df7968bf602a07f08ad4ffc951abef3602baa184f9409bdf5a9e2d403ee1b89782b51f5adaf30243e5b2cf76ce87e80fb41b7a69687796e83c10875486ab2df10e420206284b7d11e2ac43d3d0851de27b417c3d120b9ff93922801a877180a1cab1e0ab2f34cd95178ade018ffc72277c3ffb5d1cb09ec03036758495f9b5fa3ef470609acf02d2e9ebed65a92597df517ae0f76e0443fd14586c0d88b41cc13ec01b331d066f6b8f5018632bc21e97f228a65e3b35da633af7d54c1793c0fc1896c50036700077a42aab3ce90a00d39d097779150700f48944996ab78a83966d7bdf388b9802",
+      "envelope_base64": "JwEAAAIPAAAAbGNwLXZlY3Rvci10ZXN0oaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaEXAAAAbGNwLWNvcmUtdmVjdG9yLnRlc3RuZXQiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIgcAAAAIAAAAAwAAAAAAAAAyHqwCZaSngGWQIKqr0fd/lRJIeKzpJ3nxofEtkfjifGjO0mnGYZUumNMA8m1fRVcXK/wiSlc2xIWiP+n1kZOPezo7ynTu3g398AUicEAZQMJA201Py8Zdap/HeKNzoenceVxmMMCsq1S10jtXi5nH77zSfsp8DJwvLxZ4eBFCe/y9Q61eT2gxcD9wD99ejZXjDOQ6wP8d4jqGrLJbPWAKAAC0k3bi+hgEAAAAH6TFcd6UNUsoKNv2vHmvyg+3xNdgbUke+lF1bBKfgCtpTQOUGo16WRFYr04iesl+Wl//nCHV0KYiZqr1SgiBEJFSt2PAE/k4ps4XmSb06ugWlsxDG6+woC3ynSqidEoGJex/5vGem1naLphc7B232vid57kRXQUFGGziDUoItZ29t7v6sEA9B9dwCsF4mFw2hwgtVAXcdf4I33lov2AqB/CK1P/JUavvNgK6oYT5QJvfWp4tQD7huJeCtR9a2vMCQ+Wyz3bOh+gPtBt6aWh3lug8EIdUhqst8Q5CAgYoS30R4qxD09CFHeJ7QXw9Eguf+TkigBqHcYChyrHgqy80zZUXit4Bj/xyJ3w/+10csJ7AMDZ1hJX5tfo+9HBgms8C0unr7WWpJZffUXrg924EQ/0UWGwNiLQcwT7AGzMdBm9rj1AYYyvCHpfyKKZeOzXaYzr31UwXk8D8GJbFADZwAHekKqs86QoA050Jd3kVBwD0iUSZareKg5Zte984i5gC"
+    },
+    "cancellation": {
+      "message": {
+        "schema_version": 2,
+        "chain_id": "lcp-vector-test",
+        "genesis_hash": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "core_account_id": "lcp-core-vector.testnet",
+        "instance_id": "2222222222222222222222222222222222222222222222222222222222222222",
+        "old_epoch": 7,
+        "new_epoch": 8,
+        "proposal_generation": "3",
+        "proposal_digest": "0448dbbedb885f3321e3226ce0d94c2288a06fdc1d431f7104953055bd336b91"
+      },
+      "domain_hex": "4c43502f4e45503134312f524f544154494f4e2d43414e43454c2f563200",
+      "borsh_hex": "020f0000006c63702d766563746f722d74657374a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1170000006c63702d636f72652d766563746f722e746573746e65742222222222222222222222222222222222222222222222222222222222222222070000000800000003000000000000000448dbbedb885f3321e3226ce0d94c2288a06fdc1d431f7104953055bd336b91",
+      "digest_hex": "ed9e455d1151657d55b1e792852e8160fb691b963dc698a22d76d6edc6a0593d",
+      "signatures": [
+        {
+          "public_key_hex": "1fa4c571de94354b2828dbf6bc79afca0fb7c4d7606d491efa51756c129f802b",
+          "signature_hex": "eb035089ab3700c1518a403706abbfaf1f02b3c5d7010d10b63afe9d7ee68669555c004d36bd2d55e21158dfc0ffae416b6ef8ce781b7ac90319d913c25d6409"
+        },
+        {
+          "public_key_hex": "25ec7fe6f19e9b59da2e985cec1db7daf89de7b9115d0505186ce20d4a08b59d",
+          "signature_hex": "82f982126ec0c26a971a7c73e015cfc3c2078fab8a114ccacaf43541da8224e7390839818a4986a0fb2abc969ddb77504daa41405433b9e39b9d623a6a663503"
+        },
+        {
+          "public_key_hex": "43e5b2cf76ce87e80fb41b7a69687796e83c10875486ab2df10e420206284b7d",
+          "signature_hex": "f8a47ff5b043503acc8d8a1d7454e549de93cede5a71fecf76b1e3751cb0258ca24de7878dc34bde100c42fa1c6518cfd9167c06d2241d3729d583c4d8b2440c"
+        },
+        {
+          "public_key_hex": "d2e9ebed65a92597df517ae0f76e0443fd14586c0d88b41cc13ec01b331d066f",
+          "signature_hex": "90f7ebaa6601f8af1c8994c793d9e7a89e7448f7f7f229c9a22e744bbcb76300f8548e5e760c36fb5b6246dc003e53ff31eb7c3aae746d5a8e47e38a3cadc308"
+        }
+      ],
+      "envelope_borsh_hex": "9f000000020f0000006c63702d766563746f722d74657374a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1170000006c63702d636f72652d766563746f722e746573746e65742222222222222222222222222222222222222222222222222222222222222222070000000800000003000000000000000448dbbedb885f3321e3226ce0d94c2288a06fdc1d431f7104953055bd336b91040000001fa4c571de94354b2828dbf6bc79afca0fb7c4d7606d491efa51756c129f802beb035089ab3700c1518a403706abbfaf1f02b3c5d7010d10b63afe9d7ee68669555c004d36bd2d55e21158dfc0ffae416b6ef8ce781b7ac90319d913c25d640925ec7fe6f19e9b59da2e985cec1db7daf89de7b9115d0505186ce20d4a08b59d82f982126ec0c26a971a7c73e015cfc3c2078fab8a114ccacaf43541da8224e7390839818a4986a0fb2abc969ddb77504daa41405433b9e39b9d623a6a66350343e5b2cf76ce87e80fb41b7a69687796e83c10875486ab2df10e420206284b7df8a47ff5b043503acc8d8a1d7454e549de93cede5a71fecf76b1e3751cb0258ca24de7878dc34bde100c42fa1c6518cfd9167c06d2241d3729d583c4d8b2440cd2e9ebed65a92597df517ae0f76e0443fd14586c0d88b41cc13ec01b331d066f90f7ebaa6601f8af1c8994c793d9e7a89e7448f7f7f229c9a22e744bbcb76300f8548e5e760c36fb5b6246dc003e53ff31eb7c3aae746d5a8e47e38a3cadc308",
+      "envelope_base64": "nwAAAAIPAAAAbGNwLXZlY3Rvci10ZXN0oaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaEXAAAAbGNwLWNvcmUtdmVjdG9yLnRlc3RuZXQiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIgcAAAAIAAAAAwAAAAAAAAAESNu+24hfMyHjImzg2UwiiKBv3B1DH3EElTBVvTNrkQQAAAAfpMVx3pQ1Sygo2/a8ea/KD7fE12BtSR76UXVsEp+AK+sDUImrNwDBUYpANwarv68fArPF1wENELY6/p1+5oZpVVwATTa9LVXiEVjfwP+uQWtu+M54G3rJAxnZE8JdZAkl7H/m8Z6bWdoumFzsHbfa+J3nuRFdBQUYbOINSgi1nYL5ghJuwMJqlxp8c+AVz8PCB4+rihFMysr0NUHagiTnOQg5gYpJhqD7KryWndt3UE2qQUBUM7njm51iOmpmNQND5bLPds6H6A+0G3ppaHeW6DwQh1SGqy3xDkICBihLffikf/WwQ1A6zI2KHXRU5Unek87eWnH+z3ax43UcsCWMok3nh43DS94QDEL6HGUYz9kWfAbSJB03KdWDxNiyRAzS6evtZakll99ReuD3bgRD/RRYbA2ItBzBPsAbMx0Gb5D366pmAfivHImUx5PZ56iedEj39/IpyaIudEu8t2MA+FSOXnYMNvtbYkbcAD5T/zHrfDqudG1ajkfjijytwwg="
+    }
+  },
+  "negative_cases_for_future_consumers": [
+    {
+      "case": "change_intent_amount_without_resigning",
+      "expected": "intent-hash or signature rejection"
+    },
+    {
+      "case": "remove_domain_nul_byte",
+      "expected": "digest mismatch"
+    },
+    {
+      "case": "flip_one_signature_bit",
+      "expected": "signature rejection"
+    },
+    {
+      "case": "set_ed25519_s_to_group_order_or_larger",
+      "expected": "strict verifier rejection"
+    },
+    {
+      "case": "use_small_order_committee_public_key",
+      "expected": "configuration and strict verifier rejection"
+    },
+    {
+      "case": "use_noncanonical_public_key_encoding",
+      "expected": "strict verifier rejection"
+    },
+    {
+      "case": "use_small_order_signature_r",
+      "expected": "strict verifier rejection"
+    },
+    {
+      "case": "use_noncanonical_signature_r_encoding",
+      "expected": "strict verifier rejection"
+    },
+    {
+      "case": "sort_signatures_by_text_not_raw_key_bytes",
+      "expected": "canonical-order rejection"
+    },
+    {
+      "case": "append_trailing_borsh_byte",
+      "expected": "exact-slice rejection"
+    },
+    {
+      "case": "replace_vec_length_with_oversized_value",
+      "expected": "bounded-parser rejection before allocation"
+    },
+    {
+      "case": "set_schema_version_to_unsupported_value",
+      "expected": "version rejection"
+    },
+    {
+      "case": "repeat_a_signer_key",
+      "expected": "duplicate-key rejection"
+    },
+    {
+      "case": "submit_only_three_signatures",
+      "expected": "quorum rejection"
+    }
+  ]
+}

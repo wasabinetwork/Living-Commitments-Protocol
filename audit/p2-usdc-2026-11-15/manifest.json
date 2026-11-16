@@ -1,0 +1,15 @@
+{
+  "reviewer": "OpenAI Codex",
+  "source_commit": "e9074ddced4be9dce4dd4c1061909f7869054cf1",
+  "source_hashes": {
+    "contracts/lcp-core/src/contract.rs": "48e074921830869a836284590fc34303226e5916e44857fac0ac9c0b31f7b15e",
+    "contracts/lcp-core/src/models.rs": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603",
+    "contracts/bounded-payout-adapter/src/lib.rs": "c4ac2ec12731d6619e0c0e7cbf95e9da7bc063518cf2fe9a74dc9cf28b1d7659",
+    "packages/sdk/src/index.ts": "8b8c76d6ad190dce1ae4152de05595e8e0c3469a4f9c8fa838dde08c214a1419",
+    "apps/console/components/dashboard.tsx": "d2f87d177f20104596300da812d15bdd68c811e05a8b60116f5de42b8b8efa30",
+    "services/event-indexer/src/index.ts": "e64bd7fa96b1c868e42f637321ded56d68678901b5ecc12d0384c9e0dfc54518"
+  },
+  "test_note": "adversarial-tests.rs is inserted immediately before the closing brace of the existing tests module in exported contract.rs; no implementation statements changed.",
+  "transactions_submitted": false,
+  "independent_reproducible_build_performed": false
+}

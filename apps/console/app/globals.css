@@ -969,6 +969,7 @@ a { color: inherit; text-decoration: none; }
   .topbar-right { max-width: 100%; }
   .health-title-row { align-items: flex-start; flex-wrap: wrap; }
   .health-title-row h3 { overflow-wrap: anywhere; }
+  .intro-art { display: none; }
 }
 
 @media (max-width: 420px) {

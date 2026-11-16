@@ -2,7 +2,7 @@
 
 ## Product Requirements Document — v0.2
 
-**Status:** Product baseline; P0 MVP deployed on NEAR testnet, P1 acceptance and P2 USDC validation in progress<br>**Target:** NEAR Hackathon 2026<br>**Submission deadline:** November 14, 2026, 23:59 UTC<br>**Primary track:** Open Innovation<br>**Secondary track candidate:** Social Money<br>**Conditional track candidate:** Privacy & Private AI, only if confidential TEE evaluation is demonstrated<br>**Implementation network:** NEAR testnet<br>**Product category:** Programmable, continuously verified commitments infrastructure
+**Status:** P0 testnet acceptance is complete; P1 pilots, amendments, and adapter flows have passed their documented testnet checks, with remaining work tracked in `TODO.md`; the reproducible core containing P2 NEP-141/USDC support is deployed to testnet. Independent invariant review and live USDC acceptance remain open. The 2026 NEAR Hackathon submission is owner-confirmed complete.<br>**Target:** NEAR Hackathon 2026<br>**Submission deadline:** November 14, 2026, 23:59 UTC (historical)<br>**Track planning:** Open Innovation was the primary recommendation; Social Money was a secondary candidate; Privacy & Private AI depended on demonstrating confidential TEE evaluation. Exact submitted track IDs are not recorded in this PRD.<br>**Implementation network:** NEAR testnet<br>**Product category:** Programmable, continuously verified commitments infrastructure
 
 ---
 
@@ -623,7 +623,7 @@ The contract must:
 
 ### Multi-asset extension (P2 implementation in progress)
 
-Commitment creators may choose native NEAR or a supported NEP-141 token such as USDC. The selected asset, token contract account, and raw tranche amount are immutable policy inputs. A commitment never mixes assets or performs conversion. USDC is the first supported stablecoin planned; its transaction gas, contract storage, token-account registration, and evaluator operations remain paid in NEAR. NEP-141 funding via `ft_transfer_call` requires the sponsor to attach 1 yoctoNEAR to the token call; outgoing NEP-141 transfers also require LCP to attach 1 yoctoNEAR. Each transfer deposit is separate from escrow and storage growth, and remaining excess is refunded. The local core, SDK, and Console now contain the first USDC settlement path, preserving legacy Borsh state and native-NEAR behavior. On 2026-11-13, the Rust 1.100.0 workspace suite passed 75 tests, the SDK and JavaScript suite passed 37 tests, contract checks and evaluator WASM builds passed, Worker dry runs and the Console production build passed, and the npm audit found no vulnerabilities. Independent invariant review, a reproducible build, testnet deployment, and live acceptance remain pending. See [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md) for current implementation and acceptance status.
+Commitment creators may choose native NEAR or a supported NEP-141 token such as USDC. The selected asset, token contract account, and raw tranche amount are immutable policy inputs. A commitment never mixes assets or performs conversion. USDC is the first supported stablecoin; its transaction gas, contract storage, token-account registration, and evaluator operations remain paid in NEAR. NEP-141 funding via `ft_transfer_call` requires the sponsor to attach 1 yoctoNEAR to the token call; outgoing NEP-141 transfers also require LCP to attach 1 yoctoNEAR. Each transfer deposit is separate from escrow and storage growth, and remaining excess is refunded. The versioned core, SDK, and Console contain the USDC settlement path, preserving legacy Borsh state and native-NEAR behavior. The reproducible core is deployed to testnet, but no live USDC journey has been accepted and independent invariant review remains open. On 2026-11-13, the Rust 1.100.0 workspace suite passed 75 tests, the SDK and JavaScript suite passed 37 tests, contract checks and evaluator WASM builds passed, Worker dry runs and the Console production build passed, and the npm audit found no vulnerabilities. See [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md) for current implementation and acceptance status.
 
 ## 9.4 Consequence adapters
 
@@ -682,7 +682,7 @@ Old evaluations cannot silently authorize actions under incompatible new rules.
 
 ## 10.3 Full amendment workflow
 
-A full amendment engine for all commitment terms remains outside the MVP. The P1 implementation supports amendments to v3 service source policies only; budget, evaluator, and role fields remain immutable.
+A full amendment engine for all commitment terms remains outside the MVP by design. The P1 implementation supports amendments to v3 service source policies only; budget, evaluator, and role fields remain immutable founding terms because changing them alters financial exposure, evidence authority, or governance identities. Until a separately versioned full-amendment design is reviewed, create a new commitment to change those terms.
 
 It will support:
 
@@ -725,24 +725,23 @@ No unilateral policy replacement is permitted in the MVP.
 | LCP-016 | Provide user-facing application | Full lifecycle can be demonstrated without manual contract calls |
 | LCP-017 | Provide tests and documentation | Critical invariants and reproduction instructions are public |
 
-## 11.2 P1 — If core is stable early
+## 11.2 P1 — Current implementation status
 
-* Additional consequence adapter for contract-gated authority.
-* Multiple independent evidence sources.
-* Threshold-based reviewer or evaluator policies.
-* Full consent-based policy amendments.
-* Configurable evidence confidence.
-* Reusable policy templates.
-* Independent event indexer.
-* More comprehensive private evidence handling.
-* A second real-world use-case template.
+* **Contract-gated consequence adapter:** implemented and deployed to testnet; manager authorization, epoch limits, rollback/recovery, revocation, and withdrawal passed their recorded testnet checks.
+* **Multiple independent evidence sources and thresholds:** the wallet-authenticated report inbox and quorum evaluator are deployed; the two-operator pilot on commitment `27` passed with 2/2 compliant reports.
+* **Consent-based policy amendments:** implemented for the v3 service source policy and tested on commitment `28`, including rejection, slot reuse, unanimous approval, delayed activation, cancellation, and expiry. Base budget, evaluator, and role terms intentionally remain immutable; changing them requires a new commitment until a separately reviewed full-amendment model exists.
+* **Evidence confidence:** the Console reports source provenance, freshness, and agreement coverage; these describe evidence quality and do not claim a probability of truth.
+* **Reusable policy templates:** implemented in the Console.
+* **Event indexer:** optional finalized-event archive implemented in a Worker and D1. It is currently degraded by provider rate limiting; contract state remains authoritative and archived history is hidden while the source is unhealthy.
+* **Private evidence handling:** consent-based reviewer access is deployed to isolated preview and production Workers. Current-stage acceptance is owner-approved complete; exact-preview RPC fault injection, provider independence, and a fresh independent review are deferred to mainnet readiness. Private evaluator input remains disabled pending a verified OutLayer secret path.
+* **Second real-world use case:** the public-service availability template and two-operator testnet pilot passed on commitment `27`; its endpoint probe is evidence of public reachability, not proof of service quality.
 
 ## 11.3 P2 — After hackathon
 
-* **In progress:** support selectable native NEAR or NEP-141 USDC commitment escrow, with a reusable asset catalog and separately accounted token-unit settlement. The first USDC path is implemented locally; testnet acceptance, invariant review, and reproducible deployment remain open. See [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md).
-* **Implemented locally:** show the application build/source SHA in the Console footer. Deploy and verify the build record independently on production and preview.
-* **Implemented locally:** add contextual form help and human-readable time-unit inputs while preserving exact protocol duration values. Firefox layout and accessibility review remains open.
-* **Configured and verified:** serve the current public evaluator artifacts from `https://artifacts.lcp.gama.works`; hashes and immutable R2 object protection are confirmed. A new OutLayer evaluation using the branded URL remains pending.
+* **In progress:** support selectable native NEAR or NEP-141 USDC commitment escrow, with a reusable asset catalog and separately accounted token-unit settlement. The USDC path is in the reproducible testnet core and Console; live USDC acceptance and independent invariant review remain open. See [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md).
+* **Deployed and verified:** the Console footer links the application source SHA on both production and preview. On 2026-11-15, `/version.json` from both origins returned clean source revision `f4c4fccf5f6d0a2d268425e9722eaeea2fd49bed`; see `TODO.md`.
+* **Deployed:** contextual form help and human-readable time-unit inputs preserve exact protocol duration values. The broader Firefox layout and WCAG review remains open; see `TODO.md`.
+* **Configured and exercised:** current hash-pinned evaluator artifacts are served from `https://artifacts.lcp.gama.works`; hashes and immutable R2 object protection are confirmed. Commitment `33` completed an Accepted / Compliant OutLayer heartbeat evaluation using the branded artifact URL, and its TEE quote independently verified; see `TODO.md`.
 * Constitution Compiler.
 * Resilience Lab.
 * Forkable Programs.
@@ -1272,11 +1271,11 @@ Deliver:
 
 **Gate:** A fresh developer can reproduce the core flow from documentation.
 
-## November 14 — Submission
+## November 14 — Submission (completed)
 
-**Goal:** Submit a working, accurately described protocol.
+**Status:** Submission completed (owner-confirmed). This section preserves the release checks planned for the milestone; current deployment and testnet evidence is maintained in `TESTNET-E2E-STATUS.md` and `TODO.md`.
 
-Deliver:
+Planned release checks:
 
 * Final testnet deployment verification.
 * Public repository verification.
@@ -1466,7 +1465,7 @@ These must be resolved before or during the first implementation session.
 | Challenge resolution | Predefined arbiter and timeout fallback |
 | Consequence | Health-gated native NEAR budget tranche |
 | Policy updates | Immutable policy version in MVP |
-| Escrow asset | Native NEAR in v0.1 MVP; NEP-141 USDC is the P2 extension (local implementation in progress; testnet acceptance pending) |
+| Escrow asset | Native NEAR is accepted; NEP-141 USDC is the P2 extension (code deployed to testnet; live acceptance and independent review pending) |
 | Cross-chain execution | Deferred |
 | AI authority | No independent settlement authority |
 | External automation | Permissionless triggering, no privileged overrides |
@@ -1512,7 +1511,7 @@ The final repository must contain:
 * Links to verifiable transactions and OutLayer execution evidence.
 * Clear list of implemented versus future features.
 
-The submission must follow the official hackathon instructions and receive human review before final publication.
+The 2026 NEAR Hackathon submission is owner-confirmed complete. This section remains the release-documentation standard; future submissions and releases must follow the applicable official instructions and receive human review.
 
 ---
 

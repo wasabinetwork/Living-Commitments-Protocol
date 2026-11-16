@@ -1,0 +1,22 @@
+{
+  "reviewer": "OpenAI Codex",
+  "source_commit": "e9074ddced4be9dce4dd4c1061909f7869054cf1",
+  "source_clean": true,
+  "method": "cargo near build reproducible-wasm --manifest-path contracts/lcp-core/Cargo.toml --out-dir target/independent-audit/lcp-core",
+  "cli": "cargo-near 0.23.0",
+  "image": "sourcescan/cargo-near:0.23.0-rust-1.100.0",
+  "image_digest": "sha256:265b662a03642196c8a1b97cb8e1bff9156488b584a9e040e9ef1f264e1049f1",
+  "bytes": 759388,
+  "sha256": "5c01aa15fee13a03a71fdada304f358f22e608c424525f37892182ac1e649bff",
+  "expected_sha256": "5c01aa15fee13a03a71fdada304f358f22e608c424525f37892182ac1e649bff",
+  "code_hash_from_build": "7C9yrP36jPKdbAVaV9LgH7fLQ4yRGTZSRBQ83RgbDage",
+  "scope": "Fresh reviewer-run reproduction in the shared project environment, not a separate operator or hardware trust domain.",
+  "match": true,
+  "adapter": {
+    "bytes": 152247,
+    "sha256": "148f752999a6613c39675540717b3cb21feee4ae1c8618703513712912a6b0a6",
+    "expected_sha256": "148f752999a6613c39675540717b3cb21feee4ae1c8618703513712912a6b0a6",
+    "code_hash_from_build": "2PG2fMTQ1MTmyCGskL2446kZ4dEimT3swmWRzQnpfra9",
+    "match": true
+  }
+}

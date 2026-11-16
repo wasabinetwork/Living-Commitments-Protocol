@@ -27,7 +27,7 @@ The [preview Console](https://preview.lcp-preview.pages.dev) is available for UI
 - `services/event-indexer`: an optional Cloudflare D1 archive for finalized LCP events. Contract state remains the source of truth for health, eligibility, and settlement.
 - `services/reviewer-access`: a consent-based service for encrypted reviewer artifacts. Current-phase acceptance is owner-approved; additional RPC fault-injection and independent provider review are deferred to mainnet readiness. Private OutLayer input retrieval remains disabled pending a separately verified secret flow.
 
-The NEP-141 USDC settlement path is implemented locally but has **not** passed independent review, reproducible build, testnet deployment, or live acceptance. It is not part of the live testnet Console flow; see [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md).
+The NEP-141 USDC settlement path is included in the reproducible core deployed to testnet and surfaced by the Console. An independent source review is complete, and initial funding, resolver, storage-registration, and sponsor-refund retry checks passed on testnet. Beneficiary payout, callback stress/recovery, concurrent schedules, and independent rebuild remain open before mainnet; see [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md) and the [audit follow-up](P2-USDC-INDEPENDENT-AUDIT-FOLLOWUP.md).
 
 ## Hackathon scope and provenance
 

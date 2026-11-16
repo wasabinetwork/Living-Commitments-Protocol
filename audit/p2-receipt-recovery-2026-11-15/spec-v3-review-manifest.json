@@ -1,0 +1,98 @@
+{
+  "review_subject": "USDC receipt-recovery specification v3 and operator-policy annex",
+  "baseline_git_commit": "f4c4fccf5f6d0a2d268425e9722eaeea2fd49bed",
+  "working_tree_dirty": true,
+  "created_date": "2026-11-15",
+  "recovery_verifier_implemented": false,
+  "testnet_or_mainnet_transactions": false,
+  "review_inputs": [
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-DESIGN.md",
+      "sha256": "3660c9887540704c4610cd81ddeaef0724c465b89669a91341bff8dde189f406"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md",
+      "sha256": "ed0dac7e000c94c5a71af4508d94fb3d3df64600c6ff4c13036fee94be2f6438"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-SPEC-V3-REVIEW-BRIEF.md",
+      "sha256": "f21e2902e2e6ba7c7e588ff34845c028f1279bac95511df9ed0214ad417b8c4d"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-SPEC-V2-REVIEW.md",
+      "sha256": "a89fbbfacf9555704e544746c43bd120ae15f7afb180f994ad8a4fe9b28d2da6"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-SPEC-V2-REVIEW-BRIEF.md",
+      "sha256": "d88f6d41a552708fb2dc3fd2a3f5b821262f742870a6b84512d5f61acf88f31a"
+    },
+    {
+      "path": "audit/p2-receipt-recovery-2026-11-15/spec-v2-review-manifest.json",
+      "sha256": "a8cdc0c32b4eb294fed4bc9f5eb1e3ed29ce5cd339f88997c913b8ada28fba63"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-FOLLOWUP-REVIEW.md",
+      "sha256": "016e7819145a4a529b0b41e3f662f01391f21634fe3c39890abf4f7ac4b5c80c"
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-AUDIT.md",
+      "sha256": "e8658be9c3afd95416313bd309a6e8c61ec030cfd9dc152e8028aa79f3187928"
+    },
+    {
+      "path": "P2-USDC-INDEPENDENT-AUDIT-REPORT.md",
+      "sha256": "f331de22899a7017d6a8698fae997d85296fc0840abd5ebdb5bbc42be6df54ff"
+    },
+    {
+      "path": "P2-USDC-INDEPENDENT-AUDIT-FOLLOWUP.md",
+      "sha256": "c3f5196123e1a36b8b4e822ca0e690f469e0e88b35bef43f6f49735ac3f0c01b"
+    },
+    {
+      "path": "P2-ASSET-ARCHITECTURE.md",
+      "sha256": "e3323c1c31894de6ea2d81246822960c6970075dd763c2be3711966a71971ff0"
+    },
+    {
+      "path": "TODO.md",
+      "sha256": "a9a54cb3d98d2a21375886d3df523944737bbbc46c33388ab875cf0feaccced2"
+    },
+    {
+      "path": "TESTNET-E2E-STATUS.md",
+      "sha256": "3a54d664d8388b6bede38708deba3456e1340c166bdfb9ad2b18a300d1cd64d6"
+    },
+    {
+      "path": "contracts/lcp-core/src/contract.rs",
+      "sha256": "aa2cf07e8e8b1782a20be576fff19771de2b498560563fe444d2878eb7581b28"
+    },
+    {
+      "path": "contracts/lcp-core/src/models.rs",
+      "sha256": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603"
+    },
+    {
+      "path": "contracts/lcp-core/Cargo.toml",
+      "sha256": "db5377ddaecf04182ed6838b76a837d459e45d579544826d837b9b60b3a25c22"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "93037e60b51cc4ef4b8e62e4bb0580ac88bbd9b82fd29dca54337bbe61091ab7"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "a577d52d1783060a64b00e9a6acb9f30078ee81309d480cffd8e2bd3eadb367d"
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/run.mjs",
+      "sha256": "535db5cec8e9a4bc9f6281067f6d35a6ae2dc70bcfda28be438e7a5a81f32038"
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/README.md",
+      "sha256": "bd22206bf2486c4e0635ac84546442d1741da622c29f4aae57428c3d24c1e481"
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/package.json",
+      "sha256": "d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548"
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/package-lock.json",
+      "sha256": "c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e"
+    }
+  ]
+}

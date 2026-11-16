@@ -1,0 +1,108 @@
+   Compiling lcp-core v0.1.0 (/tmp/lcp-recovery-audit-source/contracts/lcp-core)
+warning: use of deprecated function `near_sdk::test_utils::testing_env_with_promise_results`: Use `testing_env!` macro to initialize with promise results
+    --> contracts/lcp-core/src/contract.rs:6585:9
+     |
+6585 |         testing_env_with_promise_results(context_at(accounts(0), 0, NOW_NS), PromiseResult::Failed);
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `near_sdk::test_utils::testing_env_with_promise_results`: Use `testing_env!` macro to initialize with promise results
+    --> contracts/lcp-core/src/contract.rs:6595:9
+     |
+6595 |         testing_env_with_promise_results(
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `lcp-core` (lib test) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 46.64s
+     Running unittests src/lib.rs (target/debug/build/lcp-core/2f11059b6fe784ee/out/lcp_core-2f11059b6fe784ee)
+
+running 79 tests
+test contract::tests::beneficiary_can_voluntarily_close_commitment_with_eligible_tranche ... ok
+test contract::tests::bounded_authority_action_enforces_per_action_limit - should panic ... ok
+test contract::tests::bounded_authority_action_is_blocked_by_pending_evaluation - should panic ... ok
+test contract::tests::callback_at_timeout_boundary_does_not_accept_a_verdict ... ok
+test contract::tests::bounded_authority_action_requires_claim_eligibility_and_consumes_grant_limits ... ok
+test contract::tests::bounded_authority_grant_cannot_execute_again_while_previous_action_settles - should panic ... ok
+test contract::tests::challenge_completion_timestamp_slot_is_reserved_and_reused ... ok
+test contract::tests::challenge_timeout_is_applied_at_the_exact_resolution_deadline ... ok
+test contract::tests::challenge_timeout_restores_the_remaining_claim_window ... ok
+test contract::tests::claims_reject_a_settled_epoch_and_insufficient_free_escrow ... ok
+test contract::tests::claim_eligibility_opens_at_the_exact_challenge_window_deadline ... ok
+test contract::tests::commitment_creation_rejects_arbiter_matching_beneficiary - should panic ... ok
+test contract::tests::commitment_creation_rejects_arbiter_matching_maintainer - should panic ... ok
+test contract::tests::commitment_creation_rejects_arbiter_matching_sponsor - should panic ... ok
+test contract::tests::claims_reject_stale_health_and_active_challenges ... ok
+test contract::tests::duplicate_unused_operations_refund_is_blocked_while_transfer_is_pending - should panic ... ok
+test contract::tests::evidence_older_than_source_lag_is_rejected - should panic ... ok
+test contract::tests::compliant_evaluation_recovers_breach_only_when_policy_allows_it ... ok
+test contract::tests::failed_outlayer_promise_does_not_extend_compliant_evidence ... ok
+test contract::tests::expired_service_report_can_be_reclaimed_by_any_account ... ok
+test contract::tests::failed_excess_storage_refund_can_be_retried_from_credited_balance ... ok
+test contract::tests::failed_unused_operations_refund_restores_sponsor_budget ... ok
+test contract::tests::fully_funded_usdc_commitment_can_activate_with_near_operations_budget ... ok
+test contract::tests::future_evidence_timestamp_is_rejected - should panic ... ok
+test contract::tests::callback_rejects_each_changed_request_binding ... ok
+test contract::tests::failed_tranche_transfer_restores_eligibility_and_retry_pays_once ... ok
+test contract::tests::inconclusive_service_evaluation_is_recorded_without_changing_health_clocks ... ok
+test contract::tests::mismatched_outlayer_callback_is_rejected_and_releases_pending_lock ... ok
+test contract::tests::malformed_outlayer_output_is_rejected_without_extending_evidence ... ok
+test contract::tests::invalidated_challenge_clears_evidence_and_starts_negative_period ... ok
+test contract::tests::outlayer_request_pins_policy_and_routes_refund_to_sponsor ... ok
+test contract::tests::null_outlayer_json_result_is_failed_and_preserves_compliant_evidence ... ok
+test contract::tests::non_arbiter_cannot_resolve_a_challenge - should panic ... ok
+test contract::tests::non_sponsor_cannot_refund_unused_operations - should panic ... ok
+test contract::tests::recovery_review_missing_entire_settlement_sidecar_consumes_token_id_as_near ... ok
+test contract::tests::recovery_review_zero_results_callback_releases_pending ... ok
+test contract::tests::refund_callback_reconciles_success_and_failure_without_double_refund ... ok
+test contract::tests::repeated_evidence_timestamp_is_rejected_even_within_source_lag - should panic ... ok
+test contract::tests::repeated_noncompliant_result_does_not_extend_the_original_grace_period ... ok
+test contract::tests::recovery_review_conflicting_late_callback_cannot_settle_retry ... ok
+test contract::tests::service_availability_commitment_keeps_v3_policy_in_a_sidecar ... ok
+test contract::tests::service_evaluation_request_pins_reports_and_reserves_callback_summary ... ok
+test contract::tests::revoked_authority_grant_cannot_execute - should panic ... ok
+test contract::tests::service_policy_amendment_can_be_cancelled_or_expired_without_changing_policy ... ok
+test contract::tests::service_policy_amendment_requires_each_party_and_resets_evidence_clock ... ok
+test contract::tests::service_report_inbox_rejects_exact_replay - should panic ... ok
+test contract::tests::service_report_inbox_rejects_oversized_reports - should panic ... ok
+test contract::tests::sponsor_cannot_close_commitment_with_eligible_tranche - should panic ... ok
+test contract::tests::service_report_inbox_reclaim_and_evaluation_credit_original_operators ... ok
+test contract::tests::successful_excess_storage_refund_does_not_create_a_withdrawable_credit ... ok
+test contract::tests::stale_outlayer_callback_does_not_clear_a_newer_pending_request ... ok
+test contract::tests::transaction_authenticated_reports_cannot_bypass_inbox_provenance - should panic ... ok
+test contract::tests::transaction_authenticated_service_commitment_fits_conservative_storage_deposit ... ok
+test contract::tests::transfer_storage_deposit_reserves_one_yocto_only_for_nep141 ... ok
+test contract::tests::transaction_authenticated_service_commitment_rejects_old_point_zero_one_storage_default - should panic ... ok
+test contract::tests::service_report_inbox_accepts_wallet_bound_report_and_refunds_replacement ... ok
+test contract::tests::unused_operations_cannot_be_refunded_before_commitment_closure - should panic ... ok
+test contract::tests::transaction_authenticated_inbox_binds_operator_transaction_to_evaluation ... ok
+test contract::tests::upheld_challenge_preserves_evidence_and_releases_claim_block ... ok
+test contract::tests::usdc_claim_remains_reserved_if_the_callback_receipt_does_not_run ... ok
+test contract::tests::unused_operations_refund_returns_only_unreserved_funds_and_settles_once ... ok
+test contract::tests::usdc_commitment_cannot_activate_before_full_token_escrow - should panic ... ok
+test contract::tests::usdc_claim_attaches_one_yocto_and_failed_transfer_is_retryable ... ok
+test contract::tests::usdc_funding_rejects_wrong_token_and_sender_then_caps_and_returns_excess ... ok
+test contract::tests::usdc_service_commitment_pins_asset_and_raw_tranche_in_sidecar_and_digest ... ok
+test contract::tests::usdc_service_commitment_rejects_a_different_testnet_token_account - should panic ... ok
+test contract::tests::usdc_concurrent_funding_receipt_orders_preserve_the_aggregate_cap ... ok
+test temporal::tests::active_commitment_without_activation_time_is_rejected ... ok
+test temporal::tests::active_timestamp_arithmetic_overflow_is_rejected ... ok
+test temporal::tests::draft_and_closed_lifecycles_override_evidence_state ... ok
+test temporal::tests::evidence_expiry_and_grace_transition_at_exact_boundaries ... ok
+test temporal::tests::initial_evidence_window_transitions_at_exact_boundaries ... ok
+test temporal::tests::invalid_temporal_policy_is_rejected_before_health_is_derived ... ok
+test temporal::tests::latched_breach_cannot_recover_from_new_observation ... ok
+test temporal::tests::negative_period_breaches_at_exact_grace_deadline_and_recovery_clears_it ... ok
+test temporal::tests::unresolved_negative_period_overrides_a_compliant_observation ... ok
+test contract::tests::usdc_residual_refund_attaches_one_yocto_and_reconciles_retry ... ok
+test contract::tests::valid_outlayer_callback_accepts_pending_evaluation_and_ignores_replay ... ok
+test contract::tests::usdc_funding_receipt_order_stress_never_exceeds_the_aggregate_cap ... ok
+
+test result: ok. 79 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.20s
+
+   Doc-tests lcp_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

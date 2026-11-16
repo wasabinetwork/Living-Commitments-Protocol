@@ -1,0 +1,26 @@
+   Compiling lcp-core v0.1.0 (/tmp/lcp-recovery-audit-source/contracts/lcp-core)
+warning: use of deprecated function `near_sdk::test_utils::testing_env_with_promise_results`: Use `testing_env!` macro to initialize with promise results
+    --> contracts/lcp-core/src/contract.rs:6585:9
+     |
+6585 |         testing_env_with_promise_results(context_at(accounts(0), 0, NOW_NS), PromiseResult::Failed);
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `near_sdk::test_utils::testing_env_with_promise_results`: Use `testing_env!` macro to initialize with promise results
+    --> contracts/lcp-core/src/contract.rs:6595:9
+     |
+6595 |         testing_env_with_promise_results(
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `lcp-core` (lib test) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 41.12s
+     Running unittests src/lib.rs (target/debug/build/lcp-core/2f11059b6fe784ee/out/lcp_core-2f11059b6fe784ee)
+
+running 3 tests
+test contract::tests::recovery_review_missing_entire_settlement_sidecar_consumes_token_id_as_near ... ok
+test contract::tests::recovery_review_zero_results_callback_releases_pending ... ok
+test contract::tests::recovery_review_conflicting_late_callback_cannot_settle_retry ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 0.26s
+

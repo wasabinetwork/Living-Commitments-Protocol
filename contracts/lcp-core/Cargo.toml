@@ -16,11 +16,14 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 testnet-transfer-failure-fixture = []
+sandbox-callback-fixture = []
+usdc-receipt-recovery = ["dep:ed25519-dalek"]
 
 [dependencies]
 base64.workspace = true
 near-sdk.workspace = true
 bs58.workspace = true
+ed25519-dalek = { workspace = true, optional = true }
 
 [dev-dependencies]
 near-sdk = { workspace = true, features = ["unit-testing"] }

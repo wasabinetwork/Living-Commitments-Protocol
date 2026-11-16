@@ -1,0 +1,268 @@
+{
+  "package": "P2 USDC receipt-recovery implementation follow-up review",
+  "created_date": "2026-11-16",
+  "baseline_git_commit": "f4c4fccf5f6d0a2d268425e9722eaeea2fd49bed",
+  "branch": "main",
+  "working_tree_dirty": true,
+  "candidate_committed": false,
+  "feature": "usdc-receipt-recovery (disabled by default)",
+  "scope": "complete Cargo workspace; source-level remediation follow-up; no VM/Sandbox acceptance or network deployment",
+  "input_count": 51,
+  "inputs": [
+    {
+      "path": ".cargo/audit.toml",
+      "sha256": "a709332b9c042f3714ecfb5a1c4d111017e8d1fa29140740bbbb3a6e258f52ce",
+      "size_bytes": 382
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "877a0c3370baecb3d4e8e8d27cc8edd1f46ffbd519e222e75c3168ae7a328eb2",
+      "size_bytes": 67157
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "93037e60b51cc4ef4b8e62e4bb0580ac88bbd9b82fd29dca54337bbe61091ab7",
+      "size_bytes": 505
+    },
+    {
+      "path": "P2-ASSET-ARCHITECTURE.md",
+      "sha256": "5fdca22ba528ec54c44e96f0260076b00020d34c26d5fb009bf86aed3b45298a",
+      "size_bytes": 13710
+    },
+    {
+      "path": "P2-USDC-INDEPENDENT-AUDIT-FOLLOWUP.md",
+      "sha256": "6680cf5e65bb27c8f69e45572ef12d7a526bb04ef8057c97943b9f70eb594e04",
+      "size_bytes": 11461
+    },
+    {
+      "path": "P2-USDC-INDEPENDENT-AUDIT-REPORT.md",
+      "sha256": "f331de22899a7017d6a8698fae997d85296fc0840abd5ebdb5bbc42be6df54ff",
+      "size_bytes": 15371
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-AUDIT.md",
+      "sha256": "e8658be9c3afd95416313bd309a6e8c61ec030cfd9dc152e8028aa79f3187928",
+      "size_bytes": 17097
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-DESIGN.md",
+      "sha256": "76d41c6c5553567f74a4fc9650fd838849ccfd25ff5bda433c6f4d8d0de8ad4d",
+      "size_bytes": 52613
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-FOLLOWUP-REVIEW.md",
+      "sha256": "016e7819145a4a529b0b41e3f662f01391f21634fe3c39890abf4f7ac4b5c80c",
+      "size_bytes": 26028
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-IMPLEMENTATION-REVIEW.md",
+      "sha256": "dcaa951d7462794bd535bbae1c76e2d09cbc4d9ba52acb1876d26eb9c4600d55",
+      "size_bytes": 28352
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md",
+      "sha256": "3252e09897f2571feba3b17ca0619fbe9986995289f8082802ca924bca85c4ed",
+      "size_bytes": 9973
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-SPEC-V4-REVIEW-BRIEF.md",
+      "sha256": "f46a8a4e03ec39d133b36de13aca4de30216e3fd95eca217c3fabb9adf52f5e3",
+      "size_bytes": 4215
+    },
+    {
+      "path": "P2-USDC-RECEIPT-RECOVERY-SPEC-V4-REVIEW.md",
+      "sha256": "78edae35e7db1536f6ea3bf1eb780298aea3ff66c4b12d665c392ce0b075eea1",
+      "size_bytes": 23277
+    },
+    {
+      "path": "README.md",
+      "sha256": "e2bd03c067f03f227dd92ddeade070f9800c15b6b8b0202c04c648ee1740df0d",
+      "size_bytes": 6317
+    },
+    {
+      "path": "TESTNET-E2E-STATUS.md",
+      "sha256": "3a54d664d8388b6bede38708deba3456e1340c166bdfb9ad2b18a300d1cd64d6",
+      "size_bytes": 58378
+    },
+    {
+      "path": "TODO.md",
+      "sha256": "8e178820c4a2a440227cd57c59400a129364b28fbd88f5a305d9892a94d3496c",
+      "size_bytes": 97459
+    },
+    {
+      "path": "contracts/bounded-payout-adapter/Cargo.toml",
+      "sha256": "c56bd8409f6527103384f475571e340c32535e8889855870ce0998b7067bb854",
+      "size_bytes": 671
+    },
+    {
+      "path": "contracts/bounded-payout-adapter/README.md",
+      "sha256": "fde3190e76d487e75706c0cda626fe319f20a750996bb0b88fe1dcf174dc9151",
+      "size_bytes": 2485
+    },
+    {
+      "path": "contracts/bounded-payout-adapter/src/lib.rs",
+      "sha256": "c4ac2ec12731d6619e0c0e7cbf95e9da7bc063518cf2fe9a74dc9cf28b1d7659",
+      "size_bytes": 12969
+    },
+    {
+      "path": "contracts/lcp-core/Cargo.toml",
+      "sha256": "d5c6dc5edb37a46ed7baf522577335a2c02eef0fe0868623d9e95f5cc741f7da",
+      "size_bytes": 879
+    },
+    {
+      "path": "contracts/lcp-core/src/contract.rs",
+      "sha256": "d97b907f02ad1ed40a60727bee291a75674d9d1e1fbf0082e1fce64350010a4c",
+      "size_bytes": 414660
+    },
+    {
+      "path": "contracts/lcp-core/src/lib.rs",
+      "sha256": "d9aae106409779a46c58268fa8989dc03d3d3b4be4a5bf50662f5eb3f5031323",
+      "size_bytes": 1507
+    },
+    {
+      "path": "contracts/lcp-core/src/models.rs",
+      "sha256": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603",
+      "size_bytes": 29051
+    },
+    {
+      "path": "contracts/lcp-core/src/native_cash.rs",
+      "sha256": "48d5a841392e9d87e51fc286e4a1b95d1c382c01d0484a5518e7623ef1f4e114",
+      "size_bytes": 15511
+    },
+    {
+      "path": "contracts/lcp-core/src/receipt_recovery.rs",
+      "sha256": "dd1417d3eea017878e9a0e07a0f45b080c3ac8c15439bcd4c7afbaf636277ddb",
+      "size_bytes": 41778
+    },
+    {
+      "path": "contracts/lcp-core/src/recovery_accounting.rs",
+      "sha256": "f003b9ea658cf64159bf6d88400bfb0cefe4128a4c259cb626f8a36b70b01ac6",
+      "size_bytes": 69435
+    },
+    {
+      "path": "contracts/lcp-core/src/recovery_config.rs",
+      "sha256": "4fb1c6a3fb89cc28c9d2a886344caffa34ebffb6511e026cd1c7c6764a3ebae5",
+      "size_bytes": 46746
+    },
+    {
+      "path": "contracts/lcp-core/src/temporal.rs",
+      "sha256": "e0eee14e23b1ce500a7e18b1683f5578db26fefaba617cdda710e8caec427a7d",
+      "size_bytes": 12649
+    },
+    {
+      "path": "contracts/sandbox-mock-ft/Cargo.toml",
+      "sha256": "e29062846a172e88c4b58aabfb4b8f33333535a0472687ac02256aecfdd5c3aa",
+      "size_bytes": 223
+    },
+    {
+      "path": "contracts/sandbox-mock-ft/src/lib.rs",
+      "sha256": "1e8d9a239aa01fb6c005bc3bfe11d1c96ce6da7b3016585c3bff403760087ffe",
+      "size_bytes": 2273
+    },
+    {
+      "path": "evaluators/maintenance-heartbeat/Cargo.toml",
+      "sha256": "b132402d10043ec1bff4f4e3c1ed9eb51a2e9c6931429b2744f1aaae4169971e",
+      "size_bytes": 360
+    },
+    {
+      "path": "evaluators/maintenance-heartbeat/src/main.rs",
+      "sha256": "90464c213d1bae1e4a9ccd25b5a5191f2d33e91a633880555aab73a32caeecb1",
+      "size_bytes": 13531
+    },
+    {
+      "path": "evaluators/maintenance-heartbeat/tests/cli.rs",
+      "sha256": "4c6d0347a015279b6e164e16e7edba93a6ece1fdad418866557ddbb8622b7269",
+      "size_bytes": 9448
+    },
+    {
+      "path": "evaluators/service-availability/Cargo.toml",
+      "sha256": "33076ca19a583ef02627b12a5fee7c0a9ce0abd6f9c466b34966bdac1b1db1ca",
+      "size_bytes": 378
+    },
+    {
+      "path": "evaluators/service-availability/README.md",
+      "sha256": "b96e7ea125c75d6861af660c5107d17f555a7fec192584a26285db83d4822d84",
+      "size_bytes": 10596
+    },
+    {
+      "path": "evaluators/service-availability/probe.mjs",
+      "sha256": "bf18b0cf44d12c655286bb9ae3fc369d0a526fa47cc11a8dc5b5ba7e33b4bc40",
+      "size_bytes": 18598
+    },
+    {
+      "path": "evaluators/service-availability/src/main.rs",
+      "sha256": "30260e39f7df3454c8a01d1c784cf44248c54797b7e1382d72fe95a23d118975",
+      "size_bytes": 35241
+    },
+    {
+      "path": "evaluators/service-availability/test/probe.test.mjs",
+      "sha256": "1bb852ffbaf0e278031b8f065edaeb059e18743f3a08a0eefbc1135a414c2ab9",
+      "size_bytes": 5012
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "8ea81d2f0f2b68bec4abdd4419023c303a596abada7da66d1366191219a61c2d",
+      "size_bytes": 158
+    },
+    {
+      "path": "tests/receipt-recovery-vectors/README.md",
+      "sha256": "ccc3a486b01ff4646de63b4b8292de72ce289fde24fce145bfe5a871fe7ddd88",
+      "size_bytes": 2725
+    },
+    {
+      "path": "tests/receipt-recovery-vectors/generate.mjs",
+      "sha256": "817269beb3346bdd899ae3e581eb4d3c50da28a11c8261da95754c5d6ec712a6",
+      "size_bytes": 11029
+    },
+    {
+      "path": "tests/receipt-recovery-vectors/golden-vectors.json",
+      "sha256": "5236c3288001d06c96166f8b539777c489fc3e5b1ebd01123bdb3794fbcd76ac",
+      "size_bytes": 20291
+    },
+    {
+      "path": "tests/receipt-recovery-vectors/rust/Cargo.lock",
+      "sha256": "8a24ec41dfb2a2c1fdac5d453e140b6e06330162c18235c8060c965268523731",
+      "size_bytes": 14149
+    },
+    {
+      "path": "tests/receipt-recovery-vectors/rust/Cargo.toml",
+      "sha256": "0d1211bcaa0b528322ae0d7dd324b9f025ac05e85a266a62d93d2f73f958cd67",
+      "size_bytes": 290
+    },
+    {
+      "path": "tests/receipt-recovery-vectors/rust/src/main.rs",
+      "sha256": "874b1a8ed823df8f0e8ef40c76c824dab2dab37b99729ea13a8460706fa493b1",
+      "size_bytes": 49840
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/README.md",
+      "sha256": "e73fa16ec6e726e425f987434a65be96b4eef5a2bbd340f41d4f4030675f3edb",
+      "size_bytes": 7709
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/package-lock.json",
+      "sha256": "c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e",
+      "size_bytes": 18624
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/package.json",
+      "sha256": "d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548",
+      "size_bytes": 217
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.json",
+      "sha256": "b86147458ee7700a3819ecb5dd21c8514b0bcbe912e6501bf42a92d83030aabf",
+      "size_bytes": 304245
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.sha256",
+      "sha256": "e0fbcdfc4718b9cb16d867f8eafcaf073d20f590a11d2b3eb79e3d908d6066d5",
+      "size_bytes": 1109
+    },
+    {
+      "path": "tests/sandbox-usdc-callbacks/run.mjs",
+      "sha256": "02063c4938973d49e7b930f0e569ab40301c21600243d68d524faa9e42321090",
+      "size_bytes": 70473
+    }
+  ]
+}

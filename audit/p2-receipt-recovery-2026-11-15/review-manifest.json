@@ -1,0 +1,16 @@
+{
+  "date": "2026-11-15",
+  "reviewer": "OpenAI Codex",
+  "working_tree_head": "f4c4fccf5f6d0a2d268425e9722eaeea2fd49bed",
+  "rebuild_commit": "e9074ddced4be9dce4dd4c1061909f7869054cf1",
+  "sha256": {
+    "P2-USDC-RECEIPT-RECOVERY-DESIGN.md": "b16519cec6fe71de21cd54a1d8d91d55dfc860e23fbdf4d76be04cdf13d6fb7d",
+    "P2-USDC-INDEPENDENT-AUDIT-REPORT.md": "f331de22899a7017d6a8698fae997d85296fc0840abd5ebdb5bbc42be6df54ff",
+    "P2-USDC-INDEPENDENT-AUDIT-FOLLOWUP.md": "62ddd82ea54806f77167b5f99254c266303d19c6ca032a130e22cd39bb4fd2af",
+    "TESTING.md": "5d39fdb8335b22fb9024f307b5d67474baefd959de09329476a5d6025f59f5a3",
+    "contracts/lcp-core/src/contract.rs": "e0dfee822840836b0fb5f4aa943e11454d36e63cd3aebc3869edd52bcebbcc7c",
+    "contracts/lcp-core/src/models.rs": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603"
+  },
+  "test_method": "Copy current contract.rs/models.rs to exported HEAD; add callback-probes.rs inside existing tests module. No implementation edits. Unit tests bypass near_bindgen private wrappers deliberately.",
+  "blockchain_transactions_submitted": false
+}

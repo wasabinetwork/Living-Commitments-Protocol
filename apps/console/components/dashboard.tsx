@@ -206,6 +206,8 @@ export function Dashboard() {
   const [registeringTokenAccount, setRegisteringTokenAccount] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [liveSyncError, setLiveSyncError] = useState<string | null>(null);
+  const [chainUpdateAnnouncement, setChainUpdateAnnouncement] = useState("");
+  const [walletAccountAnnouncement, setWalletAccountAnnouncement] = useState("");
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const currentCommitmentId = data?.commitment.id ?? null;
   dataRef.current = data;
@@ -213,9 +215,17 @@ export function Dashboard() {
 
   const publishWalletAccount = useCallback((nextAccountId: string | null) => {
     if (walletAccountIdRef.current === nextAccountId) return;
+    const previousAccountId = walletAccountIdRef.current;
     walletAccountIdRef.current = nextAccountId;
     walletAccountVersionRef.current += 1;
     setAccountId(nextAccountId);
+    if (nextAccountId && previousAccountId) {
+      setWalletAccountAnnouncement(`Wallet account changed from ${previousAccountId} to ${nextAccountId}.`);
+    } else if (nextAccountId) {
+      setWalletAccountAnnouncement(`Wallet connected as ${nextAccountId}.`);
+    } else if (previousAccountId) {
+      setWalletAccountAnnouncement("Wallet disconnected.");
+    }
   }, []);
 
   const ensureConnector = useCallback(async (): Promise<NearConnectorPort> => {
@@ -472,6 +482,7 @@ export function Dashboard() {
     const quiet = options.quiet === true;
     const normalizedId = id.trim();
     const keepCurrentData = data?.commitment.id === normalizedId;
+    const previousData = dataRef.current;
     if (!CONTRACT_ID) {
       const message = "Set NEXT_PUBLIC_LCP_CONTRACT_ID in apps/console/.env.local to connect the LCP Console to a deployed contract.";
       if (quiet) setLiveSyncError(message);
@@ -485,6 +496,7 @@ export function Dashboard() {
 
     if (!quiet) {
       setCommitmentId(normalizedId);
+      setChainUpdateAnnouncement("");
       setLoading(true);
       if (!keepCurrentData) setData(null);
       setError(null);
@@ -561,6 +573,21 @@ export function Dashboard() {
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
       setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, amendmentRejectionSupported, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      if (quiet && previousData?.commitment.id === normalizedId) {
+        const updates: string[] = [];
+        if (previousData.commitment.effective_health !== commitment.effective_health) {
+          updates.push(`Health changed from ${healthLabel(previousData.commitment.effective_health)} to ${healthLabel(commitment.effective_health)}.`);
+        }
+        if (previousData.eligibility?.eligible !== eligibility?.eligible) {
+          updates.push(eligibility?.eligible ? "A tranche is now eligible to claim." : "A tranche is no longer eligible to claim.");
+        }
+        const previousEvaluation = previousData.evaluation;
+        if (evaluation && evaluation.status !== "Pending"
+          && (!previousEvaluation || previousEvaluation.evaluation_id !== evaluation.evaluation_id || previousEvaluation.status !== evaluation.status)) {
+          updates.push(`Evaluation ${evaluation.evaluation_id} is ${evaluation.status.toLowerCase()}: ${evaluationVerdictLabel(evaluation)}.`);
+        }
+        if (updates.length > 0) setChainUpdateAnnouncement(updates.join(" "));
+      }
       setLiveSyncError(null);
       return true;
     } catch (cause) {
@@ -1817,6 +1844,8 @@ export function Dashboard() {
 
         {error && <div className="notice notice-error" role="alert"><span className="notice-icon">!</span>{error}</div>}
         {actionMessage && <div className="notice notice-success" role="status"><span className="notice-icon">✓</span>{actionMessage}</div>}
+        {chainUpdateAnnouncement && <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{chainUpdateAnnouncement}</span>}
+        {walletAccountAnnouncement && <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">{walletAccountAnnouncement}</span>}
 
         {data ? (
           <div className="record-view" ref={recordViewRef}>
@@ -2617,7 +2646,7 @@ function HealthTimeline({ data, busy, syncError, onRefresh }: { data: Commitment
           <span
             className={`timeline-sync${syncError ? " timeline-sync-error" : ""}`}
             role="status"
-            aria-live="polite"
+            aria-live={syncError ? "polite" : "off"}
             title={syncError ?? "Commitment state checks automatically every 30 seconds while this page is visible."}
           >
             {syncError

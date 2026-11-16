@@ -10,6 +10,7 @@ use near_sdk::{
     BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise, PromiseError, PromiseOrValue,
 };
 
+use crate::native_cash;
 use crate::{
     effective_health,
     models::{
@@ -70,10 +71,17 @@ const SERVICE_REPORT_STORAGE_OVERHEAD_BYTES: u64 = 256;
 const AUTHORITY_ADAPTER_GAS_TGAS: u64 = 25;
 const AUTHORITY_ADAPTER_CALLBACK_GAS_TGAS: u64 = 20;
 const FT_TRANSFER_GAS_TGAS: u64 = 25;
+// Testnet USDC callback receipts on 2026-11-15 used about 3.00-3.25 Tgas for the
+// sampled refund, failed-claim, and successful-claim paths. These are not worst-case
+// measurements; keep 20 Tgas until callback stress and forced-OOG testing is complete.
+// If this callback fails, do not release its reservation by elapsed time: the token transfer
+// may already have succeeded, and NEP-141 offers no generic receipt-proof recovery method.
 const FT_CALLBACK_GAS_TGAS: u64 = 20;
 const FT_TRANSFER_DEPOSIT_YOCTO: u128 = 1;
 const SETTLEMENT_STATE_PREFIX: &[u8] = b"lcp:settlement-state:v1:";
 const SETTLEMENT_TRANSFER_PREFIX: &[u8] = b"lcp:settlement-transfer:v1:";
+const SETTLEMENT_TRANSFER_AMOUNT_V2_PREFIX: &[u8] = b"lcp:settlement-transfer-amount:v2:";
+const SETTLEMENT_TRANSFER_INTENT_V2_PREFIX: &[u8] = b"lcp:settlement-transfer-intent:v2:";
 const NEAR_MAINNET_USDC_ACCOUNT: &str =
     "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
 const NEAR_TESTNET_USDC_ACCOUNT: &str =
@@ -125,6 +133,20 @@ struct SettlementTransferAmount {
     amount_raw: u128,
 }
 
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+struct SettlementTransferIntentV2 {
+    transfer_id: u64,
+    commitment_id: u64,
+    kind: TransferKind,
+    epoch: Option<u32>,
+    asset: SettlementAsset,
+    recipient: AccountId,
+    amount_raw: u128,
+    chain_id: String,
+    contract_id: AccountId,
+}
+
 #[derive(Clone, Copy)]
 struct EscrowAmounts {
     funded: u128,
@@ -157,8 +179,24 @@ enum StorageKey {
     EvaluationRecords,
     Tranches,
     PendingTransfers,
-    #[cfg(feature = "testnet-transfer-failure-fixture")]
+    #[cfg(any(
+        feature = "testnet-transfer-failure-fixture",
+        feature = "sandbox-callback-fixture"
+    ))]
     TestTransferFailureRecipients,
+    #[cfg(feature = "sandbox-callback-fixture")]
+    SandboxStorageRefundRecipients,
+}
+
+#[cfg(any(
+    feature = "testnet-transfer-failure-fixture",
+    feature = "sandbox-callback-fixture"
+))]
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+struct TestTransferRecipient {
+    recipient: AccountId,
+    armed: bool,
 }
 
 #[near(contract_state)]
@@ -174,14 +212,29 @@ pub struct Contract {
     evaluation_records: LookupMap<(CommitmentId, u64), EvaluationRecord>,
     tranches: LookupMap<(CommitmentId, u32), Tranche>,
     pending_transfers: LookupMap<u64, PendingTransfer>,
-    #[cfg(feature = "testnet-transfer-failure-fixture")]
-    test_transfer_failure_recipients: LookupMap<CommitmentId, AccountId>,
+    #[cfg(any(
+        feature = "testnet-transfer-failure-fixture",
+        feature = "sandbox-callback-fixture"
+    ))]
+    test_transfer_failure_recipients: LookupMap<CommitmentId, TestTransferRecipient>,
+    #[cfg(feature = "sandbox-callback-fixture")]
+    sandbox_storage_refund_recipients: LookupMap<AccountId, TestTransferRecipient>,
+    #[cfg(feature = "sandbox-callback-fixture")]
+    sandbox_storage_refund_callback_gas_tgas: Option<u64>,
+    /// Artificial recovery-credit liability used only to place the isolated
+    /// Sandbox ledger at a measured free-cash boundary.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    sandbox_test_liability_yocto: u128,
 }
 
 #[near]
 impl Contract {
     #[init]
     pub fn new() -> Self {
+        native_cash::initialize_fresh();
+        crate::recovery_accounting::initialize_fresh();
+        #[cfg(feature = "usdc-receipt-recovery")]
+        crate::recovery_config::initialize_bootstrap_authority(&env::predecessor_account_id());
         Self {
             next_commitment_id: 0,
             next_challenge_id: 0,
@@ -193,11 +246,1346 @@ impl Contract {
             evaluation_records: LookupMap::new(StorageKey::EvaluationRecords),
             tranches: LookupMap::new(StorageKey::Tranches),
             pending_transfers: LookupMap::new(StorageKey::PendingTransfers),
-            #[cfg(feature = "testnet-transfer-failure-fixture")]
+            #[cfg(any(
+                feature = "testnet-transfer-failure-fixture",
+                feature = "sandbox-callback-fixture"
+            ))]
             test_transfer_failure_recipients: LookupMap::new(
                 StorageKey::TestTransferFailureRecipients,
             ),
+            #[cfg(feature = "sandbox-callback-fixture")]
+            sandbox_storage_refund_recipients: LookupMap::new(
+                StorageKey::SandboxStorageRefundRecipients,
+            ),
+            #[cfg(feature = "sandbox-callback-fixture")]
+            sandbox_storage_refund_callback_gas_tgas: None,
+            #[cfg(feature = "sandbox-callback-fixture")]
+            sandbox_test_liability_yocto: 0,
         }
+    }
+
+    /// One-time setup for a dedicated fresh USDC recovery instance. Bootstrap
+    /// must precede all commitments, challenges, and transfers; the counters
+    /// fail closed if any business activity has already begun. The initializer
+    /// captured by `new` is the only account allowed to call this; its attached
+    /// NEAR is locked into the measured configuration storage reserve. Existing
+    /// deployments have no bootstrap authority and remain unconfigured.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[payable]
+    pub fn bootstrap_receipt_recovery(&mut self, args: crate::RecoveryBootstrapArgs) {
+        require!(
+            self.next_commitment_id == 0
+                && self.next_challenge_id == 0
+                && self.next_transfer_id == 0,
+            "receipt recovery must be bootstrapped before commitments or transfers are created"
+        );
+        crate::recovery_config::bootstrap(args);
+    }
+
+    /// Public recovery configuration. Committee keys and network hashes are
+    /// intentionally public; a missing value means recovery is not bootstrapped.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn receipt_recovery_configuration(&self) -> Option<crate::ReceiptRecoveryConfigViewV1> {
+        crate::recovery_config::configuration_view()
+    }
+
+    /// Returns the canonical intent and payer metadata for a recovery-bound
+    /// NEP-141 transfer. The Base64 payload is the exact Borsh message signers
+    /// must bind their certificate to.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn receipt_recovery_intent(
+        &self,
+        transfer_id: U64,
+    ) -> Option<crate::ReceiptRecoveryIntentViewV1> {
+        crate::receipt_recovery::pending_intent_json_view(transfer_id.0)
+    }
+
+    /// Reads the retained keys for a pending transfer's pinned committee epoch.
+    /// An epoch already retired after reaching zero pending intents returns None.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn receipt_recovery_committee(&self, epoch: u32) -> Option<Vec<String>> {
+        crate::recovery_config::committee_for_epoch(epoch)
+    }
+
+    /// Returns the accrued, pending, and withdrawable NEAR storage credit
+    /// associated with an exact recovery credit ID.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn receipt_recovery_credit(
+        &self,
+        credit_id_hex: String,
+    ) -> Option<crate::ReceiptRecoveryCreditViewV1> {
+        let credit_id = crate::recovery_config::parse_credit_id(&credit_id_hex);
+        crate::recovery_accounting::persisted_refund_credit_view(&credit_id)
+    }
+
+    /// Settles one exact pending NEP-141 transfer from a canonical 4-of-5 or
+    /// 5-of-5 recovery certificate. Signers attest to receipt interpretation;
+    /// the contract still binds the certificate to its stored intent and epoch.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn recover_nep141_transfer(
+        &mut self,
+        transfer_id: U64,
+        certificate_base64: String,
+    ) -> bool {
+        require!(
+            env::attached_deposit().as_yoctonear() == 0,
+            "do not attach a deposit to recover a NEP-141 transfer"
+        );
+        let pending = crate::receipt_recovery::pending_intent(transfer_id.0)
+            .unwrap_or_else(|| env::panic_str("pending recovery intent does not exist"));
+        require!(
+            pending.terminal_outcome.is_none(),
+            "recovery intent has already been settled"
+        );
+        let committee =
+            crate::recovery_config::committee_keys_for_epoch(pending.intent.committee_epoch)
+                .unwrap_or_else(|| env::panic_str("pinned committee epoch is unavailable"));
+        let parsed = crate::receipt_recovery::parse_and_verify_envelope(
+            &certificate_base64,
+            &pending.intent,
+            pending.intent.committee_epoch,
+            &committee,
+        )
+        .unwrap_or_else(|message| env::panic_str(&message));
+        let outcome = parsed.certificate.outcome;
+        let Some(()) =
+            self.settle_token_transfer_outcome(transfer_id.0, outcome, parsed.certificate_digest)
+        else {
+            env::panic_str("recovery certificate no longer matches a pending transfer");
+        };
+        native_cash::assert_solvency();
+        true
+    }
+
+    /// Releases a terminal intent's storage bond to its preallocated payer
+    /// credit. Permissionless retry is safe after reserve revaluation.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn finalize_receipt_recovery_intent(&mut self, transfer_id: U64) -> bool {
+        require!(
+            env::attached_deposit().as_yoctonear() == 0,
+            "do not attach a deposit to finalize a receipt recovery intent"
+        );
+        let Some(pending) = crate::receipt_recovery::pending_intent(transfer_id.0) else {
+            return false;
+        };
+        if pending.terminal_outcome.is_none() {
+            return false;
+        }
+        let refund_credit_id =
+            crate::receipt_recovery::encode_lower_hex_32(&pending.refund_credit_id);
+        let finalized = crate::receipt_recovery::finalize_terminal_intent(transfer_id.0);
+        if finalized {
+            native_cash::assert_solvency();
+            emit_event(
+                "receipt_recovery_intent_finalized",
+                json!({
+                    "transfer_id": transfer_id.0.to_string(),
+                    "refund_credit_id": refund_credit_id,
+                }),
+            );
+        }
+        finalized
+    }
+
+    /// Records a 4-of-5 signed rotation proposal. The proposer funds the
+    /// measured pending/keyset/registry storage; its refundable portion is
+    /// credited only as those storage records are released.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[payable]
+    pub fn propose_receipt_recovery_rotation(
+        &mut self,
+        signed_proposal_base64: String,
+    ) -> crate::ReceiptRecoveryRotationViewV1 {
+        let result = crate::recovery_config::propose_rotation(&signed_proposal_base64);
+        emit_event(
+            "receipt_recovery_rotation_proposed",
+            json!({
+                "old_epoch": result.old_epoch,
+                "new_epoch": result.new_epoch,
+                "generation": result.proposal_generation.0.to_string(),
+                "proposal_digest": result.proposal_digest,
+                "proposal_refund_credit_id": result.proposal_refund_credit_id,
+                "epoch_refund_credit_id": result.epoch_refund_credit_id,
+                "proposer": result.proposer,
+                "activate_at_ns": result.activate_at_ns.0.to_string(),
+            }),
+        );
+        result
+    }
+
+    /// Cancels the exact pending rotation with a 4-of-5 current-epoch bundle.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn cancel_receipt_recovery_rotation(
+        &mut self,
+        signed_cancellation_base64: String,
+    ) -> crate::ReceiptRecoveryRotationViewV1 {
+        let result = crate::recovery_config::cancel_rotation(&signed_cancellation_base64);
+        emit_event(
+            "receipt_recovery_rotation_cancelled",
+            json!({
+                "old_epoch": result.old_epoch,
+                "new_epoch": result.new_epoch,
+                "generation": result.proposal_generation.0.to_string(),
+                "proposal_digest": result.proposal_digest,
+                "proposal_refund_credit_id": result.proposal_refund_credit_id,
+                "epoch_refund_credit_id": result.epoch_refund_credit_id,
+            }),
+        );
+        result
+    }
+
+    /// Permissionlessly activates a pending rotation after its seven-day delay.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn activate_receipt_recovery_rotation(&mut self) -> crate::ReceiptRecoveryRotationViewV1 {
+        let result = crate::recovery_config::activate_rotation();
+        emit_event(
+            "receipt_recovery_rotation_activated",
+            json!({
+                "old_epoch": result.old_epoch,
+                "new_epoch": result.new_epoch,
+                "generation": result.proposal_generation.0.to_string(),
+                "proposal_digest": result.proposal_digest,
+                "proposal_refund_credit_id": result.proposal_refund_credit_id,
+                "epoch_refund_credit_id": result.epoch_refund_credit_id,
+            }),
+        );
+        result
+    }
+
+    /// Retires an inactive epoch after its exact pending-intent count reaches
+    /// zero. Its proposer-funded keyset storage becomes a payer credit.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn retire_receipt_recovery_epoch(&mut self, epoch: u32) -> bool {
+        let retired = crate::recovery_config::retire_epoch(epoch);
+        if retired {
+            emit_event("receipt_recovery_epoch_retired", json!({ "epoch": epoch }));
+        }
+        retired
+    }
+
+    /// Withdraws an entire available receipt-recovery storage credit to its
+    /// original payer. The row records the exact amount and callback nonce.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn withdraw_receipt_recovery_credit(&mut self, credit_id_hex: String) {
+        require!(
+            env::attached_deposit().as_yoctonear() == 0,
+            "do not attach a deposit to withdraw a receipt recovery credit"
+        );
+        let credit_id = crate::recovery_config::parse_credit_id(&credit_id_hex);
+        let credit = crate::recovery_accounting::read_persisted_refund_credit(&credit_id)
+            .unwrap_or_else(|| env::panic_str("receipt recovery refund credit does not exist"));
+        let attempt = crate::recovery_accounting::begin_persisted_refund_withdrawal(credit_id);
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "credit_id_hex": credit_id_hex,
+            "amount": U128(attempt.amount_yocto),
+            "nonce": U64(attempt.nonce),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize recovery credit callback"));
+        let _withdrawal = Promise::new(credit.payer.clone())
+            .transfer(NearToken::from_yoctonear(attempt.amount_yocto))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_receipt_recovery_credit_withdrawal".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
+            ));
+        native_cash::assert_solvency();
+        emit_event(
+            "receipt_recovery_credit_withdrawal_requested",
+            json!({
+                "credit_id": credit_id_hex,
+                "payer": credit.payer,
+                "amount_yocto": attempt.amount_yocto.to_string(),
+                "nonce": attempt.nonce.to_string(),
+            }),
+        );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[private]
+    pub fn on_receipt_recovery_credit_withdrawal(
+        &mut self,
+        credit_id_hex: String,
+        amount: U128,
+        nonce: U64,
+    ) {
+        let credit_id = crate::recovery_config::parse_credit_id(&credit_id_hex);
+        use crate::recovery_accounting::PersistedCreditResolutionV1 as Resolution;
+        let resolution = crate::recovery_accounting::resolve_persisted_refund_withdrawal(
+            credit_id, amount.0, nonce.0,
+        );
+        let event = match resolution {
+            Resolution::PaidAndClosed => "receipt_recovery_credit_withdrawn",
+            Resolution::PaidAwaitingReserveMaintenance => {
+                "receipt_recovery_credit_paid_awaiting_reserve"
+            }
+            Resolution::Failed => "receipt_recovery_credit_withdrawal_failed",
+            Resolution::Ignored => {
+                env::log_str("ignored stale or unknown receipt-recovery credit callback");
+                return;
+            }
+        };
+        emit_event(
+            event,
+            json!({
+                "credit_id": credit_id_hex,
+                "amount_yocto": amount.0.to_string(),
+                "nonce": nonce.0.to_string(),
+            }),
+        );
+    }
+
+    /// Permissionlessly closes a settled zero-credit tombstone after reserve
+    /// revaluation is complete; this method never transfers value.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn finalize_receipt_recovery_credit(&mut self, credit_id_hex: String) -> bool {
+        require!(
+            env::attached_deposit().as_yoctonear() == 0,
+            "do not attach a deposit to finalize a receipt recovery credit"
+        );
+        let credit_id = crate::recovery_config::parse_credit_id(&credit_id_hex);
+        crate::recovery_accounting::finalize_settled_refund_credit(credit_id)
+    }
+
+    /// Adds a non-withdrawable NEAR top-up to the recovery storage reserve.
+    /// This remains available during a storage-price shortfall or revaluation.
+    #[payable]
+    pub fn top_up_recovery_storage_reserve(&mut self) {
+        crate::recovery_accounting::top_up_storage_reserve(env::attached_deposit().as_yoctonear());
+    }
+
+    /// Starts storage-bond revaluation after a NEAR storage byte-cost change.
+    /// Cash-sensitive actions remain paused until bounded batches complete.
+    pub fn begin_recovery_storage_revaluation(&mut self) -> bool {
+        require!(
+            env::attached_deposit().as_yoctonear() == 0,
+            "do not attach a deposit to storage revaluation"
+        );
+        crate::recovery_accounting::begin_storage_revaluation()
+    }
+
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    pub fn sandbox_mark_recovery_storage_price_stale(&mut self) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        crate::recovery_accounting::sandbox_mark_storage_price_stale();
+    }
+
+    /// Revalues at most 64 records. Pass the returned `next_record_index` to
+    /// continue; restart at zero if the storage byte cost changes mid-process.
+    pub fn revalue_recovery_storage_batch(
+        &mut self,
+        start_index: u32,
+        limit: u8,
+    ) -> crate::RevaluationBatchResult {
+        require!(
+            env::attached_deposit().as_yoctonear() == 0,
+            "do not attach a deposit to storage revaluation"
+        );
+        crate::recovery_accounting::revalue_storage_batch(start_index, limit)
+    }
+
+    #[cfg(any(
+        feature = "testnet-transfer-failure-fixture",
+        feature = "sandbox-callback-fixture"
+    ))]
+    fn consume_test_transfer_recipient(
+        &mut self,
+        commitment_id: CommitmentId,
+    ) -> Option<AccountId> {
+        let mut override_state = self
+            .test_transfer_failure_recipients
+            .get(&commitment_id)?
+            .clone();
+        if !override_state.armed {
+            return None;
+        }
+        override_state.armed = false;
+        let recipient = override_state.recipient.clone();
+        self.test_transfer_failure_recipients
+            .insert(commitment_id, override_state);
+        self.test_transfer_failure_recipients.flush();
+        Some(recipient)
+    }
+
+    #[cfg(feature = "sandbox-callback-fixture")]
+    fn consume_sandbox_storage_refund_recipient(
+        &mut self,
+        account_id: &AccountId,
+    ) -> Option<AccountId> {
+        let mut override_state = self
+            .sandbox_storage_refund_recipients
+            .get(account_id)?
+            .clone();
+        if !override_state.armed {
+            return None;
+        }
+        override_state.armed = false;
+        let recipient = override_state.recipient.clone();
+        self.sandbox_storage_refund_recipients
+            .insert(account_id.clone(), override_state);
+        self.sandbox_storage_refund_recipients.flush();
+        Some(recipient)
+    }
+
+    /// Isolated Sandbox-only fixture that creates a token tranche transfer and
+    /// schedules the real private callback with a caller-selected gas budget.
+    /// Never compile this feature into a testnet or mainnet release artifact.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    #[payable]
+    pub fn sandbox_queue_tranche_transfer(
+        &mut self,
+        commitment_id: U64,
+        token_account_id: AccountId,
+        recipient: AccountId,
+        amount_raw: U128,
+        callback_gas_tgas: u64,
+        recovery_enabled: Option<bool>,
+    ) -> U64 {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            callback_gas_tgas > 0 && callback_gas_tgas <= FT_CALLBACK_GAS_TGAS,
+            "callback gas must be between 1 and the production allocation"
+        );
+        require!(
+            commitment_id.0 > 0,
+            "fixture commitment ID must be positive"
+        );
+        require!(amount_raw.0 > 0, "fixture transfer amount must be positive");
+        let recovery_enabled = recovery_enabled.unwrap_or(false);
+
+        let asset = SettlementAsset::Nep141 {
+            token_account_id: token_account_id.clone(),
+            decimals: NEAR_USDC_DECIMALS,
+        };
+        let mut commitment = if let Some(existing) = self.commitments.get(&commitment_id.0) {
+            existing.clone()
+        } else {
+            let policy = CommitmentPolicy {
+                version: 1,
+                temporal: TemporalPolicy {
+                    initial_window_ns: 1,
+                    evidence_ttl_ns: 10,
+                    grace_ns: 1,
+                    max_source_lag_ns: 1,
+                    challenge_window_ns: 1,
+                    resolution_timeout_ns: 1,
+                    recovery_allowed: true,
+                },
+                evidence: EvidencePolicy {
+                    maintainer_public_key: [0; 32],
+                },
+                evaluator: EvaluatorPolicy {
+                    outlayer_account: "evaluator.test.near".parse().unwrap(),
+                    wasm_url: "https://sandbox.invalid/evaluator.wasm".to_string(),
+                    wasm_sha256: [0; 32],
+                    build_target: "wasm32-wasip2".to_string(),
+                    max_instructions: 1,
+                    max_memory_mb: 1,
+                    max_execution_seconds: 1,
+                    request_timeout_ns: 1,
+                    execution_deposit_yocto: 0,
+                },
+                budget: BudgetPolicy {
+                    sponsor: "sponsor.test.near".parse().unwrap(),
+                    beneficiary: recipient.clone(),
+                    epoch_ns: 1,
+                    max_epochs: 1,
+                    tranche_yocto: amount_raw.0,
+                },
+            };
+            let settlement = SettlementState {
+                asset: asset.clone(),
+                tranche_amount_raw: amount_raw.0,
+                funded_raw: amount_raw.0,
+                paid_raw: 0,
+                refunded_raw: 0,
+                pending_raw: 0,
+            };
+            let policy_hash = commitment_policy_digest(&policy, Some(&settlement));
+            let created = Commitment {
+                id: commitment_id.0,
+                subject: "Sandbox callback fixture".to_string(),
+                creator: policy.budget.sponsor.clone(),
+                maintainer: "maintainer.test.near".parse().unwrap(),
+                arbiter: "arbiter.test.near".parse().unwrap(),
+                lifecycle: Lifecycle::Active,
+                policy,
+                policy_hash,
+                activated_at_ns: Some(env::block_timestamp()),
+                last_good: None,
+                last_observed_at_ns: None,
+                negative_since_ns: None,
+                pending_evaluation_id: None,
+                active_challenge_id: None,
+                breach_latched: false,
+                escrow_funded_yocto: 0,
+                escrow_paid_yocto: 0,
+                escrow_refunded_yocto: 0,
+                escrow_pending_yocto: 0,
+                operations_funded_yocto: 0,
+                operations_authorized_spend_yocto: 0,
+                storage_deposit_yocto: 0,
+                next_evaluation_id: 1,
+                challenge_count: 0,
+                pending_transfer_count: 0,
+            };
+            write_settlement_state(commitment_id.0, &settlement);
+            self.next_commitment_id = self.next_commitment_id.max(commitment_id.0);
+            created
+        };
+
+        let mut settlement = read_settlement_state(commitment_id.0)
+            .unwrap_or_else(|| env::panic_str("fixture settlement state is missing"));
+        require!(
+            settlement.asset == asset,
+            "fixture token changed between attempts"
+        );
+        require!(
+            settlement.tranche_amount_raw == amount_raw.0,
+            "fixture tranche amount changed between attempts"
+        );
+        require!(
+            commitment.policy.budget.beneficiary == recipient,
+            "fixture recipient changed between attempts"
+        );
+        require!(
+            commitment.pending_transfer_count == 0 && settlement.pending_raw == 0,
+            "fixture already has a pending transfer"
+        );
+        if let Some(previous) = self.tranches.get(&(commitment_id.0, 0)) {
+            require!(
+                previous.status == TrancheStatus::Failed,
+                "fixture retry requires an explicitly failed prior transfer"
+            );
+        }
+
+        let transfer_id = self
+            .next_transfer_id
+            .checked_add(1)
+            .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
+        settlement.pending_raw = settlement
+            .pending_raw
+            .checked_add(amount_raw.0)
+            .unwrap_or_else(|| env::panic_str("fixture pending escrow overflow"));
+        let pending_transfer = PendingTransfer {
+            id: transfer_id,
+            commitment_id: commitment_id.0,
+            kind: TransferKind::Tranche,
+            epoch: Some(0),
+            recipient: recipient.clone(),
+            amount_yocto: 0,
+        };
+        self.tranches.insert(
+            (commitment_id.0, 0),
+            Tranche {
+                commitment_id: commitment_id.0,
+                epoch: 0,
+                amount_yocto: 0,
+                status: TrancheStatus::Pending,
+                transfer_id: Some(transfer_id),
+            },
+        );
+        self.pending_transfers
+            .insert(transfer_id, pending_transfer.clone());
+        write_settlement_state(commitment_id.0, &settlement);
+        write_settlement_transfer_intent_v2(&pending_transfer, asset, amount_raw.0);
+        commitment.pending_transfer_count = commitment
+            .pending_transfer_count
+            .checked_add(1)
+            .unwrap_or_else(|| env::panic_str("fixture pending transfer counter overflow"));
+        self.commitments.insert(commitment_id.0, commitment);
+        self.next_transfer_id = transfer_id;
+
+        #[cfg(feature = "usdc-receipt-recovery")]
+        let recovery_storage = if recovery_enabled {
+            let intent = crate::recovery_config::create_pending_intent(
+                transfer_id,
+                commitment_id.0,
+                crate::receipt_recovery::TransferKindV1::Tranche,
+                Some(0),
+                &token_account_id,
+                &recipient,
+                amount_raw.0,
+                crate::receipt_recovery::OriginMethodV1::ClaimTranche,
+                FT_TRANSFER_DEPOSIT_YOCTO,
+                FT_TRANSFER_GAS_TGAS,
+            )
+            .unwrap_or_else(|| env::panic_str("fixture recovery requires bootstrapped config"));
+            let storage = crate::receipt_recovery::write_pending_intent(
+                intent,
+                env::predecessor_account_id(),
+            );
+            emit_event(
+                "token_transfer_intent",
+                json!({
+                    "schema_version": 1,
+                    "transfer_id": transfer_id.to_string(),
+                    "intent_hash": crate::receipt_recovery::encode_lower_hex_32(&storage.intent_digest),
+                }),
+            );
+            Some(storage)
+        } else {
+            None
+        };
+
+        #[cfg(not(feature = "usdc-receipt-recovery"))]
+        require!(
+            !recovery_enabled,
+            "fixture recovery feature is not compiled"
+        );
+
+        let mut transfer_args_json = json!({
+            "receiver_id": recipient,
+            "amount": amount_raw.0.to_string(),
+        });
+        #[cfg(feature = "usdc-receipt-recovery")]
+        if recovery_storage.is_some() {
+            transfer_args_json["memo"] = json!(crate::receipt_recovery::transfer_memo(transfer_id)
+                .unwrap_or_else(|| env::panic_str("fixture recovery memo is missing")));
+        }
+        let transfer_args = near_sdk::serde_json::to_vec(&transfer_args_json)
+            .unwrap_or_else(|_| env::panic_str("fixture transfer arguments failed to serialize"));
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "transfer_id": U64(transfer_id),
+        }))
+        .unwrap_or_else(|_| env::panic_str("fixture callback arguments failed to serialize"));
+        self.commitments.flush();
+        self.tranches.flush();
+        self.pending_transfers.flush();
+        native_cash::record_outflow(FT_TRANSFER_DEPOSIT_YOCTO);
+        native_cash::assert_solvency();
+        let transfer_promise = Promise::new(token_account_id).function_call(
+            "ft_transfer".to_string(),
+            transfer_args,
+            NearToken::from_yoctonear(FT_TRANSFER_DEPOSIT_YOCTO),
+            Gas::from_tgas(FT_TRANSFER_GAS_TGAS),
+        );
+        let _callback =
+            transfer_promise.then(Promise::new(env::current_account_id()).function_call(
+                "on_tranche_transfer".to_string(),
+                callback_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(callback_gas_tgas),
+            ));
+        U64(transfer_id)
+    }
+
+    /// Isolated Sandbox fixture for distinguishing lazy SDK Promise-builder
+    /// creation from host-action materialization against the native-cash gate.
+    /// Never compile this feature into release.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_probe_native_cash_gate(
+        &mut self,
+        recipient: AccountId,
+        outflow_yocto: U128,
+        underfund_by_one: bool,
+    ) -> Vec<U128> {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(outflow_yocto.0 > 0, "fixture outflow must be positive");
+
+        let balance_before = env::account_balance().as_yoctonear();
+        let storage_cost = env::storage_byte_cost()
+            .as_yoctonear()
+            .checked_mul(u128::from(env::storage_usage()))
+            .unwrap_or_else(|| env::panic_str("fixture storage cost overflow"));
+        let solvency_margin = if underfund_by_one {
+            outflow_yocto
+                .0
+                .checked_sub(1)
+                .unwrap_or_else(|| env::panic_str("fixture outflow underflow"))
+        } else {
+            outflow_yocto.0
+        };
+        let required_free_balance = storage_cost
+            .checked_add(solvency_margin)
+            .unwrap_or_else(|| env::panic_str("fixture required balance overflow"));
+        let liability = balance_before
+            .checked_sub(required_free_balance)
+            .unwrap_or_else(|| env::panic_str("fixture contract lacks solvency balance"));
+        native_cash::adjust(native_cash::NativeLiability::Escrow, true, liability);
+        native_cash::record_outflow(outflow_yocto.0);
+        native_cash::assert_solvency();
+        // The seeded liability models the boundary only; remove it so the other
+        // callback fixtures start with a clean, independently funded ledger.
+        native_cash::adjust(native_cash::NativeLiability::Escrow, false, liability);
+        let outflow = Promise::new(recipient).transfer(NearToken::from_yoctonear(outflow_yocto.0));
+        let balance_after_builder = env::account_balance().as_yoctonear();
+        drop(outflow);
+        let balance_after_materialization = env::account_balance().as_yoctonear();
+
+        vec![
+            U128(balance_before),
+            U128(balance_after_builder),
+            U128(balance_after_materialization),
+            U128(storage_cost),
+            U128(liability),
+        ]
+    }
+
+    /// Checks one cash gate against two independently materialized native
+    /// transfer actions. This fixture is restricted to local Sandbox.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_probe_native_staged_outflows(
+        &mut self,
+        first_recipient: AccountId,
+        second_recipient: AccountId,
+        first_outflow_yocto: U128,
+        second_outflow_yocto: U128,
+        underfund_by_one: bool,
+    ) -> Vec<U128> {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            first_outflow_yocto.0 > 0 && second_outflow_yocto.0 > 0,
+            "fixture outflows must be positive"
+        );
+        let total = first_outflow_yocto
+            .0
+            .checked_add(second_outflow_yocto.0)
+            .unwrap_or_else(|| env::panic_str("fixture combined outflow overflow"));
+        let balance_before = env::account_balance().as_yoctonear();
+        let storage_cost = env::storage_byte_cost()
+            .as_yoctonear()
+            .checked_mul(u128::from(env::storage_usage()))
+            .unwrap_or_else(|| env::panic_str("fixture storage cost overflow"));
+        let margin = if underfund_by_one {
+            total
+                .checked_sub(1)
+                .unwrap_or_else(|| env::panic_str("fixture outflow underflow"))
+        } else {
+            total
+        };
+        let ledger = native_cash::load();
+        let required = ledger
+            .required_balance(storage_cost)
+            .unwrap_or_else(|| env::panic_str("native cash ledger is not solvent"));
+        let old_fixture_liability = self.sandbox_test_liability_yocto;
+        let required_without_fixture = required
+            .checked_sub(old_fixture_liability)
+            .unwrap_or_else(|| env::panic_str("fixture liability exceeds native cash reserve"));
+        let available_without_fixture = balance_before
+            .checked_sub(required_without_fixture)
+            .unwrap_or_else(|| env::panic_str("fixture contract lacks solvency balance"));
+        let new_fixture_liability = available_without_fixture
+            .checked_sub(margin)
+            .unwrap_or_else(|| env::panic_str("fixture target exceeds free native cash"));
+        if new_fixture_liability > old_fixture_liability {
+            native_cash::adjust(
+                native_cash::NativeLiability::RecoveryCredit,
+                true,
+                new_fixture_liability - old_fixture_liability,
+            );
+        } else if old_fixture_liability > new_fixture_liability {
+            native_cash::adjust(
+                native_cash::NativeLiability::RecoveryCredit,
+                false,
+                old_fixture_liability - new_fixture_liability,
+            );
+        }
+        self.sandbox_test_liability_yocto = new_fixture_liability;
+        native_cash::record_outflow(total);
+        native_cash::assert_solvency();
+
+        let first = Promise::new(first_recipient)
+            .transfer(NearToken::from_yoctonear(first_outflow_yocto.0));
+        let second = Promise::new(second_recipient)
+            .transfer(NearToken::from_yoctonear(second_outflow_yocto.0));
+        let after_builders = env::account_balance().as_yoctonear();
+        drop(first.and(second));
+        let after_materialization = env::account_balance().as_yoctonear();
+        vec![
+            U128(balance_before),
+            U128(after_builders),
+            U128(after_materialization),
+            U128(storage_cost),
+            U128(new_fixture_liability),
+        ]
+    }
+
+    /// Creates two failed native refund receipts for one payer while an older
+    /// credit exists. The production callback must add both amounts.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    #[payable]
+    pub fn sandbox_queue_two_storage_refund_failures(
+        &mut self,
+        payer: AccountId,
+        existing_credit_yocto: U128,
+        first_refund_yocto: U128,
+        second_refund_yocto: U128,
+    ) -> Vec<U64> {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            existing_credit_yocto.0 > 0 && first_refund_yocto.0 > 0 && second_refund_yocto.0 > 0,
+            "fixture refund amounts must be positive"
+        );
+        let total = existing_credit_yocto
+            .0
+            .checked_add(first_refund_yocto.0)
+            .and_then(|value| value.checked_add(second_refund_yocto.0))
+            .unwrap_or_else(|| env::panic_str("fixture refund total overflow"));
+        require!(
+            env::attached_deposit().as_yoctonear() >= total,
+            "attach enough NEAR to back all fixture refund liabilities"
+        );
+        increase_service_report_refund_credit(&payer, existing_credit_yocto.0);
+
+        let first_id = native_cash::begin_refund_attempt(
+            payer.clone(),
+            first_refund_yocto.0,
+            native_cash::RefundAttemptKind::Excess,
+            true,
+        );
+        native_cash::record_outflow(first_refund_yocto.0);
+        native_cash::assert_solvency();
+        let first_args = near_sdk::serde_json::to_vec(&json!({ "attempt_id": U64(first_id) }))
+            .unwrap_or_else(|_| env::panic_str("fixture first callback serialization failed"));
+        let first = Promise::new("missing-refund-one.sandbox".parse().unwrap())
+            .transfer(NearToken::from_yoctonear(first_refund_yocto.0))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_storage_refund_attempt".to_string(),
+                first_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
+            ));
+
+        let second_id = native_cash::begin_refund_attempt(
+            payer,
+            second_refund_yocto.0,
+            native_cash::RefundAttemptKind::Excess,
+            true,
+        );
+        native_cash::record_outflow(second_refund_yocto.0);
+        native_cash::assert_solvency();
+        let second_args = near_sdk::serde_json::to_vec(&json!({ "attempt_id": U64(second_id) }))
+            .unwrap_or_else(|_| env::panic_str("fixture second callback serialization failed"));
+        let second = Promise::new("missing-refund-two.sandbox".parse().unwrap())
+            .transfer(NearToken::from_yoctonear(second_refund_yocto.0))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_storage_refund_attempt".to_string(),
+                second_args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
+            ));
+        drop(first.and(second));
+        vec![U64(first_id), U64(second_id)]
+    }
+
+    /// Seeds an overflow edge in a fresh Sandbox instance, then uses the real
+    /// callback receipt to confirm attempt removal rolls back on panic.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_queue_refund_credit_overflow_callback(&mut self, payer: AccountId) -> U64 {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        write_service_report_refund_credit(&payer, u128::MAX);
+        let attempt_id = native_cash::begin_refund_attempt(
+            payer,
+            1,
+            native_cash::RefundAttemptKind::CreditWithdrawal,
+            false,
+        );
+        native_cash::record_outflow(1);
+        native_cash::assert_solvency();
+        let args = near_sdk::serde_json::to_vec(&json!({ "attempt_id": U64(attempt_id) }))
+            .unwrap_or_else(|_| env::panic_str("fixture overflow callback serialization failed"));
+        let _refund = Promise::new("missing-overflow-refund.sandbox".parse().unwrap())
+            .transfer(NearToken::from_yoctonear(1))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_storage_refund_attempt".to_string(),
+                args,
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
+            ));
+        U64(attempt_id)
+    }
+
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_refund_attempt_exists(&self, attempt_id: U64) -> bool {
+        native_cash::read_refund_attempt(attempt_id.0).is_some()
+    }
+
+    /// Adds a fixture-only recovery-credit liability so the native-cash ledger
+    /// has exactly the requested free balance. This avoids moving Sandbox
+    /// account funds and is never compiled into deployment artifacts.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_set_native_free_margin(&mut self, target_free_balance_yocto: U128) -> Vec<U128> {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            env::predecessor_account_id().as_str() == "sandbox",
+            "fixture margin must be set by the Sandbox root"
+        );
+        require!(
+            target_free_balance_yocto.0 > 0,
+            "fixture target margin must be positive"
+        );
+        let storage_cost = env::storage_byte_cost()
+            .as_yoctonear()
+            .checked_mul(u128::from(env::storage_usage()))
+            .unwrap_or_else(|| env::panic_str("fixture storage cost overflow"));
+        let ledger = native_cash::load();
+        let required_balance = ledger
+            .required_balance(storage_cost)
+            .unwrap_or_else(|| env::panic_str("native cash ledger is not solvent"));
+        let old_fixture_liability = self.sandbox_test_liability_yocto;
+        let required_without_fixture = required_balance
+            .checked_sub(old_fixture_liability)
+            .unwrap_or_else(|| env::panic_str("fixture liability exceeds native cash reserve"));
+        let balance = env::account_balance().as_yoctonear();
+        let available_without_fixture = balance
+            .checked_sub(required_without_fixture)
+            .unwrap_or_else(|| env::panic_str("fixture contract lacks solvency balance"));
+        let new_fixture_liability = available_without_fixture
+            .checked_sub(target_free_balance_yocto.0)
+            .unwrap_or_else(|| env::panic_str("fixture target exceeds free native cash"));
+
+        if new_fixture_liability > old_fixture_liability {
+            native_cash::adjust(
+                native_cash::NativeLiability::RecoveryCredit,
+                true,
+                new_fixture_liability - old_fixture_liability,
+            );
+        } else if old_fixture_liability > new_fixture_liability {
+            native_cash::adjust(
+                native_cash::NativeLiability::RecoveryCredit,
+                false,
+                old_fixture_liability - new_fixture_liability,
+            );
+        }
+        self.sandbox_test_liability_yocto = new_fixture_liability;
+        native_cash::assert_solvency();
+        vec![
+            U128(balance),
+            U128(storage_cost),
+            U128(required_without_fixture),
+            U128(available_without_fixture),
+            U128(old_fixture_liability),
+            U128(new_fixture_liability),
+            target_free_balance_yocto,
+        ]
+    }
+
+    /// Seeds a claimable native tranche for exercising the production claim
+    /// and callback path in local Sandbox only.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_seed_native_claimable_commitment(
+        &mut self,
+        commitment_id: U64,
+        beneficiary: AccountId,
+        amount_yocto: U128,
+    ) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            commitment_id.0 > 0,
+            "fixture commitment ID must be positive"
+        );
+        require!(
+            amount_yocto.0 > 0,
+            "fixture tranche amount must be positive"
+        );
+        require!(
+            self.commitments.get(&commitment_id.0).is_none(),
+            "fixture commitment ID is already in use"
+        );
+
+        let now_ns = env::block_timestamp();
+        let observed_at_ns = now_ns.saturating_sub(10);
+        let sponsor: AccountId = "sandbox".parse().unwrap();
+        let policy = CommitmentPolicy {
+            version: 1,
+            temporal: TemporalPolicy {
+                initial_window_ns: 60_000_000_000,
+                evidence_ttl_ns: 3_600_000_000_000,
+                grace_ns: 60_000_000_000,
+                max_source_lag_ns: 60_000_000_000,
+                challenge_window_ns: 1,
+                resolution_timeout_ns: 1_000_000_000,
+                recovery_allowed: true,
+            },
+            evidence: EvidencePolicy {
+                maintainer_public_key: [3; 32],
+            },
+            evaluator: EvaluatorPolicy {
+                outlayer_account: "evaluator.sandbox".parse().unwrap(),
+                wasm_url: "https://sandbox.invalid/evaluator.wasm".to_string(),
+                wasm_sha256: [4; 32],
+                build_target: "wasm32-wasip2".to_string(),
+                max_instructions: 1_000_000,
+                max_memory_mb: 64,
+                max_execution_seconds: 30,
+                request_timeout_ns: 1_000_000_000,
+                execution_deposit_yocto: 0,
+            },
+            budget: BudgetPolicy {
+                sponsor: sponsor.clone(),
+                beneficiary: beneficiary.clone(),
+                epoch_ns: 86_400_000_000_000,
+                max_epochs: 1,
+                tranche_yocto: amount_yocto.0,
+            },
+        };
+        validate_commitment_policy(&policy);
+        let evidence_hash = [7; 32];
+        let policy_hash = commitment_policy_digest(&policy, None);
+        let commitment = Commitment {
+            id: commitment_id.0,
+            subject: "Sandbox native cash callback fixture".to_string(),
+            creator: sponsor,
+            maintainer: "maintainer.sandbox".parse().unwrap(),
+            arbiter: "arbiter.sandbox".parse().unwrap(),
+            lifecycle: Lifecycle::Active,
+            policy,
+            policy_hash,
+            activated_at_ns: Some(observed_at_ns),
+            last_good: Some(GoodObservation {
+                evaluation_id: 1,
+                evidence_hash,
+                observed_at_ns,
+                accepted_at_ns: observed_at_ns,
+            }),
+            last_observed_at_ns: Some(observed_at_ns),
+            negative_since_ns: None,
+            pending_evaluation_id: None,
+            active_challenge_id: None,
+            breach_latched: false,
+            escrow_funded_yocto: amount_yocto.0,
+            escrow_paid_yocto: 0,
+            escrow_refunded_yocto: 0,
+            escrow_pending_yocto: 0,
+            operations_funded_yocto: 0,
+            operations_authorized_spend_yocto: 0,
+            storage_deposit_yocto: 0,
+            next_evaluation_id: 2,
+            challenge_count: 0,
+            pending_transfer_count: 0,
+        };
+        let evaluation = EvaluationRecord {
+            request_id: 1,
+            commitment_id: commitment_id.0,
+            request_transaction_hash: Some([0; 32]),
+            status: EvaluationStatus::Accepted,
+            verdict: Some(Verdict::Compliant),
+            reason_codes: vec!["SANDBOX_FIXTURE".to_string()],
+            input_hash: [5; 32],
+            evidence_hash,
+            observed_at_ns,
+            accepted_at_ns: Some(observed_at_ns),
+            policy_hash,
+            output_hash: Some([6; 32]),
+        };
+
+        native_cash::adjust(native_cash::NativeLiability::Escrow, true, amount_yocto.0);
+        self.commitments.insert(commitment_id.0, commitment);
+        self.evaluation_records
+            .insert((commitment_id.0, 1), evaluation);
+        self.commitments.flush();
+        self.evaluation_records.flush();
+        self.next_commitment_id = self.next_commitment_id.max(commitment_id.0);
+    }
+
+    /// Seeds a closed commitment with refundable native escrow and operations
+    /// for isolated Sandbox callback testing.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_seed_closed_native_refund_commitment(
+        &mut self,
+        commitment_id: U64,
+        sponsor: AccountId,
+        beneficiary: AccountId,
+        escrow_amount_yocto: U128,
+        operations_funded_yocto: U128,
+        operations_spent_yocto: U128,
+    ) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            commitment_id.0 > 0,
+            "fixture commitment ID must be positive"
+        );
+        require!(
+            self.commitments.get(&commitment_id.0).is_none(),
+            "fixture commitment ID is already in use"
+        );
+        require!(
+            escrow_amount_yocto.0 > 0 && operations_funded_yocto.0 > 0,
+            "fixture refund amounts must be positive"
+        );
+        require!(
+            operations_spent_yocto.0 < operations_funded_yocto.0,
+            "fixture operations spend must be below funding"
+        );
+
+        let now_ns = env::block_timestamp();
+        let policy = CommitmentPolicy {
+            version: 1,
+            temporal: TemporalPolicy {
+                initial_window_ns: 60_000_000_000,
+                evidence_ttl_ns: 3_600_000_000_000,
+                grace_ns: 60_000_000_000,
+                max_source_lag_ns: 60_000_000_000,
+                challenge_window_ns: 1,
+                resolution_timeout_ns: 1_000_000_000,
+                recovery_allowed: true,
+            },
+            evidence: EvidencePolicy {
+                maintainer_public_key: [3; 32],
+            },
+            evaluator: EvaluatorPolicy {
+                outlayer_account: "evaluator.sandbox".parse().unwrap(),
+                wasm_url: "https://sandbox.invalid/evaluator.wasm".to_string(),
+                wasm_sha256: [4; 32],
+                build_target: "wasm32-wasip2".to_string(),
+                max_instructions: 1_000_000,
+                max_memory_mb: 64,
+                max_execution_seconds: 30,
+                request_timeout_ns: 1_000_000_000,
+                execution_deposit_yocto: 0,
+            },
+            budget: BudgetPolicy {
+                sponsor: sponsor.clone(),
+                beneficiary: beneficiary.clone(),
+                epoch_ns: 86_400_000_000_000,
+                max_epochs: 1,
+                tranche_yocto: escrow_amount_yocto.0,
+            },
+        };
+        validate_commitment_policy(&policy);
+        let policy_hash = commitment_policy_digest(&policy, None);
+        let commitment = Commitment {
+            id: commitment_id.0,
+            subject: "Sandbox native refund callback fixture".to_string(),
+            creator: sponsor,
+            maintainer: "maintainer.sandbox".parse().unwrap(),
+            arbiter: "arbiter.sandbox".parse().unwrap(),
+            lifecycle: Lifecycle::Closed,
+            policy,
+            policy_hash,
+            activated_at_ns: Some(now_ns),
+            last_good: None,
+            last_observed_at_ns: None,
+            negative_since_ns: None,
+            pending_evaluation_id: None,
+            active_challenge_id: None,
+            breach_latched: false,
+            escrow_funded_yocto: escrow_amount_yocto.0,
+            escrow_paid_yocto: 0,
+            escrow_refunded_yocto: 0,
+            escrow_pending_yocto: 0,
+            operations_funded_yocto: operations_funded_yocto.0,
+            operations_authorized_spend_yocto: operations_spent_yocto.0,
+            storage_deposit_yocto: 0,
+            next_evaluation_id: 1,
+            challenge_count: 0,
+            pending_transfer_count: 0,
+        };
+
+        native_cash::adjust(
+            native_cash::NativeLiability::Escrow,
+            true,
+            escrow_amount_yocto.0,
+        );
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            true,
+            operations_funded_yocto.0 - operations_spent_yocto.0,
+        );
+        self.commitments.insert(commitment_id.0, commitment);
+        self.commitments.flush();
+        self.next_commitment_id = self.next_commitment_id.max(commitment_id.0);
+        native_cash::assert_solvency();
+    }
+
+    /// Seeds a legacy storage-refund credit for local callback testing only.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_seed_storage_refund_credit(
+        &mut self,
+        account_id: AccountId,
+        amount_yocto: U128,
+    ) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(amount_yocto.0 > 0, "fixture refund credit must be positive");
+        require!(
+            read_service_report_refund_credit(&account_id).unwrap_or(0) == 0,
+            "fixture account already has a refund credit"
+        );
+        increase_service_report_refund_credit(&account_id, amount_yocto.0);
+    }
+
+    /// Test-only target override to force a native storage-refund transfer failure.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_set_next_storage_refund_recipient(
+        &mut self,
+        account_id: AccountId,
+        recipient: AccountId,
+    ) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            recipient != account_id,
+            "fixture transfer target must differ from the credited payer"
+        );
+        self.sandbox_storage_refund_recipients.insert(
+            account_id,
+            TestTransferRecipient {
+                recipient,
+                armed: true,
+            },
+        );
+        self.sandbox_storage_refund_recipients.flush();
+    }
+
+    /// Isolated Sandbox-only override for exercising a missing native refund callback.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_set_next_storage_refund_callback_gas(&mut self, callback_gas_tgas: u64) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            env::predecessor_account_id().as_str() == "sandbox",
+            "callback gas override must be set by the Sandbox root"
+        );
+        require!(
+            callback_gas_tgas > 0 && callback_gas_tgas <= CALLBACK_GAS_TGAS,
+            "callback gas must be between 1 and the production allocation"
+        );
+        self.sandbox_storage_refund_callback_gas_tgas = Some(callback_gas_tgas);
+    }
+
+    /// Isolated recipient override for native claim failure tests in Sandbox.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_set_next_transfer_recipient(
+        &mut self,
+        commitment_id: U64,
+        recipient: AccountId,
+    ) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        let commitment = self.load_commitment(commitment_id.0);
+        require!(
+            recipient != commitment.policy.budget.beneficiary,
+            "fixture transfer target must differ from the beneficiary"
+        );
+        self.test_transfer_failure_recipients.insert(
+            commitment_id.0,
+            TestTransferRecipient {
+                recipient,
+                armed: true,
+            },
+        );
+        self.test_transfer_failure_recipients.flush();
+    }
+
+    /// Exposes native-ledger measurements only to the isolated Sandbox harness.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_native_cash_snapshot(&self) -> Vec<U128> {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        let ledger = native_cash::load();
+        let storage_cost = env::storage_byte_cost()
+            .as_yoctonear()
+            .checked_mul(u128::from(env::storage_usage()))
+            .unwrap_or_else(|| env::panic_str("fixture storage cost overflow"));
+        vec![
+            U128(env::account_balance().as_yoctonear()),
+            U128(storage_cost),
+            U128(ledger.native_escrow_liability),
+            U128(ledger.storage_refund_liability),
+            U128(ledger.scheduled_outflow_yocto),
+            U128(ledger.operations_liability),
+            U128(ledger.recovery_credit_liability),
+            U128(ledger.storage_backing),
+            U128(ledger.storage_shortfall),
+        ]
     }
 
     #[payable]
@@ -394,7 +1782,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller.clone(), attached, required_storage_bond);
+        refund_excess(caller.clone(), attached, required_storage_bond, 0);
         emit_event(
             "service_policy_amendment_proposed",
             json!({
@@ -489,7 +1877,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller.clone(), attached, required_storage_bond);
+        refund_excess(caller.clone(), attached, required_storage_bond, 0);
         emit_event(
             "service_policy_amendment_approved",
             json!({
@@ -602,7 +1990,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller, attached, required_storage_bond);
+        refund_excess(caller, attached, required_storage_bond, 0);
         emit_event(
             "service_policy_amendment_activated",
             json!({
@@ -803,7 +2191,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller.clone(), attached, required_storage_bond);
+        refund_excess(caller.clone(), attached, required_storage_bond, 0);
         emit_event(
             "bounded_payout_authority_granted",
             json!({
@@ -1033,6 +2421,7 @@ impl Contract {
             .escrow_funded_yocto
             .checked_add(amount)
             .unwrap_or_else(|| env::panic_str("escrow funding overflow"));
+        native_cash::adjust(native_cash::NativeLiability::Escrow, true, amount);
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
 
@@ -1046,6 +2435,7 @@ impl Contract {
                 "settlement_asset": {"kind": "near"},
             }),
         );
+        native_cash::assert_solvency();
     }
 
     /// NEP-141 receiver entry point. Invalid or excess transfers are returned by the token resolver.
@@ -1127,6 +2517,7 @@ impl Contract {
             .operations_funded_yocto
             .checked_add(amount)
             .unwrap_or_else(|| env::panic_str("operations funding overflow"));
+        native_cash::adjust(native_cash::NativeLiability::Operations, true, amount);
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
 
@@ -1138,6 +2529,7 @@ impl Contract {
                 "amount_yocto": amount.to_string(),
             }),
         );
+        native_cash::assert_solvency();
     }
 
     #[payable]
@@ -1212,7 +2604,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller.clone(), attached, required_storage_bond);
+        refund_excess(caller.clone(), attached, required_storage_bond, 0);
 
         emit_event(
             "commitment_activated",
@@ -1332,6 +2724,11 @@ impl Contract {
             .operations_authorized_spend_yocto
             .checked_add(execution_deposit)
             .unwrap_or_else(|| env::panic_str("operations authorization overflow"));
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            false,
+            execution_deposit,
+        );
 
         let storage_before = env::storage_usage();
         let key = (commitment_id.0, evaluation_id);
@@ -1394,7 +2791,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.commitments.flush();
-        refund_excess(caller, attached, required_storage_bond);
+        refund_excess(caller, attached, required_storage_bond, execution_deposit);
 
         let outlayer_args = build_outlayer_request_args(&commitment, &input_data);
         let outlayer_args = near_sdk::serde_json::to_vec(&outlayer_args)
@@ -1418,7 +2815,6 @@ impl Contract {
                 NearToken::from_yoctonear(0),
                 Gas::from_tgas(CALLBACK_GAS_TGAS),
             ));
-
         emit_event(
             "evaluation_requested",
             json!({
@@ -1604,7 +3000,7 @@ impl Contract {
         );
         entry.storage_deposit_yocto = required_storage_bond;
         write_service_report_inbox(&inbox_key, &entry);
-        refund_excess(caller.clone(), attached, required_storage_bond);
+        refund_excess(caller.clone(), attached, required_storage_bond, 0);
 
         emit_event(
             if replacement_refund > 0 {
@@ -1821,18 +3217,38 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("no storage refund credit is available"));
         require!(amount > 0, "no storage refund credit is available");
         env::storage_remove(&service_report_refund_storage_key(&caller));
+        let attempt_id = native_cash::begin_refund_attempt(
+            caller.clone(),
+            amount,
+            native_cash::RefundAttemptKind::CreditWithdrawal,
+            false,
+        );
+        native_cash::record_outflow(amount);
+        native_cash::assert_solvency();
         let callback_args = near_sdk::serde_json::to_vec(&json!({
-            "account_id": caller,
-            "amount": U128(amount),
+            "attempt_id": U64(attempt_id),
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize service report refund callback"));
-        let _refund_promise = Promise::new(caller.clone())
+        #[cfg(feature = "sandbox-callback-fixture")]
+        let recipient = self
+            .consume_sandbox_storage_refund_recipient(&caller)
+            .unwrap_or_else(|| caller.clone());
+        #[cfg(not(feature = "sandbox-callback-fixture"))]
+        let recipient = caller.clone();
+        #[cfg(feature = "sandbox-callback-fixture")]
+        let callback_gas_tgas = self
+            .sandbox_storage_refund_callback_gas_tgas
+            .take()
+            .unwrap_or(CALLBACK_GAS_TGAS);
+        #[cfg(not(feature = "sandbox-callback-fixture"))]
+        let callback_gas_tgas = CALLBACK_GAS_TGAS;
+        let _refund_promise = Promise::new(recipient)
             .transfer(NearToken::from_yoctonear(amount))
             .then(Promise::new(env::current_account_id()).function_call(
-                "on_service_report_refund".to_string(),
+                "on_storage_refund_attempt".to_string(),
                 callback_args,
                 NearToken::from_yoctonear(0),
-                Gas::from_tgas(CALLBACK_GAS_TGAS),
+                Gas::from_tgas(callback_gas_tgas),
             ));
         emit_event(
             "service_report_refund_requested",
@@ -1844,42 +3260,41 @@ impl Contract {
     }
 
     #[private]
-    pub fn on_service_report_refund(&mut self, account_id: near_sdk::AccountId, amount: U128) {
-        let succeeded = env::promise_results_count() == 1
-            && match env::promise_result_checked(0, 0) {
-                Ok(_) | Err(PromiseError::TooLong(_)) => true,
-                Err(_) => false,
-            };
-        if succeeded {
-            emit_event(
-                "service_report_refund_sent",
-                json!({"account_id": account_id, "amount_yocto": amount.0.to_string()}),
-            );
+    pub fn on_storage_refund_attempt(&mut self, attempt_id: U64) {
+        let Some(succeeded) = callback_promise_succeeded() else {
+            return;
+        };
+        let attempt = if succeeded {
+            native_cash::settle_successful_refund_attempt(attempt_id.0)
         } else {
-            increase_service_report_refund_credit(&account_id, amount.0);
-            emit_event(
-                "service_report_refund_failed",
-                json!({"account_id": account_id, "amount_yocto": amount.0.to_string()}),
-            );
+            native_cash::remove_failed_refund_attempt(attempt_id.0)
+        };
+        let Some(attempt) = attempt else {
+            env::log_str("ignored stale or unknown storage-refund callback");
+            return;
+        };
+        if !succeeded {
+            accrue_service_report_refund_credit(&attempt.payer, attempt.amount);
         }
-    }
-
-    #[private]
-    pub fn on_excess_refund(&mut self, account_id: near_sdk::AccountId, amount: U128) {
-        let succeeded = env::promise_results_count() == 1
-            && match env::promise_result_checked(0, 0) {
-                Ok(_) | Err(PromiseError::TooLong(_)) => true,
-                Err(_) => false,
-            };
+        let event = match (attempt.kind, succeeded) {
+            (native_cash::RefundAttemptKind::Excess, true) => "excess_storage_refund_sent",
+            (native_cash::RefundAttemptKind::Excess, false) => "excess_storage_refund_failed",
+            (native_cash::RefundAttemptKind::CreditWithdrawal, true) => {
+                "service_report_refund_sent"
+            }
+            (native_cash::RefundAttemptKind::CreditWithdrawal, false) => {
+                "service_report_refund_failed"
+            }
+        };
         emit_event(
-            if succeeded {
-                "excess_storage_refund_sent"
-            } else {
-                increase_service_report_refund_credit(&account_id, amount.0);
-                "excess_storage_refund_failed"
-            },
-            json!({"account_id": account_id, "amount_yocto": amount.0.to_string()}),
+            event,
+            json!({
+                "attempt_id": attempt.id.to_string(),
+                "account_id": attempt.payer,
+                "amount_yocto": attempt.amount.to_string(),
+            }),
         );
+        native_cash::assert_solvency();
     }
 
     #[payable]
@@ -2059,6 +3474,11 @@ impl Contract {
             .operations_authorized_spend_yocto
             .checked_add(execution_deposit)
             .unwrap_or_else(|| env::panic_str("operations authorization overflow"));
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            false,
+            execution_deposit,
+        );
 
         let storage_before = env::storage_usage();
         let key = (commitment_id.0, evaluation_id);
@@ -2118,7 +3538,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.commitments.flush();
-        refund_excess(caller, attached, required_storage_bond);
+        refund_excess(caller, attached, required_storage_bond, execution_deposit);
 
         let outlayer_args = build_outlayer_request_args(&commitment, &input_data);
         let outlayer_args = near_sdk::serde_json::to_vec(&outlayer_args)
@@ -2524,7 +3944,7 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller, attached, required_storage_bond);
+        refund_excess(caller, attached, required_storage_bond, 0);
         self.next_challenge_id = challenge_id;
 
         emit_event(
@@ -2641,14 +4061,17 @@ impl Contract {
         let settlement_asset = settlement_asset_for(&commitment);
         let is_native_near = settlement.is_none();
         let tranche_amount = tranche_amount_raw_for(&commitment);
-        #[cfg(feature = "testnet-transfer-failure-fixture")]
+        #[cfg(any(
+            feature = "testnet-transfer-failure-fixture",
+            feature = "sandbox-callback-fixture"
+        ))]
         let recipient = self
-            .test_transfer_failure_recipients
-            .remove(&commitment_id.0)
+            .consume_test_transfer_recipient(commitment_id.0)
             .unwrap_or_else(|| commitment.policy.budget.beneficiary.clone());
-        #[cfg(feature = "testnet-transfer-failure-fixture")]
-        self.test_transfer_failure_recipients.flush();
-        #[cfg(not(feature = "testnet-transfer-failure-fixture"))]
+        #[cfg(not(any(
+            feature = "testnet-transfer-failure-fixture",
+            feature = "sandbox-callback-fixture"
+        )))]
         let recipient = commitment.policy.budget.beneficiary.clone();
 
         let transfer_id = self
@@ -2693,8 +4116,46 @@ impl Contract {
         self.pending_transfers
             .insert(transfer_id, pending_transfer.clone());
         if !is_native_near {
-            write_settlement_transfer_amount(transfer_id, tranche_amount);
+            write_settlement_transfer_intent_v2(
+                &pending_transfer,
+                settlement_asset.clone(),
+                tranche_amount,
+            );
         }
+        #[cfg(feature = "usdc-receipt-recovery")]
+        let recovery_storage = match &settlement_asset {
+            SettlementAsset::Nep141 {
+                token_account_id, ..
+            } => crate::recovery_config::create_pending_intent(
+                transfer_id,
+                commitment_id.0,
+                crate::receipt_recovery::TransferKindV1::Tranche,
+                Some(epoch),
+                token_account_id,
+                &pending_transfer.recipient,
+                tranche_amount,
+                crate::receipt_recovery::OriginMethodV1::ClaimTranche,
+                FT_TRANSFER_DEPOSIT_YOCTO,
+                FT_TRANSFER_GAS_TGAS,
+            )
+            .map(|intent| crate::receipt_recovery::write_pending_intent(intent, caller.clone())),
+            SettlementAsset::Near => None,
+        };
+        #[cfg(feature = "usdc-receipt-recovery")]
+        let recovery_storage_bytes = recovery_storage.map_or(0, |record| record.storage_bytes);
+        #[cfg(feature = "usdc-receipt-recovery")]
+        if let Some(record) = recovery_storage {
+            emit_event(
+                "token_transfer_intent",
+                json!({
+                    "schema_version": 1,
+                    "transfer_id": transfer_id.to_string(),
+                    "intent_hash": crate::receipt_recovery::encode_lower_hex_32(&record.intent_digest),
+                }),
+            );
+        }
+        #[cfg(not(feature = "usdc-receipt-recovery"))]
+        let recovery_storage_bytes = 0;
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.tranches.flush();
         self.pending_transfers.flush();
@@ -2703,6 +4164,12 @@ impl Contract {
             .checked_sub(storage_before)
             .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
         let required_storage_bond = storage_cost(storage_bytes);
+        let legacy_storage_bytes = storage_bytes
+            .checked_sub(recovery_storage_bytes)
+            .unwrap_or_else(|| {
+                env::panic_str("recovery storage measurement exceeds transfer storage")
+            });
+        let legacy_storage_bond = storage_cost(legacy_storage_bytes);
         let required_attached_deposit =
             required_transfer_deposit(required_storage_bond, &settlement_asset)
                 .unwrap_or_else(|| env::panic_str("tranche deposit requirement overflow"));
@@ -2713,11 +4180,44 @@ impl Contract {
         );
         commitment.storage_deposit_yocto = commitment
             .storage_deposit_yocto
-            .checked_add(required_storage_bond)
+            .checked_add(legacy_storage_bond)
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller, attached, required_attached_deposit);
+        #[cfg(feature = "usdc-receipt-recovery")]
+        if let Some(recovery_storage) = recovery_storage {
+            let excess = attached
+                .checked_sub(required_attached_deposit)
+                .unwrap_or_else(|| env::panic_str("storage deposit underpayment"));
+            crate::recovery_accounting::accrue_persisted_refund_credit(
+                recovery_storage.refund_credit_id,
+                excess,
+            );
+            native_cash::record_outflow(FT_TRANSFER_DEPOSIT_YOCTO);
+            native_cash::assert_solvency();
+        } else {
+            refund_excess(
+                caller,
+                attached,
+                required_attached_deposit,
+                if is_native_near {
+                    tranche_amount
+                } else {
+                    FT_TRANSFER_DEPOSIT_YOCTO
+                },
+            );
+        }
+        #[cfg(not(feature = "usdc-receipt-recovery"))]
+        refund_excess(
+            caller,
+            attached,
+            required_attached_deposit,
+            if is_native_near {
+                tranche_amount
+            } else {
+                FT_TRANSFER_DEPOSIT_YOCTO
+            },
+        );
 
         let callback_args = near_sdk::serde_json::to_vec(&json!({
             "transfer_id": U64(transfer_id),
@@ -2730,11 +4230,19 @@ impl Contract {
             SettlementAsset::Nep141 {
                 token_account_id, ..
             } => {
-                let args = near_sdk::serde_json::to_vec(&json!({
+                #[allow(unused_mut)]
+                let mut transfer_args = json!({
                     "receiver_id": pending_transfer.recipient.clone(),
                     "amount": tranche_amount.to_string(),
-                }))
-                .unwrap_or_else(|_| env::panic_str("failed to serialize NEP-141 transfer"));
+                });
+                #[cfg(feature = "usdc-receipt-recovery")]
+                if recovery_storage.is_some() {
+                    let memo = crate::receipt_recovery::transfer_memo(transfer_id)
+                        .unwrap_or_else(|| env::panic_str("recovery transfer memo is missing"));
+                    transfer_args["memo"] = json!(memo);
+                }
+                let args = near_sdk::serde_json::to_vec(&transfer_args)
+                    .unwrap_or_else(|_| env::panic_str("failed to serialize NEP-141 transfer"));
                 Promise::new(token_account_id).function_call(
                     "ft_transfer".to_string(),
                     args,
@@ -2796,9 +4304,190 @@ impl Contract {
             recipient != commitment.policy.budget.beneficiary,
             "test transfer target must differ from the beneficiary"
         );
-        self.test_transfer_failure_recipients
-            .insert(commitment_id.0, recipient);
+        self.test_transfer_failure_recipients.insert(
+            commitment_id.0,
+            TestTransferRecipient {
+                recipient,
+                armed: true,
+            },
+        );
         self.test_transfer_failure_recipients.flush();
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn settle_token_transfer_outcome(
+        &mut self,
+        transfer_id: u64,
+        outcome: crate::receipt_recovery::TransferOutcomeV1,
+        certificate_digest: [u8; 32],
+    ) -> Option<()> {
+        use crate::receipt_recovery::{TransferKindV1, TransferOutcomeV1};
+
+        let transfer = self.pending_transfers.get(&transfer_id).cloned()?;
+        if transfer.id != transfer_id
+            || !matches!(transfer.kind, TransferKind::Tranche | TransferKind::Refund)
+        {
+            return None;
+        }
+        let mut commitment = self.load_commitment(transfer.commitment_id);
+        let mut settlement = read_settlement_state(transfer.commitment_id)?;
+        let SettlementAsset::Nep141 {
+            token_account_id, ..
+        } = &settlement.asset
+        else {
+            return None;
+        };
+        let (is_native_near, amount_raw) =
+            callback_transfer_amount(&commitment, &transfer, Some(&settlement))?;
+        if is_native_near || amount_raw == 0 || commitment.pending_transfer_count == 0 {
+            return None;
+        }
+        if settlement.pending_raw < amount_raw {
+            return None;
+        }
+
+        let mut tranche_update = None;
+        let tranche_epoch = match transfer.kind {
+            TransferKind::Tranche => {
+                let epoch = transfer.epoch?;
+                let tranche = self
+                    .tranches
+                    .get(&(transfer.commitment_id, epoch))
+                    .cloned()?;
+                if tranche.status != TrancheStatus::Pending
+                    || tranche.transfer_id != Some(transfer_id)
+                {
+                    return None;
+                }
+                tranche_update = Some(tranche);
+                Some(epoch)
+            }
+            TransferKind::Refund => {
+                if transfer.epoch.is_some()
+                    || transfer.recipient != commitment.policy.budget.sponsor
+                {
+                    return None;
+                }
+                None
+            }
+            _ => return None,
+        };
+
+        let next_paid_raw =
+            if outcome == TransferOutcomeV1::Success && transfer.kind == TransferKind::Tranche {
+                settlement.paid_raw.checked_add(amount_raw)?
+            } else {
+                settlement.paid_raw
+            };
+        let next_refunded_raw =
+            if outcome == TransferOutcomeV1::Success && transfer.kind == TransferKind::Refund {
+                settlement.refunded_raw.checked_add(amount_raw)?
+            } else {
+                settlement.refunded_raw
+            };
+
+        let has_recovery_intent = crate::recovery_config::is_configured();
+        let mut intent_digest_for_event = [0; 32];
+        if has_recovery_intent {
+            let kind = match transfer.kind {
+                TransferKind::Tranche => TransferKindV1::Tranche,
+                TransferKind::Refund => TransferKindV1::EscrowRefund,
+                _ => return None,
+            };
+            let pending = crate::receipt_recovery::pending_intent(transfer_id)?;
+            if pending.payer != transfer.recipient
+                || !crate::receipt_recovery::pending_intent_matches_transfer(
+                    &pending,
+                    transfer_id,
+                    transfer.commitment_id,
+                    kind,
+                    tranche_epoch,
+                    token_account_id,
+                    &transfer.recipient,
+                    amount_raw,
+                )
+            {
+                return None;
+            }
+            intent_digest_for_event = pending.intent_digest;
+            crate::receipt_recovery::mark_pending_intent_terminal(
+                transfer_id,
+                outcome,
+                certificate_digest,
+            )?;
+            crate::recovery_config::decrement_pending_intent_count(pending.intent.committee_epoch);
+            crate::recovery_accounting::seal_refund_credit(pending.refund_credit_id);
+        } else if crate::receipt_recovery::pending_intent(transfer_id).is_some() {
+            return None;
+        }
+
+        settlement.pending_raw -= amount_raw;
+        settlement.paid_raw = next_paid_raw;
+        settlement.refunded_raw = next_refunded_raw;
+        write_settlement_state(transfer.commitment_id, &settlement);
+        commitment.pending_transfer_count -= 1;
+
+        if let (Some(epoch), Some(mut tranche)) = (tranche_epoch, tranche_update) {
+            tranche.status = if outcome == TransferOutcomeV1::Success {
+                TrancheStatus::Paid
+            } else {
+                TrancheStatus::Failed
+            };
+            tranche.transfer_id = None;
+            self.tranches
+                .insert((transfer.commitment_id, epoch), tranche);
+            self.tranches.flush();
+        }
+
+        self.commitments
+            .insert(transfer.commitment_id, commitment.clone());
+        self.pending_transfers.remove(&transfer_id);
+        remove_settlement_transfer_amount(transfer_id);
+        self.commitments.flush();
+        self.pending_transfers.flush();
+
+        let settlement_asset = settlement_asset_for(&commitment);
+        let (event, role) = if transfer.kind == TransferKind::Tranche {
+            if outcome == TransferOutcomeV1::Success {
+                ("tranche_paid", "beneficiary")
+            } else {
+                ("tranche_transfer_failed", "beneficiary")
+            }
+        } else if outcome == TransferOutcomeV1::Success {
+            ("escrow_refunded", "sponsor")
+        } else {
+            ("escrow_refund_failed", "sponsor")
+        };
+        let mut event_data = json!({
+            "commitment_id": transfer.commitment_id.to_string(),
+            "transfer_id": transfer.id.to_string(),
+            "amount_raw": amount_raw.to_string(),
+            "settlement_asset": settlement_asset,
+        });
+        if let Some(epoch) = tranche_epoch {
+            event_data["epoch"] = json!(epoch);
+        }
+        event_data[role] = json!(transfer.recipient);
+        emit_event(event, event_data);
+        if certificate_digest != [0; 32] {
+            emit_event(
+                "receipt_recovery_transfer_settled",
+                json!({
+                    "transfer_id": transfer_id.to_string(),
+                    "intent_hash": crate::receipt_recovery::encode_lower_hex_32(&intent_digest_for_event),
+                    "outcome": match outcome {
+                        TransferOutcomeV1::Success => "success",
+                        TransferOutcomeV1::Failure => "failure",
+                    },
+                    "certificate_digest": crate::receipt_recovery::encode_lower_hex_32(&certificate_digest),
+                }),
+            );
+        }
+
+        // Leave terminal recovery storage in place for the separate
+        // permissionless finalizer. A bond-release error or low-gas cleanup
+        // must not roll back the already proven token outcome.
+        Some(())
     }
 
     #[private]
@@ -2807,6 +4496,10 @@ impl Contract {
             env::log_str("ignored callback for an unknown tranche transfer");
             return;
         };
+        if transfer.id != transfer_id.0 {
+            env::log_str("ignored tranche callback with a mismatched transfer ID");
+            return;
+        }
         if transfer.kind != TransferKind::Tranche {
             env::log_str("ignored tranche callback for a non-tranche transfer");
             return;
@@ -2816,40 +4509,48 @@ impl Contract {
             return;
         };
         let tranche_key = (transfer.commitment_id, epoch);
-        let mut tranche = self
-            .tranches
-            .get(&tranche_key)
-            .cloned()
-            .unwrap_or_else(|| env::panic_str("pending tranche record not found"));
+        let Some(mut tranche) = self.tranches.get(&tranche_key).cloned() else {
+            env::log_str("ignored tranche callback without a tranche record");
+            return;
+        };
         if tranche.status != TrancheStatus::Pending || tranche.transfer_id != Some(transfer.id) {
             env::log_str("ignored stale or mismatched tranche transfer callback");
             return;
         }
         let mut commitment = self.load_commitment(transfer.commitment_id);
         let mut settlement = read_settlement_state(transfer.commitment_id);
-        let is_native_near = settlement.is_none();
-        let amount_raw = if is_native_near {
-            transfer.amount_yocto
-        } else if let Some(amount) = read_settlement_transfer_amount(transfer.id) {
-            amount
-        } else {
-            env::log_str("ignored token payout callback without its reserved amount");
+        let Some((is_native_near, amount_raw)) =
+            callback_transfer_amount(&commitment, &transfer, settlement.as_ref())
+        else {
             return;
         };
         if commitment.pending_transfer_count == 0
             || (is_native_near && commitment.escrow_pending_yocto < amount_raw)
-            || settlement
-                .as_ref()
-                .is_some_and(|state| state.pending_raw < amount_raw)
         {
-            env::panic_str("pending escrow accounting invariant violated");
+            env::log_str("ignored tranche callback with inconsistent pending escrow accounting");
+            return;
         }
 
-        let succeeded = env::promise_results_count() == 1
-            && match env::promise_result_checked(0, 0) {
-                Ok(_) | Err(PromiseError::TooLong(_)) => true,
-                Err(_) => false,
+        let Some(succeeded) = callback_promise_succeeded() else {
+            return;
+        };
+        #[cfg(feature = "usdc-receipt-recovery")]
+        if !is_native_near {
+            let outcome = if succeeded {
+                crate::receipt_recovery::TransferOutcomeV1::Success
+            } else {
+                crate::receipt_recovery::TransferOutcomeV1::Failure
             };
+            let Some(()) = self.settle_token_transfer_outcome(transfer.id, outcome, [0; 32]) else {
+                env::log_str("ignored callback with a missing or mismatched recovery intent");
+                return;
+            };
+            native_cash::assert_solvency();
+            return;
+        }
+        if succeeded && is_native_near {
+            native_cash::adjust(native_cash::NativeLiability::Escrow, false, amount_raw);
+        }
         if let Some(state) = settlement.as_mut() {
             state.pending_raw -= amount_raw;
             if succeeded {
@@ -2903,6 +4604,7 @@ impl Contract {
                 "settlement_asset": settlement_asset,
             }),
         );
+        native_cash::assert_solvency();
     }
 
     #[private]
@@ -2911,6 +4613,10 @@ impl Contract {
             env::log_str("ignored callback for an unknown refund transfer");
             return;
         };
+        if transfer.id != transfer_id.0 {
+            env::log_str("ignored refund callback with a mismatched transfer ID");
+            return;
+        }
         if transfer.kind == TransferKind::OperationsRefund {
             self.on_operations_refund_transfer(transfer);
             return;
@@ -2920,29 +4626,44 @@ impl Contract {
             return;
         }
         let mut commitment = self.load_commitment(transfer.commitment_id);
+        if transfer.epoch.is_some() || transfer.recipient != commitment.policy.budget.sponsor {
+            env::log_str("ignored refund callback with a mismatched transfer intent");
+            return;
+        }
         let mut settlement = read_settlement_state(transfer.commitment_id);
-        let is_native_near = settlement.is_none();
-        let amount_raw = if is_native_near {
-            transfer.amount_yocto
-        } else if let Some(amount) = read_settlement_transfer_amount(transfer.id) {
-            amount
-        } else {
-            env::log_str("ignored token refund callback without its reserved amount");
+        let Some((is_native_near, amount_raw)) =
+            callback_transfer_amount(&commitment, &transfer, settlement.as_ref())
+        else {
             return;
         };
         if commitment.pending_transfer_count == 0
             || (is_native_near && commitment.escrow_pending_yocto < amount_raw)
-            || settlement
-                .as_ref()
-                .is_some_and(|state| state.pending_raw < amount_raw)
         {
-            env::panic_str("pending refund accounting invariant violated");
+            env::log_str("ignored refund callback with inconsistent pending escrow accounting");
+            return;
         }
-        let succeeded = env::promise_results_count() == 1
-            && match env::promise_result_checked(0, 0) {
-                Ok(_) | Err(PromiseError::TooLong(_)) => true,
-                Err(_) => false,
+        let Some(succeeded) = callback_promise_succeeded() else {
+            return;
+        };
+        #[cfg(feature = "usdc-receipt-recovery")]
+        if !is_native_near {
+            let outcome = if succeeded {
+                crate::receipt_recovery::TransferOutcomeV1::Success
+            } else {
+                crate::receipt_recovery::TransferOutcomeV1::Failure
             };
+            let Some(()) = self.settle_token_transfer_outcome(transfer.id, outcome, [0; 32]) else {
+                env::log_str(
+                    "ignored refund callback with a missing or mismatched recovery intent",
+                );
+                return;
+            };
+            native_cash::assert_solvency();
+            return;
+        }
+        if succeeded && is_native_near {
+            native_cash::adjust(native_cash::NativeLiability::Escrow, false, amount_raw);
+        }
         if let Some(state) = settlement.as_mut() {
             state.pending_raw -= amount_raw;
             if succeeded {
@@ -2986,18 +4707,30 @@ impl Contract {
                 "settlement_asset": settlement_asset,
             }),
         );
+        native_cash::assert_solvency();
     }
 
     fn on_operations_refund_transfer(&mut self, transfer: PendingTransfer) {
         let mut commitment = self.load_commitment(transfer.commitment_id);
-        if transfer.amount_yocto == 0 || commitment.pending_transfer_count == 0 {
-            env::panic_str("pending operations refund accounting invariant violated");
+        if transfer.kind != TransferKind::OperationsRefund
+            || transfer.epoch.is_some()
+            || transfer.recipient != commitment.policy.budget.sponsor
+            || transfer.amount_yocto == 0
+            || commitment.pending_transfer_count == 0
+        {
+            env::log_str("ignored operations refund callback with inconsistent pending state");
+            return;
         }
-        let succeeded = env::promise_results_count() == 1
-            && match env::promise_result_checked(0, 0) {
-                Ok(_) | Err(PromiseError::TooLong(_)) => true,
-                Err(_) => false,
-            };
+        let Some(succeeded) = callback_promise_succeeded() else {
+            return;
+        };
+        if succeeded {
+            native_cash::adjust(
+                native_cash::NativeLiability::Operations,
+                false,
+                transfer.amount_yocto,
+            );
+        }
         if !succeeded {
             commitment.operations_funded_yocto = commitment
                 .operations_funded_yocto
@@ -3023,6 +4756,7 @@ impl Contract {
                 "amount_yocto": transfer.amount_yocto.to_string(),
             }),
         );
+        native_cash::assert_solvency();
     }
 
     pub fn close_commitment(&mut self, commitment_id: U64) {
@@ -3097,6 +4831,25 @@ impl Contract {
             .next_transfer_id
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
+        #[cfg(any(
+            feature = "testnet-transfer-failure-fixture",
+            feature = "sandbox-callback-fixture"
+        ))]
+        let transfer_recipient = self.consume_test_transfer_recipient(commitment_id.0);
+        #[cfg(not(any(
+            feature = "testnet-transfer-failure-fixture",
+            feature = "sandbox-callback-fixture"
+        )))]
+        let transfer_recipient: Option<AccountId> = None;
+        let recipient = commitment.policy.budget.sponsor.clone();
+        let promise_recipient = transfer_recipient.unwrap_or_else(|| recipient.clone());
+        #[cfg(feature = "usdc-receipt-recovery")]
+        require!(
+            !crate::recovery_config::is_configured()
+                || is_native_near
+                || promise_recipient == recipient,
+            "receipt recovery does not allow a token refund recipient override"
+        );
         if let Some(state) = settlement.as_mut() {
             state.pending_raw = state
                 .pending_raw
@@ -3118,7 +4871,7 @@ impl Contract {
             commitment_id: commitment_id.0,
             kind: TransferKind::Refund,
             epoch: None,
-            recipient: commitment.policy.budget.sponsor.clone(),
+            recipient: recipient.clone(),
             amount_yocto: if is_native_near { amount } else { 0 },
         };
 
@@ -3126,8 +4879,46 @@ impl Contract {
         self.pending_transfers
             .insert(transfer_id, pending_transfer.clone());
         if !is_native_near {
-            write_settlement_transfer_amount(transfer_id, amount);
+            write_settlement_transfer_intent_v2(
+                &pending_transfer,
+                settlement_asset.clone(),
+                amount,
+            );
         }
+        #[cfg(feature = "usdc-receipt-recovery")]
+        let recovery_storage = match &settlement_asset {
+            SettlementAsset::Nep141 {
+                token_account_id, ..
+            } => crate::recovery_config::create_pending_intent(
+                transfer_id,
+                commitment_id.0,
+                crate::receipt_recovery::TransferKindV1::EscrowRefund,
+                None,
+                token_account_id,
+                &pending_transfer.recipient,
+                amount,
+                crate::receipt_recovery::OriginMethodV1::RefundRemaining,
+                FT_TRANSFER_DEPOSIT_YOCTO,
+                FT_TRANSFER_GAS_TGAS,
+            )
+            .map(|intent| crate::receipt_recovery::write_pending_intent(intent, caller.clone())),
+            SettlementAsset::Near => None,
+        };
+        #[cfg(feature = "usdc-receipt-recovery")]
+        let recovery_storage_bytes = recovery_storage.map_or(0, |record| record.storage_bytes);
+        #[cfg(feature = "usdc-receipt-recovery")]
+        if let Some(record) = recovery_storage {
+            emit_event(
+                "token_transfer_intent",
+                json!({
+                    "schema_version": 1,
+                    "transfer_id": transfer_id.to_string(),
+                    "intent_hash": crate::receipt_recovery::encode_lower_hex_32(&record.intent_digest),
+                }),
+            );
+        }
+        #[cfg(not(feature = "usdc-receipt-recovery"))]
+        let recovery_storage_bytes = 0;
         self.commitments.insert(commitment_id.0, commitment.clone());
         self.pending_transfers.flush();
         self.commitments.flush();
@@ -3135,6 +4926,12 @@ impl Contract {
             .checked_sub(storage_before)
             .unwrap_or_else(|| env::panic_str("storage usage unexpectedly decreased"));
         let required_storage_bond = storage_cost(storage_bytes);
+        let legacy_storage_bytes = storage_bytes
+            .checked_sub(recovery_storage_bytes)
+            .unwrap_or_else(|| {
+                env::panic_str("recovery storage measurement exceeds refund storage")
+            });
+        let legacy_storage_bond = storage_cost(legacy_storage_bytes);
         let required_attached_deposit =
             required_transfer_deposit(required_storage_bond, &settlement_asset)
                 .unwrap_or_else(|| env::panic_str("refund deposit requirement overflow"));
@@ -3145,27 +4942,69 @@ impl Contract {
         );
         commitment.storage_deposit_yocto = commitment
             .storage_deposit_yocto
-            .checked_add(required_storage_bond)
+            .checked_add(legacy_storage_bond)
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller, attached, required_attached_deposit);
+        #[cfg(feature = "usdc-receipt-recovery")]
+        if let Some(recovery_storage) = recovery_storage {
+            let excess = attached
+                .checked_sub(required_attached_deposit)
+                .unwrap_or_else(|| env::panic_str("storage deposit underpayment"));
+            crate::recovery_accounting::accrue_persisted_refund_credit(
+                recovery_storage.refund_credit_id,
+                excess,
+            );
+            native_cash::record_outflow(FT_TRANSFER_DEPOSIT_YOCTO);
+            native_cash::assert_solvency();
+        } else {
+            refund_excess(
+                caller,
+                attached,
+                required_attached_deposit,
+                if is_native_near {
+                    amount
+                } else {
+                    FT_TRANSFER_DEPOSIT_YOCTO
+                },
+            );
+        }
+        #[cfg(not(feature = "usdc-receipt-recovery"))]
+        refund_excess(
+            caller,
+            attached,
+            required_attached_deposit,
+            if is_native_near {
+                amount
+            } else {
+                FT_TRANSFER_DEPOSIT_YOCTO
+            },
+        );
 
         let callback_args = near_sdk::serde_json::to_vec(&json!({
             "transfer_id": U64(transfer_id),
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize refund callback"));
         let refund_promise = match settlement_asset.clone() {
-            SettlementAsset::Near => Promise::new(pending_transfer.recipient.clone())
-                .transfer(NearToken::from_yoctonear(amount)),
+            SettlementAsset::Near => {
+                Promise::new(promise_recipient.clone()).transfer(NearToken::from_yoctonear(amount))
+            }
             SettlementAsset::Nep141 {
                 token_account_id, ..
             } => {
-                let args = near_sdk::serde_json::to_vec(&json!({
-                    "receiver_id": pending_transfer.recipient.clone(),
+                #[allow(unused_mut)]
+                let mut transfer_args = json!({
+                    "receiver_id": promise_recipient.clone(),
                     "amount": amount.to_string(),
-                }))
-                .unwrap_or_else(|_| env::panic_str("failed to serialize NEP-141 refund"));
+                });
+                #[cfg(feature = "usdc-receipt-recovery")]
+                if recovery_storage.is_some() {
+                    let memo = crate::receipt_recovery::transfer_memo(transfer_id)
+                        .unwrap_or_else(|| env::panic_str("recovery refund memo is missing"));
+                    transfer_args["memo"] = json!(memo);
+                }
+                let args = near_sdk::serde_json::to_vec(&transfer_args)
+                    .unwrap_or_else(|_| env::panic_str("failed to serialize NEP-141 refund"));
                 Promise::new(token_account_id).function_call(
                     "ft_transfer".to_string(),
                     args,
@@ -3238,12 +5077,24 @@ impl Contract {
             .pending_transfer_count
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("pending transfer counter overflow"));
+        #[cfg(any(
+            feature = "testnet-transfer-failure-fixture",
+            feature = "sandbox-callback-fixture"
+        ))]
+        let transfer_recipient = self.consume_test_transfer_recipient(commitment_id.0);
+        #[cfg(not(any(
+            feature = "testnet-transfer-failure-fixture",
+            feature = "sandbox-callback-fixture"
+        )))]
+        let transfer_recipient: Option<AccountId> = None;
+        let recipient = commitment.policy.budget.sponsor.clone();
+        let promise_recipient = transfer_recipient.unwrap_or_else(|| recipient.clone());
         let pending_transfer = PendingTransfer {
             id: transfer_id,
             commitment_id: commitment_id.0,
             kind: TransferKind::OperationsRefund,
             epoch: None,
-            recipient: commitment.policy.budget.sponsor.clone(),
+            recipient: recipient.clone(),
             amount_yocto: amount,
         };
 
@@ -3268,13 +5119,13 @@ impl Contract {
             .unwrap_or_else(|| env::panic_str("storage deposit accounting overflow"));
         self.commitments.insert(commitment_id.0, commitment);
         self.commitments.flush();
-        refund_excess(caller, attached, required_storage_bond);
+        refund_excess(caller, attached, required_storage_bond, amount);
 
         let callback_args = near_sdk::serde_json::to_vec(&json!({
             "transfer_id": U64(transfer_id),
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize operations refund callback"));
-        let _refund_promise = Promise::new(pending_transfer.recipient.clone())
+        let _refund_promise = Promise::new(promise_recipient)
             .transfer(NearToken::from_yoctonear(amount))
             .then(Promise::new(env::current_account_id()).function_call(
                 "on_refund_transfer".to_string(),
@@ -3659,7 +5510,7 @@ impl Contract {
         self.commitments.insert(id, commitment);
         self.commitments.flush();
         self.next_commitment_id = id;
-        refund_excess(creator.clone(), attached, required_storage_bond);
+        refund_excess(creator.clone(), attached, required_storage_bond, 0);
         emit_event(
             "commitment_created",
             json!({
@@ -4116,6 +5967,20 @@ fn settlement_transfer_storage_key(transfer_id: u64) -> Vec<u8> {
     key
 }
 
+fn settlement_transfer_amount_v2_storage_key(transfer_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SETTLEMENT_TRANSFER_AMOUNT_V2_PREFIX.len() + 8);
+    key.extend_from_slice(SETTLEMENT_TRANSFER_AMOUNT_V2_PREFIX);
+    key.extend_from_slice(&transfer_id.to_le_bytes());
+    key
+}
+
+fn settlement_transfer_intent_v2_storage_key(transfer_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(SETTLEMENT_TRANSFER_INTENT_V2_PREFIX.len() + 8);
+    key.extend_from_slice(SETTLEMENT_TRANSFER_INTENT_V2_PREFIX);
+    key.extend_from_slice(&transfer_id.to_le_bytes());
+    key
+}
+
 fn write_settlement_state(commitment_id: u64, state: &SettlementState) {
     let bytes = near_sdk::borsh::to_vec(state)
         .unwrap_or_else(|_| env::panic_str("failed to serialize settlement state"));
@@ -4158,11 +6023,43 @@ fn escrow_amounts_for(commitment: &Commitment) -> EscrowAmounts {
         })
 }
 
+#[cfg(test)]
 fn write_settlement_transfer_amount(transfer_id: u64, amount_raw: u128) {
     let value = SettlementTransferAmount { amount_raw };
     let bytes = near_sdk::borsh::to_vec(&value)
         .unwrap_or_else(|_| env::panic_str("failed to serialize token transfer amount"));
     env::storage_write(&settlement_transfer_storage_key(transfer_id), &bytes);
+}
+
+fn write_settlement_transfer_intent_v2(
+    transfer: &PendingTransfer,
+    asset: SettlementAsset,
+    amount_raw: u128,
+) {
+    let amount = SettlementTransferAmount { amount_raw };
+    let amount_bytes = near_sdk::borsh::to_vec(&amount)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize v2 token transfer amount"));
+    let intent = SettlementTransferIntentV2 {
+        transfer_id: transfer.id,
+        commitment_id: transfer.commitment_id,
+        kind: transfer.kind,
+        epoch: transfer.epoch,
+        asset,
+        recipient: transfer.recipient.clone(),
+        amount_raw,
+        chain_id: env::chain_id(),
+        contract_id: env::current_account_id(),
+    };
+    let intent_bytes = near_sdk::borsh::to_vec(&intent)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize v2 token transfer intent"));
+    env::storage_write(
+        &settlement_transfer_amount_v2_storage_key(transfer.id),
+        &amount_bytes,
+    );
+    env::storage_write(
+        &settlement_transfer_intent_v2_storage_key(transfer.id),
+        &intent_bytes,
+    );
 }
 
 fn read_settlement_transfer_amount(transfer_id: u64) -> Option<u128> {
@@ -4172,8 +6069,162 @@ fn read_settlement_transfer_amount(transfer_id: u64) -> Option<u128> {
         .map(|transfer| transfer.amount_raw)
 }
 
+/// Resolve the asset and reserved amount from the persisted transfer intent before applying a
+/// callback. A token transfer has `amount_yocto == 0` in the legacy `PendingTransfer` record and
+/// carries its raw amount in a sidecar; that shape must never fall back to native-NEAR accounting
+/// if token state is missing or malformed.
+fn callback_transfer_amount(
+    commitment: &Commitment,
+    transfer: &PendingTransfer,
+    settlement: Option<&SettlementState>,
+) -> Option<(bool, u128)> {
+    let legacy_amount_key = settlement_transfer_storage_key(transfer.id);
+    let amount_v2_key = settlement_transfer_amount_v2_storage_key(transfer.id);
+    let intent_v2_key = settlement_transfer_intent_v2_storage_key(transfer.id);
+    let has_legacy_amount = env::storage_has_key(&legacy_amount_key);
+    let has_amount_v2 = env::storage_has_key(&amount_v2_key);
+    let has_intent_v2 = env::storage_has_key(&intent_v2_key);
+
+    match settlement {
+        Some(state) => {
+            if transfer.amount_yocto != 0 {
+                env::log_str("ignored token callback with a native amount in its transfer record");
+                return None;
+            }
+            if !matches!(state.asset, SettlementAsset::Nep141 { .. }) {
+                env::log_str("ignored callback with a non-token settlement sidecar");
+                return None;
+            }
+
+            let amount_raw = if has_amount_v2 || has_intent_v2 {
+                // New transfers have two versioned records. If either is absent or malformed,
+                // do not interpret the remaining record as an older transfer.
+                if has_legacy_amount || !has_amount_v2 || !has_intent_v2 {
+                    env::log_str("ignored token callback with incomplete v2 transfer intent");
+                    return None;
+                }
+                let Some(amount_bytes) = env::storage_read(&amount_v2_key) else {
+                    env::log_str("ignored token callback without its v2 amount");
+                    return None;
+                };
+                let Ok(amount) =
+                    near_sdk::borsh::from_slice::<SettlementTransferAmount>(&amount_bytes)
+                else {
+                    env::log_str("ignored token callback with malformed v2 amount");
+                    return None;
+                };
+                let Some(intent_bytes) = env::storage_read(&intent_v2_key) else {
+                    env::log_str("ignored token callback without its v2 intent");
+                    return None;
+                };
+                let Ok(intent) =
+                    near_sdk::borsh::from_slice::<SettlementTransferIntentV2>(&intent_bytes)
+                else {
+                    env::log_str("ignored token callback with malformed v2 intent");
+                    return None;
+                };
+                if intent.transfer_id != transfer.id
+                    || intent.commitment_id != transfer.commitment_id
+                    || intent.kind != transfer.kind
+                    || intent.epoch != transfer.epoch
+                    || intent.recipient != transfer.recipient
+                    || intent.asset != state.asset
+                    || intent.amount_raw != amount.amount_raw
+                    || intent.chain_id != env::chain_id()
+                    || intent.contract_id != env::current_account_id()
+                {
+                    env::log_str("ignored token callback with a mismatched v2 transfer intent");
+                    return None;
+                }
+                amount.amount_raw
+            } else {
+                // Preserve callbacks already in flight across an upgrade from the v1 layout.
+                // Old transfers are recognizable by their legacy amount sidecar; the native
+                // amount remains zero and the token/asset policy digest is still checked below.
+                if !has_legacy_amount {
+                    env::log_str("ignored legacy token callback without its reserved amount");
+                    return None;
+                }
+                let Some(amount) = read_settlement_transfer_amount(transfer.id) else {
+                    env::log_str("ignored legacy token callback with a malformed reserved amount");
+                    return None;
+                };
+                amount
+            };
+            if amount_raw == 0 {
+                env::log_str("ignored token callback with a zero reserved amount");
+                return None;
+            }
+            if state.pending_raw < amount_raw {
+                env::log_str("ignored token callback with insufficient pending token escrow");
+                return None;
+            }
+            if transfer.kind == TransferKind::Tranche
+                && amount_raw != tranche_amount_raw_for(commitment)
+            {
+                env::log_str("ignored token tranche callback with a mismatched tranche amount");
+                return None;
+            }
+
+            // The settlement sidecar is the token-account authority. Verify it against the
+            // immutable policy digest so missing or altered token state cannot be mistaken for
+            // a valid transfer intent.
+            let expected_policy_hash = if commitment.policy.version == 3 {
+                let Some(service_policy) = read_service_policy(commitment.id) else {
+                    env::log_str("ignored token callback without its service policy");
+                    return None;
+                };
+                service_availability_asset_policy_digest(
+                    &commitment.policy,
+                    &service_policy,
+                    Some(state),
+                )
+            } else {
+                commitment_policy_digest(&commitment.policy, Some(state))
+            };
+            if expected_policy_hash != commitment.policy_hash {
+                env::log_str(
+                    "ignored token callback with settlement state outside the policy digest",
+                );
+                return None;
+            }
+            Some((false, amount_raw))
+        }
+        None => {
+            // Native transfers have a positive amount in PendingTransfer and no token amount
+            // sidecar. Token transfers have zero native amount, so even loss of both token
+            // sidecars remains distinguishable and fails closed.
+            if transfer.amount_yocto == 0 || has_legacy_amount || has_amount_v2 || has_intent_v2 {
+                env::log_str("ignored callback with missing or ambiguous token settlement state");
+                return None;
+            }
+            Some((true, transfer.amount_yocto))
+        }
+    }
+}
+
+/// `false` is reserved for an explicitly failed single promise result. A missing or malformed
+/// callback context is unknown, not evidence that the transfer failed.
+fn callback_promise_succeeded() -> Option<bool> {
+    if env::promise_results_count() != 1 {
+        env::log_str("ignored transfer callback with an unexpected promise result count");
+        return None;
+    }
+
+    match env::promise_result_checked(0, 0) {
+        Ok(_) | Err(PromiseError::TooLong(_)) => Some(true),
+        Err(PromiseError::Failed) => Some(false),
+        Err(_) => {
+            env::log_str("ignored transfer callback with an unknown promise result");
+            None
+        }
+    }
+}
+
 fn remove_settlement_transfer_amount(transfer_id: u64) {
     env::storage_remove(&settlement_transfer_storage_key(transfer_id));
+    env::storage_remove(&settlement_transfer_amount_v2_storage_key(transfer_id));
+    env::storage_remove(&settlement_transfer_intent_v2_storage_key(transfer_id));
 }
 
 fn service_report_inbox_storage_key(
@@ -4216,13 +6267,31 @@ fn read_service_report_refund_credit(account_id: &near_sdk::AccountId) -> Option
 }
 
 fn increase_service_report_refund_credit(account_id: &near_sdk::AccountId, amount: u128) {
-    let current = read_service_report_refund_credit(account_id).unwrap_or(0);
-    let updated = current
+    let updated = add_service_report_refund_credit(account_id, amount);
+    native_cash::adjust(native_cash::NativeLiability::StorageRefund, true, amount);
+    write_service_report_refund_credit(account_id, updated);
+    native_cash::assert_solvency();
+}
+
+/// Restores a failed transfer attempt to the payer's existing credit. The
+/// amount is already included in the native refund liability, so this must not
+/// increase the aggregate a second time.
+fn accrue_service_report_refund_credit(account_id: &near_sdk::AccountId, amount: u128) {
+    let updated = add_service_report_refund_credit(account_id, amount);
+    write_service_report_refund_credit(account_id, updated);
+}
+
+fn add_service_report_refund_credit(account_id: &near_sdk::AccountId, amount: u128) -> u128 {
+    read_service_report_refund_credit(account_id)
+        .unwrap_or(0)
         .checked_add(amount)
-        .unwrap_or_else(|| env::panic_str("service report refund credit overflow"));
+        .unwrap_or_else(|| env::panic_str("service report refund credit overflow"))
+}
+
+fn write_service_report_refund_credit(account_id: &near_sdk::AccountId, amount: u128) {
     env::storage_write(
         &service_report_refund_storage_key(account_id),
-        &updated.to_le_bytes(),
+        &amount.to_le_bytes(),
     );
 }
 
@@ -5257,6 +7326,7 @@ mod tests {
         VMContextBuilder::new()
             .current_account_id(accounts(0))
             .predecessor_account_id(predecessor)
+            .account_balance(NearToken::from_yoctonear(10_u128.pow(30)))
             .block_timestamp(now_ns)
             .attached_deposit(NearToken::from_yoctonear(attached_deposit))
             .build()
@@ -5338,6 +7408,7 @@ mod tests {
             pending_transfer_count: 1,
         };
 
+        native_cash::adjust(native_cash::NativeLiability::Escrow, true, TRANCHE_AMOUNT);
         contract.commitments.insert(CONTRACT_ID, commitment);
         contract.evaluation_records.insert(
             (CONTRACT_ID, EVALUATION_ID),
@@ -5594,6 +7665,22 @@ mod tests {
         assert_eq!(deposits, expected_deposits);
     }
 
+    fn assert_ft_tranche_callback_gas(expected_gas: u64) {
+        let callback_gas: Vec<u64> = near_sdk::test_utils::get_created_receipts()
+            .iter()
+            .flat_map(|receipt| receipt.actions.iter())
+            .filter_map(|action| match action {
+                near_sdk::mock::MockAction::FunctionCallWeight {
+                    method_name,
+                    prepaid_gas,
+                    ..
+                } if method_name == b"on_tranche_transfer" => Some(prepaid_gas.as_gas()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(callback_gas, vec![expected_gas]);
+    }
+
     fn transaction_authenticated_service_commitment_args() -> CreateServiceAvailabilityCommitmentArgs
     {
         let mut args = service_commitment_args();
@@ -5664,6 +7751,11 @@ mod tests {
         commitment.activated_at_ns = Some(NOW_NS - 10);
         commitment.operations_funded_yocto =
             commitment.policy.evaluator.execution_deposit_yocto * 2;
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            true,
+            commitment.operations_funded_yocto,
+        );
         contract.commitments.insert(id.0, commitment);
         contract.commitments.flush();
         (contract, id, operators)
@@ -5692,6 +7784,11 @@ mod tests {
         commitment.activated_at_ns = Some(NOW_NS - 10);
         commitment.operations_funded_yocto =
             commitment.policy.evaluator.execution_deposit_yocto * 2;
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            true,
+            commitment.operations_funded_yocto,
+        );
         contract.commitments.insert(id.0, commitment);
         contract.commitments.flush();
         (contract, id, operators)
@@ -5802,6 +7899,11 @@ mod tests {
         commitment.activated_at_ns = Some(NOW_NS - 500);
         commitment.escrow_funded_yocto =
             TRANCHE_AMOUNT * u128::from(commitment.policy.budget.max_epochs);
+        native_cash::adjust(
+            native_cash::NativeLiability::Escrow,
+            true,
+            commitment.escrow_funded_yocto,
+        );
         let evidence_hash = [21; 32];
         commitment.last_good = Some(GoodObservation {
             evaluation_id: EVALUATION_ID,
@@ -5993,6 +8095,7 @@ mod tests {
         let mut commitment = contract.commitments.get(&CONTRACT_ID).unwrap().clone();
         commitment.lifecycle = Lifecycle::Closed;
         commitment.escrow_funded_yocto = TRANCHE_AMOUNT * 2;
+        native_cash::adjust(native_cash::NativeLiability::Escrow, true, TRANCHE_AMOUNT);
         commitment.escrow_pending_yocto = TRANCHE_AMOUNT;
         commitment.pending_transfer_count = 1;
         contract.commitments.insert(CONTRACT_ID, commitment);
@@ -6021,6 +8124,11 @@ mod tests {
         commitment.lifecycle = Lifecycle::Closed;
         commitment.operations_funded_yocto = TRANCHE_AMOUNT * 3;
         commitment.operations_authorized_spend_yocto = TRANCHE_AMOUNT;
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            true,
+            TRANCHE_AMOUNT * 2,
+        );
         contract.commitments.insert(CONTRACT_ID, commitment);
         contract.commitments.flush();
         contract
@@ -6181,6 +8289,91 @@ mod tests {
     }
 
     #[test]
+    fn usdc_concurrent_funding_receipt_orders_preserve_the_aggregate_cap() {
+        let token_account: AccountId = NEAR_TESTNET_USDC_ACCOUNT.parse().unwrap();
+        for amounts in [[3_000_000_u128, 2_000_000_u128], [2_000_000, 3_000_000]] {
+            let (mut contract, id) = create_usdc_service_commitment();
+            let message = near_sdk::serde_json::to_string(&json!({
+                "schema": "lcp.funding.v1",
+                "commitment_id": id,
+            }))
+            .unwrap();
+            let mut used_total = 0_u128;
+            let mut returned_total = 0_u128;
+
+            for amount in amounts {
+                testing_env!(context_at(token_account.clone(), 0, NOW_NS));
+                let returned =
+                    match contract.ft_on_transfer(accounts(1), U128(amount), message.clone()) {
+                        PromiseOrValue::Value(U128(value)) => value,
+                        PromiseOrValue::Promise(_) => {
+                            panic!("funding receiver must return synchronously")
+                        }
+                    };
+                used_total += amount - returned;
+                returned_total += returned;
+            }
+
+            let status = contract.get_escrow_status(id).unwrap();
+            assert_eq!(used_total, 4_500_000);
+            assert_eq!(returned_total, 500_000);
+            assert_eq!(status.funded_raw.0, 4_500_000);
+            assert_eq!(status.free_raw.0, 4_500_000);
+            assert_eq!(status.pending_raw.0, 0);
+        }
+    }
+
+    #[test]
+    fn usdc_funding_receipt_order_stress_never_exceeds_the_aggregate_cap() {
+        fn collect_permutations(values: &mut [u128], index: usize, result: &mut Vec<Vec<u128>>) {
+            if index == values.len() {
+                result.push(values.to_vec());
+                return;
+            }
+            for next in index..values.len() {
+                values.swap(index, next);
+                collect_permutations(values, index + 1, result);
+                values.swap(index, next);
+            }
+        }
+
+        let mut amounts = [1_000_000_u128, 1_500_000, 2_000_000, 1_500_000];
+        let mut schedules = Vec::new();
+        collect_permutations(&mut amounts, 0, &mut schedules);
+        let token_account: AccountId = NEAR_TESTNET_USDC_ACCOUNT.parse().unwrap();
+
+        for schedule in schedules {
+            let (mut contract, id) = create_usdc_service_commitment();
+            let message = near_sdk::serde_json::to_string(&json!({
+                "schema": "lcp.funding.v1",
+                "commitment_id": id,
+            }))
+            .unwrap();
+            let mut accepted_total = 0_u128;
+            let mut returned_total = 0_u128;
+            for amount in schedule {
+                testing_env!(context_at(token_account.clone(), 0, NOW_NS));
+                let returned =
+                    match contract.ft_on_transfer(accounts(1), U128(amount), message.clone()) {
+                        PromiseOrValue::Value(U128(value)) => value,
+                        PromiseOrValue::Promise(_) => {
+                            panic!("funding receiver must return synchronously")
+                        }
+                    };
+                accepted_total += amount - returned;
+                returned_total += returned;
+            }
+
+            let status = contract.get_escrow_status(id).unwrap();
+            assert_eq!(accepted_total, 4_500_000);
+            assert_eq!(returned_total, 1_500_000);
+            assert_eq!(status.funded_raw.0, 4_500_000);
+            assert_eq!(status.free_raw.0, 4_500_000);
+            assert_eq!(status.pending_raw.0, 0);
+        }
+    }
+
+    #[test]
     #[should_panic(expected = "commitment escrow is not fully funded")]
     fn usdc_commitment_cannot_activate_before_full_token_escrow() {
         let (mut contract, id) = create_usdc_service_commitment();
@@ -6261,17 +8454,29 @@ mod tests {
         testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
         let storage_usage_before = env::storage_usage();
         let transfer_id = contract.claim_tranche(id);
-        let storage_bond = storage_cost(env::storage_usage() - storage_usage_before);
+        let total_storage_delta_cost = storage_cost(env::storage_usage() - storage_usage_before);
         let storage_deposit_after = contract
             .commitments
             .get(&id.0)
             .unwrap()
             .storage_deposit_yocto;
+        let commitment_storage_bond = storage_deposit_after - storage_deposit_before;
 
         assert_eq!(transfer_id.0, TRANSFER_ID);
-        assert!(storage_bond > 0);
-        assert_eq!(storage_deposit_after - storage_deposit_before, storage_bond);
+        assert!(commitment_storage_bond > 0);
+        assert!(total_storage_delta_cost > commitment_storage_bond);
+        assert!(native_cash::read_refund_attempt(native_cash::load().next_attempt_id).is_some());
+        assert!(!env::storage_has_key(&settlement_transfer_storage_key(
+            transfer_id.0
+        )));
+        assert!(env::storage_has_key(
+            &settlement_transfer_amount_v2_storage_key(transfer_id.0)
+        ));
+        assert!(env::storage_has_key(
+            &settlement_transfer_intent_v2_storage_key(transfer_id.0)
+        ));
         assert_ft_transfer_deposit(&[FT_TRANSFER_DEPOSIT_YOCTO]);
+        assert_ft_tranche_callback_gas(FT_CALLBACK_GAS_TGAS * 1_000_000_000_000);
         let pending = contract.get_escrow_status(id).unwrap();
         assert_eq!(pending.funded_raw.0, 4_500_000);
         assert_eq!(pending.pending_raw.0, 1_500_000);
@@ -6317,6 +8522,184 @@ mod tests {
     }
 
     #[test]
+    fn usdc_claim_remains_reserved_if_the_callback_receipt_does_not_run() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        let transfer_id = contract.claim_tranche(id);
+        let status = contract.get_escrow_status(id).unwrap();
+        let commitment = contract.commitments.get(&id.0).unwrap();
+        let tranche = contract.get_tranche(id, U64(u64::from(EPOCH))).unwrap();
+        let eligibility = contract.can_claim_tranche(id).unwrap();
+
+        // This models a token transfer receipt followed by a callback receipt that never
+        // executes (for example, an out-of-gas callback). It does not simulate WASM gas.
+        assert_eq!(transfer_id.0, TRANSFER_ID);
+        assert_eq!(status.funded_raw.0, 4_500_000);
+        assert_eq!(status.pending_raw.0, 1_500_000);
+        assert_eq!(status.paid_raw.0, 0);
+        assert_eq!(status.free_raw.0, 3_000_000);
+        assert_eq!(commitment.pending_transfer_count, 1);
+        assert_eq!(tranche.status, TrancheStatus::Pending);
+        assert_eq!(tranche.transfer_id, Some(transfer_id));
+        assert!(!eligibility.eligible);
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_some());
+    }
+
+    #[test]
+    fn usdc_claim_with_unexpected_callback_result_count_keeps_reservation() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        let transfer_id = contract.claim_tranche(id);
+        testing_env!(context(accounts(0), 0));
+        contract.on_tranche_transfer(transfer_id);
+
+        let status = contract.get_escrow_status(id).unwrap();
+        let commitment = contract.commitments.get(&id.0).unwrap();
+        let tranche = contract.get_tranche(id, U64(u64::from(EPOCH))).unwrap();
+        assert_eq!(status.pending_raw.0, 1_500_000);
+        assert_eq!(status.paid_raw.0, 0);
+        assert_eq!(status.free_raw.0, 3_000_000);
+        assert_eq!(commitment.pending_transfer_count, 1);
+        assert_eq!(tranche.status, TrancheStatus::Pending);
+        assert_eq!(tranche.transfer_id, Some(transfer_id));
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_some());
+    }
+
+    #[test]
+    fn callback_result_count_must_be_exactly_one() {
+        testing_env!(context(accounts(0), 0));
+        assert_eq!(callback_promise_succeeded(), None);
+
+        testing_env!(
+            context(accounts(0), 0),
+            near_sdk::test_vm_config(),
+            near_sdk::RuntimeFeesConfig::test(),
+            Default::default(),
+            vec![PromiseResult::Successful(vec![]), PromiseResult::Failed,],
+        );
+        assert_eq!(callback_promise_succeeded(), None);
+    }
+
+    #[test]
+    fn usdc_claim_with_missing_settlement_state_keeps_reservation() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        let transfer_id = contract.claim_tranche(id);
+        env::storage_remove(&settlement_state_storage_key(id.0));
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_tranche_transfer(transfer_id);
+
+        let commitment = contract.commitments.get(&id.0).unwrap();
+        let tranche = contract.get_tranche(id, U64(u64::from(EPOCH))).unwrap();
+        assert_eq!(commitment.pending_transfer_count, 1);
+        assert_eq!(tranche.status, TrancheStatus::Pending);
+        assert_eq!(tranche.transfer_id, Some(transfer_id));
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_some());
+        assert!(env::storage_has_key(
+            &settlement_transfer_amount_v2_storage_key(transfer_id.0)
+        ));
+        assert!(env::storage_has_key(
+            &settlement_transfer_intent_v2_storage_key(transfer_id.0)
+        ));
+    }
+
+    #[test]
+    fn usdc_claim_with_mismatched_transfer_intent_keeps_reservation() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        let transfer_id = contract.claim_tranche(id);
+        let wrong_amount = SettlementTransferAmount {
+            amount_raw: 1_400_000,
+        };
+        let wrong_amount_bytes = near_sdk::borsh::to_vec(&wrong_amount).unwrap();
+        env::storage_write(
+            &settlement_transfer_amount_v2_storage_key(transfer_id.0),
+            &wrong_amount_bytes,
+        );
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_tranche_transfer(transfer_id);
+
+        let status = contract.get_escrow_status(id).unwrap();
+        let commitment = contract.commitments.get(&id.0).unwrap();
+        let tranche = contract.get_tranche(id, U64(u64::from(EPOCH))).unwrap();
+        assert_eq!(status.pending_raw.0, 1_500_000);
+        assert_eq!(status.paid_raw.0, 0);
+        assert_eq!(commitment.pending_transfer_count, 1);
+        assert_eq!(tranche.status, TrancheStatus::Pending);
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_some());
+    }
+
+    #[test]
+    fn legacy_usdc_transfer_callback_still_settles_after_upgrade() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        let transfer_id = contract.claim_tranche(id);
+        env::storage_remove(&settlement_transfer_amount_v2_storage_key(transfer_id.0));
+        env::storage_remove(&settlement_transfer_intent_v2_storage_key(transfer_id.0));
+        write_settlement_transfer_amount(transfer_id.0, 1_500_000);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_tranche_transfer(transfer_id);
+
+        let status = contract.get_escrow_status(id).unwrap();
+        assert_eq!(status.pending_raw.0, 0);
+        assert_eq!(status.paid_raw.0, 1_500_000);
+        assert_eq!(status.free_raw.0, 3_000_000);
+        assert!(!env::storage_has_key(&settlement_transfer_storage_key(
+            transfer_id.0
+        )));
+    }
+
+    #[test]
+    fn usdc_refund_with_missing_settlement_state_keeps_reservation() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Closed;
+        contract.commitments.insert(id.0, commitment);
+        contract.commitments.flush();
+        let mut settlement = read_settlement_state(id.0).unwrap();
+        settlement.funded_raw = 4_500_000;
+        write_settlement_state(id.0, &settlement);
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let transfer_id = contract.refund_remaining(id);
+        env::storage_remove(&settlement_state_storage_key(id.0));
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_refund_transfer(transfer_id);
+
+        let commitment = contract.commitments.get(&id.0).unwrap();
+        assert_eq!(commitment.pending_transfer_count, 1);
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_some());
+        assert!(env::storage_has_key(
+            &settlement_transfer_amount_v2_storage_key(transfer_id.0)
+        ));
+        assert!(env::storage_has_key(
+            &settlement_transfer_intent_v2_storage_key(transfer_id.0)
+        ));
+    }
+
+    #[test]
     #[allow(deprecated)]
     fn usdc_residual_refund_attaches_one_yocto_and_reconciles_retry() {
         let (mut contract, id) = create_usdc_service_commitment();
@@ -6332,16 +8715,18 @@ mod tests {
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
         let storage_usage_before = env::storage_usage();
         let transfer_id = contract.refund_remaining(id);
-        let storage_bond = storage_cost(env::storage_usage() - storage_usage_before);
+        let total_storage_delta_cost = storage_cost(env::storage_usage() - storage_usage_before);
         let storage_deposit_after = contract
             .commitments
             .get(&id.0)
             .unwrap()
             .storage_deposit_yocto;
+        let commitment_storage_bond = storage_deposit_after - storage_deposit_before;
 
         assert_eq!(transfer_id.0, TRANSFER_ID);
-        assert!(storage_bond > 0);
-        assert_eq!(storage_deposit_after - storage_deposit_before, storage_bond);
+        assert!(commitment_storage_bond > 0);
+        assert!(total_storage_delta_cost > commitment_storage_bond);
+        assert!(native_cash::read_refund_attempt(native_cash::load().next_attempt_id).is_some());
         assert_ft_transfer_deposit(&[FT_TRANSFER_DEPOSIT_YOCTO]);
         let pending = contract.get_escrow_status(id).unwrap();
         assert_eq!(pending.pending_raw.0, 4_500_000);
@@ -6439,6 +8824,7 @@ mod tests {
 
         testing_env!(context_at(operators[0].clone(), 0, NOW_NS));
         contract.withdraw_service_report_refund();
+        let first_attempt_id = native_cash::load().next_attempt_id;
         assert_eq!(
             contract
                 .get_service_report_refund_balance(operators[0].clone())
@@ -6446,7 +8832,7 @@ mod tests {
             0
         );
         testing_env_with_promise_results(context_at(accounts(0), 0, NOW_NS), PromiseResult::Failed);
-        contract.on_service_report_refund(operators[0].clone(), U128(first_bond));
+        contract.on_storage_refund_attempt(U64(first_attempt_id));
         assert_eq!(
             contract
                 .get_service_report_refund_balance(operators[0].clone())
@@ -6455,11 +8841,12 @@ mod tests {
         );
         testing_env!(context_at(operators[0].clone(), 0, NOW_NS));
         contract.withdraw_service_report_refund();
+        let second_attempt_id = native_cash::load().next_attempt_id;
         testing_env_with_promise_results(
             context_at(accounts(0), 0, NOW_NS),
             PromiseResult::Successful(Vec::new()),
         );
-        contract.on_service_report_refund(operators[0].clone(), U128(first_bond));
+        contract.on_storage_refund_attempt(U64(second_attempt_id));
         assert_eq!(
             contract
                 .get_service_report_refund_balance(operators[0].clone())
@@ -6783,6 +9170,11 @@ mod tests {
         commitment.activated_at_ns = Some(NOW_NS - 10);
         commitment.operations_funded_yocto =
             commitment.policy.evaluator.execution_deposit_yocto * 2;
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            true,
+            commitment.operations_funded_yocto,
+        );
         contract.commitments.insert(id.0, commitment.clone());
         contract.commitments.flush();
 
@@ -7580,8 +9972,14 @@ mod tests {
         let refund_id = U64(TRANSFER_ID + 1);
 
         let mut failed = contract_with_pending_refund();
+        let initial_failed_liability = native_cash::load().native_escrow_liability;
+        assert_eq!(initial_failed_liability, TRANCHE_AMOUNT * 2);
         testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
         failed.on_refund_transfer(refund_id);
+        assert_eq!(
+            native_cash::load().native_escrow_liability,
+            initial_failed_liability
+        );
         let failed_state = failed.get_escrow_status(U64(CONTRACT_ID)).unwrap();
         assert_eq!(failed_state.pending_yocto.0, 0);
         assert_eq!(failed_state.refunded_yocto.0, 0);
@@ -7594,6 +9992,7 @@ mod tests {
         );
         succeeded.on_refund_transfer(refund_id);
         succeeded.on_refund_transfer(refund_id);
+        assert_eq!(native_cash::load().native_escrow_liability, TRANCHE_AMOUNT);
         let settled = succeeded.get_escrow_status(U64(CONTRACT_ID)).unwrap();
         assert_eq!(settled.pending_yocto.0, 0);
         assert_eq!(settled.refunded_yocto.0, TRANCHE_AMOUNT);
@@ -7607,6 +10006,7 @@ mod tests {
         testing_env!(context_at(accounts(1), 10_u128.pow(24), NOW_NS));
 
         let transfer_id = contract.refund_unused_operations(U64(CONTRACT_ID));
+        assert_eq!(native_cash::load().operations_liability, TRANCHE_AMOUNT * 2);
         let commitment = contract.commitments.get(&CONTRACT_ID).unwrap();
         assert_eq!(commitment.operations_funded_yocto, TRANCHE_AMOUNT);
         assert_eq!(commitment.operations_authorized_spend_yocto, TRANCHE_AMOUNT);
@@ -7628,6 +10028,7 @@ mod tests {
             PromiseResult::Successful(vec![]),
         );
         contract.on_refund_transfer(transfer_id);
+        assert_eq!(native_cash::load().operations_liability, 0);
         contract.on_refund_transfer(transfer_id);
 
         let settled = contract.commitments.get(&CONTRACT_ID).unwrap();
@@ -7652,6 +10053,7 @@ mod tests {
         let transfer_id = contract.refund_unused_operations(U64(CONTRACT_ID));
         testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
         contract.on_refund_transfer(transfer_id);
+        assert_eq!(native_cash::load().operations_liability, TRANCHE_AMOUNT * 2);
 
         let recovered = contract.commitments.get(&CONTRACT_ID).unwrap();
         assert_eq!(recovered.operations_funded_yocto, TRANCHE_AMOUNT * 3);
@@ -7699,15 +10101,41 @@ mod tests {
     fn successful_excess_storage_refund_does_not_create_a_withdrawable_credit() {
         let mut contract = Contract::new();
         let account_id = accounts(1);
-        let amount = U128(123);
+        let amount = 123_u128;
+        let attempt_id = native_cash::begin_refund_attempt(
+            account_id,
+            amount,
+            native_cash::RefundAttemptKind::Excess,
+            true,
+        );
 
         testing_env_with_promise_results(
             context(accounts(0), 0),
             PromiseResult::Successful(Vec::new()),
         );
-        contract.on_excess_refund(account_id.clone(), amount);
+        contract.on_storage_refund_attempt(U64(attempt_id));
+        contract.on_storage_refund_attempt(U64(attempt_id));
 
-        assert_eq!(contract.get_storage_refund_balance(account_id).0, 0);
+        assert_eq!(contract.get_storage_refund_balance(accounts(1)).0, 0);
+        assert_eq!(native_cash::load().storage_refund_liability, 0);
+    }
+
+    #[test]
+    fn missing_storage_refund_callback_result_keeps_attempt_pending() {
+        testing_env!(context(accounts(0), 0));
+        let mut contract = Contract::new();
+        let attempt_id = native_cash::begin_refund_attempt(
+            accounts(1),
+            77,
+            native_cash::RefundAttemptKind::Excess,
+            true,
+        );
+
+        testing_env!(context(accounts(0), 0));
+        contract.on_storage_refund_attempt(U64(attempt_id));
+
+        assert!(native_cash::read_refund_attempt(attempt_id).is_some());
+        assert_eq!(native_cash::load().storage_refund_liability, 77);
     }
 
     #[test]
@@ -7715,55 +10143,86 @@ mod tests {
     fn failed_excess_storage_refund_can_be_retried_from_credited_balance() {
         let mut contract = Contract::new();
         let account_id = accounts(1);
-        let amount = U128(123);
+        let amount = 123_u128;
+        let first_attempt_id = native_cash::begin_refund_attempt(
+            account_id.clone(),
+            amount,
+            native_cash::RefundAttemptKind::Excess,
+            true,
+        );
 
         testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
-        contract.on_excess_refund(account_id.clone(), amount);
+        contract.on_storage_refund_attempt(U64(first_attempt_id));
         assert_eq!(
             contract.get_storage_refund_balance(account_id.clone()).0,
-            amount.0
+            amount
         );
+        assert_eq!(native_cash::load().storage_refund_liability, amount);
+        assert!(native_cash::read_refund_attempt(first_attempt_id).is_none());
 
         testing_env!(context(account_id.clone(), 0));
         contract.withdraw_storage_refund();
+        let second_attempt_id = native_cash::load().next_attempt_id;
+        assert_eq!(native_cash::load().storage_refund_liability, amount);
         assert_eq!(contract.get_storage_refund_balance(account_id.clone()).0, 0);
 
         testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
-        contract.on_service_report_refund(account_id.clone(), amount);
+        contract.on_storage_refund_attempt(U64(second_attempt_id));
         assert_eq!(
             contract.get_storage_refund_balance(account_id.clone()).0,
-            amount.0
+            amount
         );
+        assert_eq!(native_cash::load().storage_refund_liability, amount);
 
         testing_env!(context(account_id.clone(), 0));
         contract.withdraw_storage_refund();
+        let third_attempt_id = native_cash::load().next_attempt_id;
         testing_env_with_promise_results(
             context(accounts(0), 0),
             PromiseResult::Successful(Vec::new()),
         );
-        contract.on_service_report_refund(account_id.clone(), amount);
+        contract.on_storage_refund_attempt(U64(third_attempt_id));
         assert_eq!(contract.get_storage_refund_balance(account_id).0, 0);
+        assert_eq!(native_cash::load().storage_refund_liability, 0);
     }
 }
 
-fn refund_excess(account_id: near_sdk::AccountId, attached: u128, required: u128) {
+fn refund_excess(
+    account_id: near_sdk::AccountId,
+    attached: u128,
+    required: u128,
+    additional_outflow_yocto: u128,
+) {
     let excess = attached
         .checked_sub(required)
         .unwrap_or_else(|| env::panic_str("storage deposit underpayment"));
     if excess > 0 {
+        let attempt_id = native_cash::begin_refund_attempt(
+            account_id.clone(),
+            excess,
+            native_cash::RefundAttemptKind::Excess,
+            true,
+        );
         let callback_args = near_sdk::serde_json::to_vec(&json!({
-            "account_id": account_id,
-            "amount": U128(excess),
+            "attempt_id": U64(attempt_id),
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize excess refund callback"));
+        let total_outflow = excess
+            .checked_add(additional_outflow_yocto)
+            .unwrap_or_else(|| env::panic_str("native cash outflow overflow"));
+        native_cash::record_outflow(total_outflow);
+        native_cash::assert_solvency();
         let _refund_promise = Promise::new(account_id.clone())
             .transfer(NearToken::from_yoctonear(excess))
             .then(Promise::new(env::current_account_id()).function_call(
-                "on_excess_refund".to_string(),
+                "on_storage_refund_attempt".to_string(),
                 callback_args,
                 NearToken::from_yoctonear(0),
                 Gas::from_tgas(CALLBACK_GAS_TGAS),
             ));
+    } else {
+        native_cash::record_outflow(additional_outflow_yocto);
+        native_cash::assert_solvency();
     }
 }
 

@@ -1,0 +1,41 @@
+{
+  "review_subject": "USDC receipt-recovery threshold-attestation proposal",
+  "baseline_git_commit": "f4c4fccf5f6d0a2d268425e9722eaeea2fd49bed",
+  "working_tree_dirty": true,
+  "created_date": "2026-11-15",
+  "review_inputs": [
+    { "path": "P2-USDC-RECEIPT-RECOVERY-DESIGN.md", "sha256": "b828595d45cc2a783a86ac61958139b7246fc480e905a5b60c8fc897eaee87ba" },
+    { "path": "P2-USDC-RECEIPT-RECOVERY-AUDIT.md", "sha256": "e8658be9c3afd95416313bd309a6e8c61ec030cfd9dc152e8028aa79f3187928" },
+    { "path": "P2-USDC-RECEIPT-RECOVERY-FOLLOWUP-BRIEF.md", "sha256": "80bf39bde36920dc5e5d08d2e7f50d91134f6e9dc12349a6659abd3e7e5f84f0" },
+    { "path": "P2-USDC-INDEPENDENT-AUDIT-REPORT.md", "sha256": "f331de22899a7017d6a8698fae997d85296fc0840abd5ebdb5bbc42be6df54ff" },
+    { "path": "P2-USDC-INDEPENDENT-AUDIT-FOLLOWUP.md", "sha256": "e5e9dba2ebdfbc5c86405ed1c3aaedf36bd68bbde7f00a1dbfba46594d187ab7" },
+    { "path": "TODO.md", "sha256": "68c187e2ab38da57dd501d2bd2d20f47edcf0b15877c3aa0440066ed87e9a6e4" },
+    { "path": "contracts/lcp-core/src/contract.rs", "sha256": "aa2cf07e8e8b1782a20be576fff19771de2b498560563fe444d2878eb7581b28" },
+    { "path": "contracts/lcp-core/src/models.rs", "sha256": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603" },
+    { "path": "contracts/lcp-core/Cargo.toml", "sha256": "db5377ddaecf04182ed6838b76a837d459e45d579544826d837b9b60b3a25c22" },
+    { "path": "contracts/sandbox-mock-ft/Cargo.toml", "sha256": "58e44ef7934350d29b5733318c755cbba77eda3a9742cf42f732807f2a788eed" },
+    { "path": "contracts/sandbox-mock-ft/src/lib.rs", "sha256": "3e62024a827f997ea66ad7e43e72b6dc924320d0c527d94bcc93f8b6df9f6933" },
+    { "path": "tests/sandbox-usdc-callbacks/run.mjs", "sha256": "535db5cec8e9a4bc9f6281067f6d35a6ae2dc70bcfda28be438e7a5a81f32038" },
+    { "path": "tests/sandbox-usdc-callbacks/README.md", "sha256": "bd22206bf2486c4e0635ac84546442d1741da622c29f4aae57428c3d24c1e481" },
+    { "path": "tests/sandbox-usdc-callbacks/package.json", "sha256": "d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548" },
+    { "path": "tests/sandbox-usdc-callbacks/package-lock.json", "sha256": "c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e" }
+  ],
+  "sandbox_artifacts": [
+    { "path": "target/wasm32-unknown-unknown/release/lcp_core.wasm", "sha256": "c4b1efaae783c2573867e39bdda7f490b1b8fd4ef1299c5d0c1c8a8c7ac9236f", "features": ["sandbox-callback-fixture"] },
+    { "path": "target/wasm32-unknown-unknown/release/sandbox_mock_ft.wasm", "sha256": "4e9e95bdb5ee86f220f732950d77d56e0c0a56138bfeb26567e0f803caa6f79a" }
+  ],
+  "validation": {
+    "sandbox_version": "2.14.0",
+    "container_image": "node:26-trixie-slim",
+    "checks_passed": [
+      "FT receipt succeeds then 2 Tgas LCP callback fails out of gas; LCP leaves the liability pending",
+      "explicit FT failure restores free escrow and marks the tranche Failed",
+      "retry after explicit FT failure settles exactly once",
+      "four equal-amount transfers submitted concurrently for distinct commitments settle independently",
+      "per-commitment raw-unit conservation and final recipient token balance assertions"
+    ],
+    "npm_audit_high_threshold": "0 vulnerabilities",
+    "testnet_or_mainnet_transactions": false,
+    "recovery_verifier_implemented": false
+  }
+}

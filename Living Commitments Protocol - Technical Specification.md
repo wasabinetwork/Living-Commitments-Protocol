@@ -73,7 +73,7 @@ Each commitment has a policy version and digest.
 
 Version 1 is immutable after activation.
 
-A full amendment engine for all commitment terms is deferred. The P1 implementation supports v3 service-source-policy amendments only; budget, evaluator, and role terms remain immutable. Every required approver may approve or reject a pending proposal, and rejection leaves the active digest unchanged while releasing the proposal slot. Historical evaluations retain their original policy digest.
+A full amendment engine for all commitment terms is deferred by design. P1 supports v3 service-source-policy amendments only; budget, evaluator, and role terms are founding commitment terms and remain immutable. Changing them would alter financial exposure, evidence authority, or governance identities, so the sponsor should create a new commitment until a separately versioned full-amendment design is reviewed. Every required approver may approve or reject a pending proposal, and rejection leaves the active digest unchanged while releasing the proposal slot. Historical evaluations retain their original policy digest.
 
 ## 2.4 Deterministic time
 
@@ -1094,7 +1094,7 @@ The MVP will use a bounded operations budget:
 - Evaluation count and concurrency are limited.
 - The contract never intentionally spends escrow allocations on evaluator execution.
 
-The updated LCP request builder sets OutLayer `payer_account_id` to the commitment sponsor, so unused-resource refunds are routed directly to the sponsor when OutLayer settles the execution. This behavior awaits testnet contract deployment and acceptance. The commitment ledger conservatively reserves the full configured deposit per attempt and does not automatically recredit it; a sponsor may need to add operations funds again even after receiving an OutLayer refund. After closure, `refund_unused_operations` lets only the configured sponsor recover the unreserved operations balance held by LCP. It requires pending evaluations, challenges, and transfers to settle first; a private transfer callback removes the pending record on success or restores the balance after failure. The method takes a measured storage bond and returns any excess attached deposit. Testnet acceptance remains pending.
+The updated LCP request builder sets OutLayer `payer_account_id` to the commitment sponsor, so unused-resource refunds are routed directly to the sponsor when OutLayer settles the execution. Testnet acceptance passed on commitment `38` after the reproducible core upgrade recorded in `TESTNET-E2E-STATUS.md`. The commitment ledger conservatively reserves the full configured deposit per attempt and does not automatically recredit it; a sponsor may need to add operations funds again even after receiving an OutLayer refund. After closure, `refund_unused_operations` lets only the configured sponsor recover the unreserved operations balance held by LCP. It requires pending evaluations, challenges, and transfers to settle first; a private transfer callback removes the pending record on success or restores the balance after failure. The method takes a measured storage bond and returns any excess attached deposit. Commitment `38` verified the sponsor-directed OutLayer refund, the `refund_unused_operations` callback, and successful excess-storage-refund callbacks; finalized receipts are linked in `TESTNET-E2E-STATUS.md`.
 
 ## 9.8 Storage solvency
 
@@ -1106,13 +1106,13 @@ The exact solvency formula must be tested using actual NEAR runtime balances, in
 
 ## 9.9 Multi-asset settlement (P2 implementation in progress)
 
-The deployed v0.1 accounting model and its `*_yocto` fields remain native-NEAR-only. Local source now adds a generic NEP-141 settlement backend, initially for Circle USDC, while preserving the native path for existing commitments. The new path is not yet deployed or accepted on testnet. Do not interpret stored yoctoNEAR fields as fungible-token atomic units or change existing Borsh layouts without an explicit versioned migration design.
+The deployed v0.1 accounting model and its `*_yocto` fields remain native-NEAR-only. The current reproducible testnet core includes a generic NEP-141 settlement backend, initially for Circle USDC, while preserving the native path for existing commitments. The code is deployed but has not passed independent invariant review or live USDC acceptance. Do not interpret stored yoctoNEAR fields as fungible-token atomic units or change existing Borsh layouts without an explicit versioned migration design.
 
-Each new commitment binds one asset kind, the NEP-141 contract account when applicable, and a raw integer tranche amount into its immutable policy digest. The local implementation uses versioned sidecars for asset and token-unit accounting, `ft_transfer_call` with a validating `ft_on_transfer` receiver for funding, and `ft_transfer` with persisted pending state and private callbacks for claims and refunds. The sponsor's `ft_transfer_call` and outgoing NEP-141 transfers each require a separate 1 yoctoNEAR security deposit. Both paths must preserve the same solvency, replay, callback-idempotency, failure-recovery, and no-double-payment invariants. NEAR remains required for execution gas, storage deposits, token storage registration, and OutLayer operations. Reserve outgoing-transfer deposits from the caller's NEAR attachment separately from storage growth and refund any remaining excess. These new flows remain unaccepted until focused validation and testnet deployment are complete.
+Each new commitment binds one asset kind, the NEP-141 contract account when applicable, and a raw integer tranche amount into its immutable policy digest. The implementation uses versioned sidecars for asset and token-unit accounting, `ft_transfer_call` with a validating `ft_on_transfer` receiver for funding, and `ft_transfer` with persisted pending state and private callbacks for claims and refunds. The sponsor's `ft_transfer_call` and outgoing NEP-141 transfers each require a separate 1 yoctoNEAR security deposit. Both paths must preserve the same solvency, replay, callback-idempotency, failure-recovery, and no-double-payment invariants. NEAR remains required for execution gas, storage deposits, token storage registration, and OutLayer operations. Reserve outgoing-transfer deposits from the caller's NEAR attachment separately from storage growth and refund any remaining excess. The deployed code remains unaccepted until independent review and focused live testnet validation are complete.
 
 The initial USDC catalog entries are the Circle NEAR testnet account `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` and mainnet account `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1`, both with six decimals. Verify the addresses at release time against [Circle's network list](https://www.circle.com/multi-chain-usdc). NEP-141 transfers use integer amounts, and NEP-145 token registration uses NEAR-denominated storage deposits; never use floating-point arithmetic or assume recipients are registered.
 
-The NEAR-only bounded payout adapter rejects USDC commitments until an asset-matched adapter is designed. Local contract views/events, SDK types, and Console surfaces expose explicit asset identifiers and raw amounts while retaining compatibility for existing NEAR records. The event indexer stores complete event JSON, so no schema migration is required for these additional fields. Focused contract and SDK tests passed on 2026-11-13; independent invariant review, reproducible testnet deployment, live acceptance, and security review remain gates. The design and rollout are tracked in [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md).
+The NEAR-only bounded payout adapter rejects USDC commitments until an asset-matched adapter is designed. Contract views/events, SDK types, and Console surfaces expose explicit asset identifiers and raw amounts while retaining compatibility for existing NEAR records. The event indexer stores complete event JSON, so no schema migration is required for these additional fields. Focused contract and SDK tests passed on 2026-11-13; independent invariant review and live USDC acceptance remain open. The reproducible testnet deployment is recorded in `TESTNET-E2E-STATUS.md`; see [P2-ASSET-ARCHITECTURE.md](P2-ASSET-ARCHITECTURE.md) for remaining gates.
 
 ---
 
@@ -1335,44 +1335,58 @@ Browser and wallet flow for Healthy → Breached → Recovered.
 # 13. Repository Architecture
 
 ```text
-living-commitments/
-├── contracts/
-│   └── lcp-core/
-│       ├── Cargo.toml
-│       └── src/
-│           ├── lib.rs
-│           ├── models.rs
-│           ├── policy.rs
-│           ├── temporal.rs
-│           ├── evaluation.rs
-│           ├── outlayer.rs
-│           ├── challenge.rs
-│           ├── escrow.rs
-│           ├── consequences.rs
-│           ├── events.rs
-│           └── errors.rs
-├── evaluators/
-│   └── maintenance-heartbeat/
-│       ├── Cargo.toml
-│       └── src/
-│           └── main.rs
-├── packages/
-│   ├── sdk/
-│   │   └── src/
-│   └── schemas/
+repository-root/
+├── .github/
+│   ├── dependabot.yml
+│   └── workflows/
 ├── apps/
 │   └── console/
-├── tests/
-│   ├── integration/
-│   └── e2e/
-├── spec/
-│   ├── state-machine.md
-│   ├── evaluator-schema.md
-│   ├── security-invariants.md
-│   └── trust-model.md
+│       ├── app/
+│       ├── components/
+│       └── public/
+├── contracts/
+│   ├── bounded-payout-adapter/src/
+│   └── lcp-core/src/
+├── evaluators/
+│   ├── maintenance-heartbeat/src/
+│   ├── maintenance-heartbeat/tests/
+│   └── service-availability/
+│       ├── src/
+│       ├── test/
+│       └── probe.mjs
+├── packages/
+│   └── sdk/
+│       ├── src/
+│       └── test/
+├── services/
+│   ├── event-indexer/
+│   │   ├── migrations/
+│   │   ├── src/
+│   │   └── test/
+│   └── reviewer-access/
+│       ├── acceptance/
+│       ├── migrations/
+│       ├── src/
+│       └── test/
 ├── scripts/
+├── wrangler.jsonc
+├── Cargo.toml
+├── Cargo.lock
+├── package.json
+├── package-lock.json
+├── rust-toolchain.toml
 ├── README.md
-└── LICENSE
+├── LICENSE
+├── SECURITY.md
+├── AGENTS.md
+├── TODO.md
+├── TESTING.md
+├── CONSOLE-GUIDE.md
+├── TESTNET-E2E-STATUS.md
+├── P1-ARCHITECTURE.md
+├── P2-ASSET-ARCHITECTURE.md
+├── Living_Commitments_Protocol_[LCP]-PRD.md
+└── Living Commitments Protocol - Technical Specification.md
 ```
 
 ## 13.1 Package responsibilities
@@ -1401,7 +1415,7 @@ A thin interface around protocol functions.
 
 # 14. Development Sequence
 
-**Repository status (updated 2026-11-14):** The repository is public, and `TESTING.md` documents deterministic tests, reproducible builds, and testnet/browser reproduction. Core milestones A through F have working implementations for temporal state, OutLayer callbacks, bounded evaluation history, challenges, health-gated claims, transfer reconciliation, closure/refunds, wallet journeys, and the Console. P1 source adds transaction-authenticated multi-operator reports, consent-based amendments, bounded authority grants, and private reviewer access. All nine reviewer-access audit remediations are deployed to isolated preview and production Workers, with D1 migration 0004 applied; deployed acceptance and independent follow-up review remain release gates. P2 NEP-141/USDC support is implemented locally in the contract, SDK, and Console, but awaits independent invariant review, a reproducible build, and testnet acceptance. The SDK provides typed contract calls and finalized NEAR reads. The dashboard shows historical health transitions and policy-derived deadlines; OutLayer record and digest checks do not verify the TEE quote. Deployment receipts and the latest verified testnet states are maintained in `TESTNET-E2E-STATUS.md` and `TODO.md`.
+**Repository status (updated 2026-11-15):** The repository is public and the production Console is live at `https://lcp.gama.works`; production and preview report source revision `f4c4fccf5f6d0a2d268425e9722eaeea2fd49bed`. P0 testnet acceptance, including the reproducible core upgrade, sponsor-directed OutLayer refunds, unused-operations recovery, challenge recovery/claim-window behavior, and successful excess-storage refunds, is recorded in `TESTNET-E2E-STATUS.md`. P1 includes a completed two-operator inbox pilot, consent-amendment and adapter testnet flows, and owner-approved reviewer-access acceptance for the current phase. The optional event indexer is degraded by source rate limiting; contract state remains authoritative and archive history is hidden while the indexer is unhealthy. Reviewer exact-preview fault injection, independent provider validation, and fresh follow-up review are mainnet-readiness work. The reproducible core containing P2 NEP-141/USDC support is deployed to testnet; independent invariant review and live USDC acceptance remain open. The Console displays OutLayer record/hash checks; standalone `outlayer-verify` is still required to verify the TEE quote.
 
 ## Milestone A — Pure engine
 

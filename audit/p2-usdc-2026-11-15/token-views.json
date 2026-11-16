@@ -1,0 +1,42 @@
+{
+  "token": "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af",
+  "results": [
+    {
+      "method": "ft_metadata",
+      "timestamp": "2026-11-15T04:48:26.782Z",
+      "status": 200,
+      "block_hash": "DYdphDw7fEz6NbuVWUwqrcqbPUxq95rmdT3pPW9FJYsh",
+      "result": {
+        "spec": "ft-1.0.0",
+        "name": "USDC",
+        "symbol": "USDC",
+        "reference": null,
+        "reference_hash": null,
+        "decimals": 6
+      },
+      "error": null
+    },
+    {
+      "method": "storage_balance_bounds",
+      "timestamp": "2026-11-15T04:48:26.996Z",
+      "status": 200,
+      "block_hash": "DYdphDw7fEz6NbuVWUwqrcqbPUxq95rmdT3pPW9FJYsh",
+      "result": {
+        "min": "1250000000000000000000",
+        "max": "1250000000000000000000"
+      },
+      "error": null
+    },
+    {
+      "method": "storage_balance_of",
+      "timestamp": "2026-11-15T04:48:27.472Z",
+      "status": 200,
+      "block_hash": "5mD2Ym8Em6mHsgn4ZTgcyBU2F5RQY4bi1U5h6YXrNg8",
+      "result": {
+        "total": "1250000000000000000000",
+        "available": "0"
+      },
+      "error": null
+    }
+  ]
+}

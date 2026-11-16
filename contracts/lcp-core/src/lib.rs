@@ -2,6 +2,12 @@
 
 mod contract;
 mod models;
+mod native_cash;
+#[cfg(feature = "usdc-receipt-recovery")]
+mod receipt_recovery;
+mod recovery_accounting;
+#[cfg(feature = "usdc-receipt-recovery")]
+mod recovery_config;
 mod temporal;
 
 pub use contract::Contract;
@@ -14,6 +20,15 @@ pub use models::{
     ServicePolicyAmendmentView, ServiceReportInboxView, SettlementAsset, SettlementAssetArgs,
     SignedHeartbeatEvidence, SignedProbeReport, TemporalPolicyArgs, TrancheStatus, TrancheView,
     Verdict,
+};
+#[cfg(feature = "usdc-receipt-recovery")]
+pub use receipt_recovery::ReceiptRecoveryIntentViewV1;
+#[cfg(feature = "usdc-receipt-recovery")]
+pub use recovery_accounting::ReceiptRecoveryCreditViewV1;
+pub use recovery_accounting::RevaluationBatchResult;
+#[cfg(feature = "usdc-receipt-recovery")]
+pub use recovery_config::{
+    ReceiptRecoveryConfigViewV1, ReceiptRecoveryRotationViewV1, RecoveryBootstrapArgs,
 };
 pub use temporal::{
     effective_health, validate_temporal_policy, Health, Lifecycle, TemporalError, TemporalPolicy,

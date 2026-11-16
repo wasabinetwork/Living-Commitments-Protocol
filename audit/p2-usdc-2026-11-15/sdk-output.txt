@@ -1,0 +1,32 @@
+
+> @lcp/sdk@0.1.0 test
+> npm run build && node --test test/*.test.mjs
+
+
+> @lcp/sdk@0.1.0 build
+> tsc -p tsconfig.json
+
+✔ bounded adapter pool SDK methods target the adapter and attach funding deposits (4.843336ms)
+✔ NEAR contract reads fall back after a provider outage (89.522551ms)
+✔ NEAR contract read errors are not hidden by provider fallback (3.696165ms)
+✔ reviewer key backup encrypts locally and private artifacts decrypt with digest verification (688.114296ms)
+✔ reviewer key backups reject an incorrect passphrase (671.008224ms)
+✔ v2 reviewer key backups authenticate their advertised public-key metadata (820.26903ms)
+✔ legacy reviewer key backups import only when decrypted private and advertised public keys match (1339.868949ms)
+✔ wallet message signing verifies callback-bound NEP-413 signatures and creates fresh nonces (7.597802ms)
+✔ wallet message signing preserves a valid NEP-413 signature that omits the optional callback (2.343918ms)
+✔ wallet message signing rejects a malformed signature instead of forwarding it (4.48493ms)
+✔ service source policy accepts a sorted independent majority roster (10.030504ms)
+✔ service source policy rejects duplicate operators, unsorted sources, and non-majority quorum (3.319092ms)
+✔ service source policy rejects out-of-range decimal timestamps and extra fields (0.439594ms)
+✔ transaction-authenticated source policy lists accounts without pinning wallet keys (0.669081ms)
+✔ service report inbox SDK methods bind the expected contract arguments and deposits (4.295763ms)
+✔ NEP-141 SDK calls bind USDC funding and NEP-145 registration arguments (9.851373ms)
+ℹ tests 16
+ℹ suites 0
+ℹ pass 16
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4221.911886

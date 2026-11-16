@@ -1,0 +1,21 @@
+# Independent Follow-Up Review Brief: USDC Receipt-Recovery Specification v4
+
+## Objective
+
+Review [P2-USDC-RECEIPT-RECOVERY-DESIGN.md](P2-USDC-RECEIPT-RECOVERY-DESIGN.md) and its [operator-policy annex](P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md) against the exact files and SHA-256 values in [the v4 manifest](audit/p2-receipt-recovery-2026-11-15/spec-v4-review-manifest.json). Determine whether the v4 specification resolves findings V3-1 and V3-2 precisely enough to authorize implementation planning. Do not implement code, modify other repository files, send transactions, use wallet keys, or treat design approval as testnet/mainnet acceptance.
+
+The worktree contains unrelated local modifications. Review only the manifested versions. The owner accepts an isolated GPT-Sol session as an independent automated design review for this project gate. Identify reviewer/runtime, isolation, date, baseline commit, exact file hashes, checks, and limitations. Do not describe the result as a signed security-firm audit, independent hardware review, or cryptographic receipt-proof verification. Keep `P2-USDC-RECEIPT-RECOVERY-SPEC-V3-REVIEW.md` unchanged as a historical report.
+
+Write the report to `P2-USDC-RECEIPT-RECOVERY-SPEC-V4-REVIEW.md`.
+
+## Required review questions
+
+1. **V3-1 — NEAR cash, liabilities, and promise accounting:** Is `C = env::account_balance()` defined at the right VM point? Does the post-promise invariant `C >= S + N + Q + F`, with a full liability retained until exact callback success, correctly account for runtime deductions at promise construction? Is requiring extra cash before each outgoing transfer a clear, conservative, internally consistent policy? Analyze native escrow/payouts, operations refunds, storage credits, fire-and-forget `refund_excess`, and NEP-141's 1 yoctoNEAR call deposit. Can callback OOG or a delayed automatic transfer refund produce a double pay, under-backed state, or false free balance?
+2. **V3-1 — storage bonds/reserve:** Check `S_R`, `B_live`, `G`, `T`, `F`, and `shortfall` definitions and transitions at admission, admission excess, byte-cost increase/decrease, terminal bond release, delayed release after top-up, and credit-row deletion. Verify the formulas conserve value and never pay the same legacy or recovery storage deposit twice. Identify edge cases for a storage-price change crossing `G=0`, reserve exhaustion, and failed migration/release.
+3. **V3-2 — authorization/state machine:** Does `RefundCreditV1` bind payer, fixed receiver, amount, row, nonce, and callback attempt? Verify payer-only withdrawals, zero amount and nonce-overflow rejection, atomic `Available -> Withdrawing`, private self callback, exactly-one result, success deletion, failure `RefundPending`, stale/duplicate/mismatched callback rejection, and non-retryable unknown/OOG behavior. Is the transition after the automatic failure refund sufficiently specified?
+4. **Consistency and integration:** Check interaction with token settlement, callback/recovery races, storage-price reserve gating, immutable terminal state, pending admission excess, proposal/epoch credits, all native outflows, legacy `refund_excess`, and NEAR's execution rollback when the final invariant check fails. Identify any native outflow that can bypass the shared solvency policy.
+5. **Gates:** Confirm exactly what may follow a v4 design approval. Cross-language vectors, strict host-verifier behavior, protocol-88 rollback fixtures, feature-gated implementation, VM/Sandbox tests, local archival replay, implementation review, testnet canary, reproducible artifact, and mainnet release remain distinct gates. Do not infer recovery behavior from existing callback tests.
+
+## Verdict and finding format
+
+Choose **approve for implementation planning**, **approve with required changes**, or **reject the design**. For every finding, provide severity, exact section, concrete failure scenario, required remediation, and regression/acceptance test. Distinguish verified nearcore source facts, local calculations, design assumptions, and unresolved operational dependencies. If a safety-critical issue remains, recommend retaining uncertain liabilities as pending and name the blocker.

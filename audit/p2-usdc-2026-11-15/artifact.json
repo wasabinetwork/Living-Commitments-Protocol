@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-11-15T04:46:24.307Z",
+  "account": "livingcommitmentsprotocol.testnet",
+  "block_hash": "3gJe6h4A2qbgEECwdZ1YuDP3vtaQN8dwgYkEKEwgRX2g",
+  "block_height": 277757296,
+  "code_hash": "7C9yrP36jPKdbAVaV9LgH7fLQ4yRGTZSRBQ83RgbDage",
+  "wasm_sha256": "5c01aa15fee13a03a71fdada304f358f22e608c424525f37892182ac1e649bff",
+  "wasm_bytes": 759388
+}
