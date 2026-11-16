@@ -1811,6 +1811,146 @@ impl Contract {
         native_cash::assert_solvency();
     }
 
+    /// Seeds a service-availability commitment for isolated
+    /// Sandbox acceptance of the production service-source OutLayer dispatch
+    /// path. Evaluation is requested through the production service method;
+    /// only commitment creation is fixture-backed because OutLayer's
+    /// canonical account cannot be installed in a local Sandbox.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_seed_outlayer_service_dispatch_commitment(
+        &mut self,
+        commitment_id: U64,
+        source_public_key_hex: String,
+        operations_funded_yocto: U128,
+        execution_deposit_yocto: U128,
+    ) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            env::predecessor_account_id().as_str() == "sandbox",
+            "fixture commitment must be seeded by the Sandbox root"
+        );
+        require!(
+            commitment_id.0 > 0 && self.commitments.get(&commitment_id.0).is_none(),
+            "fixture commitment ID must be positive and unused"
+        );
+        let source_public_key = decode_32_byte_hex(&source_public_key_hex)
+            .unwrap_or_else(|| env::panic_str("fixture source key must be 32-byte hex"));
+        require!(
+            encode_hex(&source_public_key) == source_public_key_hex,
+            "fixture source key must use lowercase hex"
+        );
+        require!(
+            execution_deposit_yocto.0 > 0 && operations_funded_yocto.0 <= execution_deposit_yocto.0,
+            "fixture operations funding must not exceed a positive evaluator deposit"
+        );
+
+        let service_policy = ServiceAvailabilityPolicy {
+            schema: "lcp.service_availability.policy.v1".to_string(),
+            target_id: "74".repeat(32),
+            max_source_lag_ns: "60000000000".to_string(),
+            expected_status_min: 200,
+            expected_status_max: 299,
+            max_latency_ms: 1_000,
+            minimum_agreeing_sources: 2,
+            minimum_corroboration_bps: 6_000,
+            sources: vec![
+                crate::models::ServiceAvailabilitySource {
+                    source_id: "source-a".to_string(),
+                    operator_id: "sandbox".to_string(),
+                    public_key_hex: Some(source_public_key_hex),
+                },
+                crate::models::ServiceAvailabilitySource {
+                    source_id: "source-b".to_string(),
+                    operator_id: "service-operator-b.sandbox".to_string(),
+                    public_key_hex: Some("22".repeat(32)),
+                },
+            ],
+        };
+        validate_service_availability_policy(&service_policy);
+
+        let now_ns = env::block_timestamp();
+        let sponsor: AccountId = "sandbox".parse().unwrap();
+        let policy = CommitmentPolicy {
+            version: 3,
+            temporal: TemporalPolicy {
+                initial_window_ns: 600_000_000_000,
+                evidence_ttl_ns: 3_600_000_000_000,
+                grace_ns: 60_000_000_000,
+                max_source_lag_ns: 60_000_000_000,
+                challenge_window_ns: 1_000_000_000,
+                resolution_timeout_ns: 60_000_000_000,
+                recovery_allowed: true,
+            },
+            evidence: EvidencePolicy {
+                maintainer_public_key: [7; 32],
+            },
+            evaluator: EvaluatorPolicy {
+                outlayer_account: "no-code-token.sandbox".parse().unwrap(),
+                wasm_url: "https://sandbox.invalid/service-evaluator.wasm".to_string(),
+                wasm_sha256: [0x74; 32],
+                build_target: "wasm32-wasip2".to_string(),
+                max_instructions: 1_000_000,
+                max_memory_mb: 64,
+                max_execution_seconds: 10,
+                request_timeout_ns: 30_000_000_000,
+                execution_deposit_yocto: execution_deposit_yocto.0,
+            },
+            budget: BudgetPolicy {
+                sponsor: sponsor.clone(),
+                beneficiary: "service-beneficiary.sandbox".parse().unwrap(),
+                epoch_ns: 86_400_000_000_000,
+                max_epochs: 1,
+                tranche_yocto: 1,
+            },
+        };
+        validate_commitment_policy(&policy);
+        let commitment = Commitment {
+            id: commitment_id.0,
+            subject: "Sandbox service report OutLayer cash-dispatch fixture".to_string(),
+            creator: sponsor,
+            maintainer: "sandbox".parse().unwrap(),
+            arbiter: "service-arbiter.sandbox".parse().unwrap(),
+            lifecycle: Lifecycle::Active,
+            policy_hash: service_availability_policy_digest(&policy, &service_policy),
+            policy,
+            activated_at_ns: Some(now_ns.saturating_sub(30_000_000_000)),
+            last_good: None,
+            last_observed_at_ns: None,
+            negative_since_ns: None,
+            pending_evaluation_id: None,
+            active_challenge_id: None,
+            breach_latched: false,
+            escrow_funded_yocto: 0,
+            escrow_paid_yocto: 0,
+            escrow_refunded_yocto: 0,
+            escrow_pending_yocto: 0,
+            operations_funded_yocto: operations_funded_yocto.0,
+            operations_authorized_spend_yocto: 0,
+            storage_deposit_yocto: 0,
+            next_evaluation_id: 1,
+            challenge_count: 0,
+            pending_transfer_count: 0,
+        };
+
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            true,
+            operations_funded_yocto.0,
+        );
+        write_service_policy(commitment_id.0, &service_policy);
+        self.commitments.insert(commitment_id.0, commitment);
+        self.commitments.flush();
+        self.next_commitment_id = self.next_commitment_id.max(commitment_id.0);
+        native_cash::assert_solvency();
+    }
+
     /// Seeds a closed commitment with refundable native escrow and operations
     /// for isolated Sandbox callback testing.
     #[cfg(feature = "sandbox-callback-fixture")]

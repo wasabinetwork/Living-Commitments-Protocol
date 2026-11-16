@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2367,6 +2367,262 @@ async function main() {
       console.log("PASS one-yocto-underfunded storage and insufficient operations emit no evaluator action");
       console.log(`CAPTURED ${fixturePath}`);
       console.log("All isolated OutLayer dispatch Sandbox checks passed; no public network was used.");
+      return;
+    }
+
+    if (process.env.LCP_SERVICE_OUTLAYER_DISPATCH_ONLY === "1") {
+      const fundedCommitmentId = "779";
+      const underfundedCommitmentId = "780";
+      const executionDeposit = ONE_NEAR / 100n;
+      const serviceOperator = newKey();
+      const serviceRootCall = (method, args, description, deposit = 0n, expectFailure = false) =>
+        sendTransaction(
+          "sandbox",
+          rootKey,
+          CORE_ID,
+          [actionFunctionCall(method, args, 220n * TERA, deposit)],
+          description,
+          expectFailure ? { expectFailure: true } : {},
+        );
+      for (const [commitmentId, operationsFunded] of [
+        [fundedCommitmentId, executionDeposit],
+        [underfundedCommitmentId, executionDeposit - 1n],
+      ]) {
+        await submitAndWaitForTransaction(
+          "sandbox",
+          rootKey,
+          CORE_ID,
+          [actionFunctionCall("sandbox_seed_outlayer_service_dispatch_commitment", {
+            commitment_id: commitmentId,
+            source_public_key_hex: serviceOperator.publicKeyBytes.toString("hex"),
+            operations_funded_yocto: operationsFunded.toString(),
+            execution_deposit_yocto: executionDeposit.toString(),
+          }, 120n * TERA)],
+          `seed service OutLayer dispatch commitment ${commitmentId}`,
+        );
+      }
+
+      const observedBlock = await rpc("block", { finality: "final" });
+      const observedAtNs = BigInt(observedBlock.header.timestamp_nanosec) - 1_000_000_000n;
+      const makeProbeReport = async (commitmentId) => {
+        const [commitment, policy] = await Promise.all([
+          view(CORE_ID, "get_commitment", { commitment_id: commitmentId }),
+          view(CORE_ID, "get_service_availability_policy", { commitment_id: commitmentId }),
+        ]);
+        const source = policy.sources[0];
+        assert.equal(source.public_key_hex, serviceOperator.publicKeyBytes.toString("hex"),
+          "service policy must pin the generated report signing key");
+        const sourcePolicyHash = createHash("sha256")
+          .update(Buffer.from(JSON.stringify(policy), "utf8"))
+          .digest("hex");
+        const payload = {
+          schema: "lcp.service_availability.report.v1",
+          contract_id: CORE_ID,
+          commitment_id: commitmentId,
+          evaluation_id: "1",
+          policy_version: 3,
+          policy_hash: commitment.policy_hash,
+          source_policy_hash: sourcePolicyHash,
+          source_id: source.source_id,
+          operator_id: source.operator_id,
+          target_id: policy.target_id,
+          observed_at_ns: observedAtNs.toString(),
+          observation: {
+            kind: "http_response",
+            status_code: 200,
+            latency_ms: 25,
+            tls_verified: true,
+          },
+        };
+        const signatureHex = sign(
+          null,
+          Buffer.from(JSON.stringify(payload), "utf8"),
+          serviceOperator.privateKeyObject,
+        ).toString("hex");
+        const verificationKey = createPublicKey({
+          key: Buffer.concat([
+            Buffer.from("302a300506032b6570032100", "hex"),
+            serviceOperator.publicKeyBytes,
+          ]),
+          format: "der",
+          type: "spki",
+        });
+        assert.ok(verify(
+          null,
+          Buffer.from(JSON.stringify(payload), "utf8"),
+          verificationKey,
+          Buffer.from(signatureHex, "hex"),
+        ), "service report signature must verify against the key pinned in its policy");
+        return {
+          policy,
+          report: {
+            payload,
+            signature_hex: signatureHex,
+          },
+        };
+      };
+      const fundedReportFixture = await makeProbeReport(fundedCommitmentId);
+      const underfundedReportFixture = await makeProbeReport(underfundedCommitmentId);
+      const fundedReport = fundedReportFixture.report;
+      const underfundedReport = underfundedReportFixture.report;
+      const requestArgs = (commitmentId, report) => ({
+        commitment_id: commitmentId,
+        reports: [report],
+      });
+
+      const margin = await setNativeFreeMargin(0n, "service OutLayer dispatch boundary");
+      const underfundedBudgetFailure = await serviceRootCall(
+        "request_service_evaluation",
+        requestArgs(underfundedCommitmentId, underfundedReport),
+        "reject service evaluation without its full operations budget",
+        0n,
+        true,
+      );
+      const underfundedText = [
+        ...(underfundedBudgetFailure.receipts_outcome ?? []).flatMap((receipt) => receipt.outcome?.logs ?? []),
+        JSON.stringify(underfundedBudgetFailure.status),
+        ...(underfundedBudgetFailure.receipts_outcome ?? []).map((receipt) => JSON.stringify(receipt.outcome?.status)),
+      ].join("\n");
+      assert.ok(underfundedText.includes("evaluator operations budget is exhausted"),
+        "underfunded service operations should reject before dispatch");
+      assert.equal((underfundedBudgetFailure.receipts_outcome ?? []).some(
+        (receipt) => receipt.outcome?.executor_id === NO_CODE_TOKEN_ID,
+      ), false, "insufficient service operations must not dispatch the evaluator");
+      assert.equal(await view(CORE_ID, "get_evaluation", {
+        commitment_id: underfundedCommitmentId,
+        evaluation_id: "1",
+      }), null, "underfunded service request must not create an evaluation");
+
+      const requestService = (commitmentId, report, deposit) => actionFunctionCall(
+        "request_service_evaluation",
+        requestArgs(commitmentId, report),
+        220n * TERA,
+        deposit,
+      );
+      const discoveryFailure = await serviceRootCall(
+        "request_service_evaluation",
+        requestArgs(fundedCommitmentId, fundedReport),
+        "measure service evaluation storage bond",
+        0n,
+        true,
+      );
+      const discoveryText = [
+        ...(discoveryFailure.receipts_outcome ?? []).flatMap((receipt) => receipt.outcome?.logs ?? []),
+        JSON.stringify(discoveryFailure.status),
+        ...(discoveryFailure.receipts_outcome ?? []).map((receipt) => JSON.stringify(receipt.outcome?.status)),
+      ].join("\n");
+      const storageBondMatch = discoveryText.match(
+        /attach at least (\d+) yoctoNEAR for evaluation storage/,
+      );
+      assert.ok(storageBondMatch,
+        `service storage-bond probe did not report its requirement: ${discoveryText}`);
+      const storageBond = BigInt(storageBondMatch[1]);
+      assert.ok(storageBond > 1n, "service evaluation storage bond must exceed one yoctoNEAR");
+      assert.equal((discoveryFailure.receipts_outcome ?? []).some(
+        (receipt) => receipt.outcome?.executor_id === NO_CODE_TOKEN_ID,
+      ), false, "service storage-bond discovery must not dispatch the evaluator");
+
+      const oneShortFailure = await serviceRootCall(
+        "request_service_evaluation",
+        requestArgs(fundedCommitmentId, fundedReport),
+        "reject one-yocto-short service evaluation storage deposit",
+        storageBond - 1n,
+        true,
+      );
+      assert.equal((oneShortFailure.receipts_outcome ?? []).some(
+        (receipt) => receipt.outcome?.executor_id === NO_CODE_TOKEN_ID,
+      ), false, "underfunded service storage must not dispatch the evaluator");
+      const stateAfterStorageRejection = await view(CORE_ID, "get_commitment", {
+        commitment_id: fundedCommitmentId,
+      });
+      assert.equal(stateAfterStorageRejection.pending_evaluation_id, null);
+      assert.equal(stateAfterStorageRejection.next_evaluation_id, "1");
+      assert.equal(stateAfterStorageRejection.operations_authorized_spend_yocto, "0");
+
+      const cashBeforeDispatch = await nativeCashSnapshot();
+      assert.equal(nativeFreeMargin(cashBeforeDispatch), 0n,
+        "service dispatch fixture must begin at zero free cash");
+      const evaluatorBalanceBefore = await accountBalance(NO_CODE_TOKEN_ID);
+      const requestTx = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [requestService(fundedCommitmentId, fundedReport, storageBond)],
+        "dispatch service OutLayer request at exact storage bond",
+      );
+      const outlayerReceipt = (requestTx.receipts_outcome ?? []).find(
+        (receipt) => receipt.outcome?.executor_id === NO_CODE_TOKEN_ID,
+      );
+      assert.ok(outlayerReceipt, "missing service OutLayer request receipt");
+      assert.ok(isFailedExecution(outlayerReceipt.outcome.status),
+        "the no-code service evaluator fixture should fail its request receipt");
+      const failedEvaluation = await waitFor("failed service OutLayer dispatch callback", async () => {
+        const evaluation = await view(CORE_ID, "get_evaluation", {
+          commitment_id: fundedCommitmentId,
+          evaluation_id: "1",
+        });
+        return evaluation?.status === "Failed"
+          ? { done: true, value: evaluation }
+          : { done: false, value: evaluation?.status ?? null };
+      });
+      const fundedStateAfterFailure = await view(CORE_ID, "get_commitment", {
+        commitment_id: fundedCommitmentId,
+      });
+      assert.equal(fundedStateAfterFailure.pending_evaluation_id, null);
+      assert.equal(fundedStateAfterFailure.operations_authorized_spend_yocto, executionDeposit.toString());
+      assert.equal(fundedStateAfterFailure.operations_funded_yocto, executionDeposit.toString());
+      const cashAfterFailure = await nativeCashSnapshot();
+      assert.equal(cashBeforeDispatch[5] - cashAfterFailure[5], executionDeposit,
+        "service dispatch must reduce the operations liability by the exact evaluator deposit");
+      assert.equal(cashAfterFailure[4], 0n,
+        "service dispatch receipt must clear its planned-outflow reservation");
+      assert.equal(await accountBalance(NO_CODE_TOKEN_ID), evaluatorBalanceBefore,
+        "failed service evaluator receipt must not retain its attached deposit");
+      assert.equal(cashAfterFailure[0] - cashBeforeDispatch[0], storageBond,
+        "failed service OutLayer action must return its evaluator deposit while retaining the storage bond");
+
+      fixtures.service_outlayer_dispatch_acceptance = {
+        funded_commitment_id: fundedCommitmentId,
+        underfunded_commitment_id: underfundedCommitmentId,
+        dispatch_method: "request_service_evaluation",
+        evaluator_account: NO_CODE_TOKEN_ID,
+        evaluator_has_code: false,
+        execution_deposit_yocto: executionDeposit.toString(),
+        underfunded_operations_yocto: (executionDeposit - 1n).toString(),
+        exact_evaluation_storage_bond_yocto: storageBond.toString(),
+        free_cash_margin_before_dispatch_yocto: nativeFreeMargin(cashBeforeDispatch).toString(),
+        service_policy: fundedReportFixture.policy,
+        service_source_public_key_hex: serviceOperator.publicKeyBytes.toString("hex"),
+        service_report: fundedReport,
+        storage_bond_discovery_transaction: discoveryFailure,
+        one_yocto_underfunded_transaction: oneShortFailure,
+        underfunded_operations_transaction: underfundedBudgetFailure,
+        dispatch_transaction: requestTx,
+        failed_outlayer_receipt: outlayerReceipt,
+        evaluation_after_failure: failedEvaluation,
+        commitment_after_failure: fundedStateAfterFailure,
+        native_cash_before_dispatch: cashBeforeDispatch.map(String),
+        native_cash_after_failure: cashAfterFailure.map(String),
+        evaluator_balance_before: evaluatorBalanceBefore.toString(),
+        evaluator_balance_after: (await accountBalance(NO_CODE_TOKEN_ID)).toString(),
+        core_balance_delta_yocto: (cashAfterFailure[0] - cashBeforeDispatch[0]).toString(),
+        operations_liability_reduction_yocto: (cashBeforeDispatch[5] - cashAfterFailure[5]).toString(),
+        note: "Isolated Sandbox only. The active v3 service commitment is fixture-seeded because OutLayer's canonical account cannot be installed locally. The production request_service_evaluation and schedule_service_evaluation paths are executed; the evaluator receiver intentionally has no code. Hosted OutLayer behavior is not tested.",
+      };
+      const fixturePath = process.env.LCP_SERVICE_OUTLAYER_FIXTURE_OUTPUT
+        ?? join(here, "service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json");
+      await writeFile(fixturePath, `${JSON.stringify({
+        fixture_schema: "lcp.service-outlayer-dispatch-sandbox-acceptance.v1",
+        captured_at: new Date().toISOString(),
+        node: fixtures.node,
+        wasm_artifacts: fixtures.artifacts,
+        scenario: fixtures.service_outlayer_dispatch_acceptance,
+      }, null, 2)}\n`);
+      console.log("PASS production request_service_evaluation dispatches service evidence at zero free cash with the exact storage bond");
+      console.log("PASS failed service evaluator execution keeps its deposit charged to operations spend");
+      console.log("PASS one-yocto-short service storage and operations budgets emit no evaluator request");
+      console.log(`CAPTURED ${fixturePath}`);
+      console.log("All isolated service OutLayer dispatch Sandbox checks passed; no public network was used.");
       return;
     }
 

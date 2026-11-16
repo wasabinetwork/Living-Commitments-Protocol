@@ -74,12 +74,57 @@ bond at zero pre-existing free cash. The evaluator receiver intentionally has
 no code. Its request receipt fails, the failed action's 0.01 NEAR deposit is
 returned to the core, the callback marks the evaluation failed, and the
 operations-spend counter remains charged for that amount. The capture checks
-the evaluator's unchanged balance and the core's exact retained storage bond.
-underfunded commitment is rejected before evaluation state or an evaluator
-receipt is created. The receipt and state capture is
+the evaluator's unchanged balance and the core's exact retained storage bond;
+the underfunded commitment is rejected before evaluation state or an evaluator
+receipt is created. This heartbeat acceptance capture does not test service
+scheduling, hosted OutLayer behavior, or real-network latency and refunds. Its
+receipt and state capture is
 [`outlayer-dispatch-sandbox-acceptance-2026-11-16.json`](outlayer-dispatch-sandbox-acceptance-2026-11-16.json), with its [checksum manifest](outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256). This proves local LCP dispatch accounting and failure handling; it
-does not test the hosted OutLayer service, `schedule_service_evaluation`, or
-real-network latency and refunds.
+does not validate the hosted OutLayer service or real-network latency and
+refunds.
+
+To exercise the service-source evaluator scheduler separately, run:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_SERVICE_OUTLAYER_DISPATCH_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_SERVICE_OUTLAYER_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+This mode fixture-seeds an active v3 service commitment because the canonical
+OutLayer account cannot be installed in Sandbox. It creates an ephemeral
+Ed25519 source key, confirms the policy pins it, and verifies a validly signed,
+policy-bound report before calling the production
+`request_service_evaluation` entry point and shared
+`schedule_service_evaluation` implementation. At zero free cash, the exact
+measured storage bond dispatches to an evaluator account with no code; its
+failed receipt returns the 0.01 NEAR deposit while operations spend remains
+charged. A one-yocto-short storage bond and one-yocto-short operations balance
+both reject without dispatch. This covers the legacy signed-report route; it
+does not cover `request_service_evaluation_from_inbox`, hosted OutLayer
+execution, or service evaluator result validation. See the captured
+[service-dispatch receipt and state](service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json)
+and its [checksum manifest](service-outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256).
+
+Regenerate the service-dispatch capture manifest after a rerun or any source
+or document change:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs \
+  evaluators/service-availability/src/main.rs evaluators/service-availability/probe.mjs \
+  evaluators/service-availability/test/probe.test.mjs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+  > tests/sandbox-usdc-callbacks/service-outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256
+```
 
 Regenerate the capture manifest after a rerun or any source/document change:
 
