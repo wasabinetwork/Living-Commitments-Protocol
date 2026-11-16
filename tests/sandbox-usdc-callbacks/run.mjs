@@ -1206,6 +1206,30 @@ async function main() {
     assert.ok(credit && BigInt(credit.accrued_yocto) > 0n, "finalized intent should accrue its measured storage bond");
     const creditBeforeRevaluation = credit;
 
+    const unauthorizedCreditWithdrawal = await sendTransaction(
+      RECIPIENT_ID,
+      recipientKey,
+      CORE_ID,
+      [actionFunctionCall("withdraw_receipt_recovery_credit", { credit_id_hex: creditId }, 150n * TERA)],
+      "reject recovery-credit withdrawal by a different account",
+      { expectFailure: true },
+    );
+    const creditAfterUnauthorizedWithdrawal = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
+    assert.deepEqual(creditAfterUnauthorizedWithdrawal, creditBeforeRevaluation,
+      "non-payer withdrawal attempt must not mutate the credit");
+
+    const attachedDepositWithdrawal = await sendTransaction(
+      CASH_RECIPIENT_ID,
+      cashRecipientKey,
+      CORE_ID,
+      [actionFunctionCall("withdraw_receipt_recovery_credit", { credit_id_hex: creditId }, 150n * TERA, 1n)],
+      "reject attached deposit on recovery-credit withdrawal",
+      { expectFailure: true },
+    );
+    const creditAfterDepositAttempt = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
+    assert.deepEqual(creditAfterDepositAttempt, creditBeforeRevaluation,
+      "attached-deposit rejection must not mutate the credit");
+
     await rootCall("sandbox_mark_recovery_storage_price_stale", {}, "fixture a stale reserve price", 100n * TERA);
     const beginRevaluationTx = await rootCall("begin_recovery_storage_revaluation", {}, "begin storage-reserve revaluation", 100n * TERA);
     assert.equal(returnedJson(beginRevaluationTx), true);
@@ -1276,6 +1300,10 @@ async function main() {
       storage_release_low_gas_failure_transaction_hash: lowGasFinalize.transaction.hash,
       storage_release_retry_transaction_hash: finalizedIntentTx.transaction.hash,
       permissionless_storage_release_retry: true,
+      unauthorized_withdrawal_transaction_hash: unauthorizedCreditWithdrawal.transaction.hash,
+      unauthorized_withdrawal_preserved_credit: true,
+      attached_deposit_rejection_transaction_hash: attachedDepositWithdrawal.transaction.hash,
+      attached_deposit_rejection_preserved_credit: true,
       revaluation_batches: revaluation,
       blocked_during_revaluation: true,
       one_yocto_short_rejected: true,
