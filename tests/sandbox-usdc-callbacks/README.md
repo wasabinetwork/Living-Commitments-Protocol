@@ -213,9 +213,10 @@ rollback after an overflow panic. It also rejects a conflicting failure
 certificate after success is terminal, and rejects a valid certificate for
 transfer A when submitted against transfer B. Both intents remain unchanged
 after the rejected cross-transfer attempt and later settle with their own
-certificates. A different account's recovery-credit withdrawal and a payer
-withdrawal carrying one yoctoNEAR were also rejected with the complete credit
-view unchanged; the payer's later exact-margin withdrawal succeeded. A weak
+certificates. A direct callback from another account, a different account's
+recovery-credit withdrawal, and a payer withdrawal carrying one yoctoNEAR were
+also rejected with the complete credit view unchanged; the payer's later
+exact-margin withdrawal succeeded. A weak
 committee key was rejected at bootstrap without consuming the one-time setup
 authority. All 56 negative
 envelope cases were rejected without changing the pending intent, escrow, or

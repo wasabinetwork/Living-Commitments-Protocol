@@ -1,5 +1,5 @@
 b86147458ee7700a3819ecb5dd21c8514b0bcbe912e6501bf42a92d83030aabf  tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.json
-76fe78ee51e195fe3efb9533622bf9ef18c92b25d80aef0e8073ed31b79502de  tests/sandbox-usdc-callbacks/run.mjs
+5424dba7762b197ff97d8620e9d22f40875cdc2014762a06db68a8a0893c124a  tests/sandbox-usdc-callbacks/run.mjs
 800cd2bcf2921ed1c0c5bc1b560b3144761a36551216141800c82b4dfcca4d2e  tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs
 1e8d9a239aa01fb6c005bc3bfe11d1c96ce6da7b3016585c3bff403760087ffe  contracts/sandbox-mock-ft/src/lib.rs
 e29062846a172e88c4b58aabfb4b8f33333535a0472687ac02256aecfdd5c3aa  contracts/sandbox-mock-ft/Cargo.toml

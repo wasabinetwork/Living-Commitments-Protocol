@@ -1206,6 +1206,22 @@ async function main() {
     assert.ok(credit && BigInt(credit.accrued_yocto) > 0n, "finalized intent should accrue its measured storage bond");
     const creditBeforeRevaluation = credit;
 
+    const directCreditCallback = await sendTransaction(
+      RECIPIENT_ID,
+      recipientKey,
+      CORE_ID,
+      [actionFunctionCall("on_receipt_recovery_credit_withdrawal", {
+        credit_id_hex: creditId,
+        amount: "1",
+        nonce: "1",
+      }, 150n * TERA)],
+      "reject direct recovery-credit callback from another account",
+      { expectFailure: true },
+    );
+    const creditAfterDirectCallback = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
+    assert.deepEqual(creditAfterDirectCallback, creditBeforeRevaluation,
+      "external direct callback must not mutate the credit");
+
     const unauthorizedCreditWithdrawal = await sendTransaction(
       RECIPIENT_ID,
       recipientKey,
@@ -1300,6 +1316,8 @@ async function main() {
       storage_release_low_gas_failure_transaction_hash: lowGasFinalize.transaction.hash,
       storage_release_retry_transaction_hash: finalizedIntentTx.transaction.hash,
       permissionless_storage_release_retry: true,
+      direct_callback_transaction_hash: directCreditCallback.transaction.hash,
+      direct_callback_rejected_without_mutation: true,
       unauthorized_withdrawal_transaction_hash: unauthorizedCreditWithdrawal.transaction.hash,
       unauthorized_withdrawal_preserved_credit: true,
       attached_deposit_rejection_transaction_hash: attachedDepositWithdrawal.transaction.hash,
