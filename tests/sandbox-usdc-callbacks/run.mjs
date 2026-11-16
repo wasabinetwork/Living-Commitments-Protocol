@@ -619,8 +619,23 @@ async function main() {
     });
     assert.equal((await tranche(102)).status, "Pending");
     const validCertFirst = recoveryCertificate(certFirstPending.intent, "success", committee);
+    const fiveInvalidEnvelopeBytes = Buffer.from(
+      signedEnvelope(validCertFirst.certificate, "LCP/NEP141/RECOVERY/V1\0", committee, 5),
+      "base64",
+    );
+    const certificateLength = fiveInvalidEnvelopeBytes.readUInt32LE(0);
+    const signatureCountOffset = 4 + certificateLength;
+    assert.equal(fiveInvalidEnvelopeBytes.readUInt32LE(signatureCountOffset), 5);
+    const firstSignatureOffset = signatureCountOffset + 4 + (5 * 32);
+    for (let signatureIndex = 0; signatureIndex < 5; signatureIndex += 1) {
+      fiveInvalidEnvelopeBytes[firstSignatureOffset + (signatureIndex * 96) + 32] ^= 1;
+    }
     const invalidEnvelopes = [
+      ["zero signatures", signedEnvelope(validCertFirst.certificate, "LCP/NEP141/RECOVERY/V1\0", committee, 0)],
+      ["one signature", signedEnvelope(validCertFirst.certificate, "LCP/NEP141/RECOVERY/V1\0", committee, 1)],
+      ["two signatures", signedEnvelope(validCertFirst.certificate, "LCP/NEP141/RECOVERY/V1\0", committee, 2)],
       ["three signatures", signedEnvelope(validCertFirst.certificate, "LCP/NEP141/RECOVERY/V1\0", committee, 3)],
+      ["five invalid signatures", fiveInvalidEnvelopeBytes.toString("base64")],
       ["wrong signing domain", recoveryCertificate(certFirstPending.intent, "success", committee, "LCP/NEP141/RECOVERY/V0\0").envelope],
       ["mismatched intent digest", recoveryCertificate(certFirstPending.intent, "success", committee, "LCP/NEP141/RECOVERY/V1\0", sha256Bytes(Buffer.from("wrong intent digest"))).envelope],
       ["mutated signature", (() => {
@@ -665,6 +680,48 @@ async function main() {
     };
     console.log("PASS certificate-first recovery settles after callback OOG; malformed and replayed certificates leave state unchanged");
 
+    const fiveOfFiveBalanceBefore = await tokenBalance(CASH_RECIPIENT_ID);
+    const fiveOfFiveTransfer = await queueRecovery(105, 1, "five-of-five recovery certificate");
+    const fiveOfFivePending = await waitFor("five-of-five callback-OOG transfer", async () => {
+      const [state, intent, balance] = await Promise.all([
+        escrow(105), recoveryIntent(fiveOfFiveTransfer.transferId), tokenBalance(CASH_RECIPIENT_ID),
+      ]);
+      return state && intent && BigInt(state.pending_raw) === AMOUNT && intent.terminal_outcome === null
+        && balance === fiveOfFiveBalanceBefore + AMOUNT
+        ? { done: true, value: { state, intent, balance } }
+        : { done: false, value: { state, intent: intent?.terminal_outcome, balance: balance?.toString() } };
+    });
+    const fiveOfFiveCertificate = recoveryCertificate(fiveOfFivePending.intent, "success", committee);
+    const fiveOfFiveEnvelope = signedEnvelope(
+      fiveOfFiveCertificate.certificate,
+      "LCP/NEP141/RECOVERY/V1\0",
+      committee,
+      5,
+    );
+    const fiveOfFiveBytes = Buffer.from(fiveOfFiveEnvelope, "base64");
+    assert.equal(fiveOfFiveBytes.readUInt32LE(4 + fiveOfFiveBytes.readUInt32LE(0)), 5,
+      "positive maximum-quorum envelope must contain all five signatures");
+    const fiveOfFiveTx = await rootCall("recover_nep141_transfer", {
+      transfer_id: fiveOfFiveTransfer.transferId,
+      certificate_base64: fiveOfFiveEnvelope,
+    }, "settle five-of-five recovery certificate", 220n * TERA);
+    const fiveOfFiveEscrow = await assertEscrow(105, { pending_raw: 0n, paid_raw: AMOUNT, free_raw: 0n });
+    assert.equal((await tranche(105)).status, "Paid");
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), fiveOfFiveBalanceBefore + AMOUNT,
+      "five-of-five certificate settlement must not duplicate the original token transfer");
+    results.five_of_five_certificate = {
+      transfer_transaction_hash: fiveOfFiveTransfer.tx.transaction.hash,
+      recovery_transaction_hash: fiveOfFiveTx.transaction.hash,
+      transfer_id: fiveOfFiveTransfer.transferId,
+      signature_count: 5,
+      envelope_bytes: fiveOfFiveBytes.length,
+      recovery_receipt_gas_burnt: (fiveOfFiveTx.receipts_outcome ?? [])
+        .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n).toString(),
+      escrow: fiveOfFiveEscrow,
+      token_balance: (await tokenBalance(CASH_RECIPIENT_ID)).toString(),
+    };
+    console.log("PASS maximum five-signature recovery envelope settles once with measured Sandbox receipt gas");
+
     const raceTransferId = String(Number(certFirst.transferId) + 1);
     const raceQueueHash = await queueRecovery(103, 20, "recovery callback-certificate race", { async: true });
     const raceIntentBeforeSettlement = await waitFor("race transfer intent", async () => {
@@ -685,7 +742,7 @@ async function main() {
     const raceIntent = await recoveryIntent(raceTransferId);
     assert.equal(raceIntent.terminal_outcome, "success");
     assert.equal((await tranche(103)).status, "Paid");
-    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + AMOUNT,
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + (AMOUNT * 2n),
       "racing settlement paths must not duplicate the token payment");
     const raceRecoveryStatus = await waitFor("concurrent recovery transaction result", async () => {
       try {
@@ -734,7 +791,7 @@ async function main() {
     }, "recover failed FT transfer", 220n * TERA);
     const failedRecovered = await assertEscrow(104, { pending_raw: 0n, paid_raw: 0n, free_raw: AMOUNT });
     assert.equal((await tranche(104)).status, "Failed");
-    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + AMOUNT,
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + (AMOUNT * 2n),
       "failed token execution must not change recipient balance");
     await functionCall(TOKEN_ID, tokenKey, "set_fail_transfers", { fail: false });
     const retry = await queueRecovery(104, 20, "retry certificate-recovered failed transfer");
@@ -744,7 +801,7 @@ async function main() {
         ? { done: true, value: state } : { done: false, value: state };
     });
     assert.equal((await tranche(104)).status, "Paid");
-    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + AMOUNT * 2n,
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + AMOUNT * 3n,
       "one successful retry must result in one token payment");
     results.failed_transfer_recovery = {
       initial_transaction_hash: failedTransfer.tx.transaction.hash,
@@ -760,6 +817,15 @@ async function main() {
     const transferIdForCredit = certFirst.transferId;
     const creditIntent = await recoveryIntent(transferIdForCredit);
     const creditId = creditIntent.refund_credit_id;
+    const creditBeforeFinalize = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
+    const lowGasFinalize = await rootCall("finalize_receipt_recovery_intent", {
+      transfer_id: transferIdForCredit,
+    }, "reject recovery-intent storage release with insufficient gas", 1n * TERA, 0n, true);
+    assert.ok(hasFailedExecution(lowGasFinalize));
+    assert.deepEqual(await recoveryIntent(transferIdForCredit), creditIntent,
+      "failed storage release must preserve the terminal intent for retry");
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditBeforeFinalize,
+      "failed storage release must not mutate the payer credit");
     const finalizedIntentTx = await rootCall("finalize_receipt_recovery_intent", {
       transfer_id: transferIdForCredit,
     }, "finalize terminal recovery intent", 220n * TERA);
@@ -836,6 +902,9 @@ async function main() {
     results.recovery_credit = {
       credit_id: creditId,
       initial_credit: creditBeforeRevaluation,
+      storage_release_low_gas_failure_transaction_hash: lowGasFinalize.transaction.hash,
+      storage_release_retry_transaction_hash: finalizedIntentTx.transaction.hash,
+      permissionless_storage_release_retry: true,
       revaluation_batches: revaluation,
       blocked_during_revaluation: true,
       one_yocto_short_rejected: true,
@@ -982,6 +1051,12 @@ async function main() {
     await rootCall("cancel_receipt_recovery_rotation", {
       signed_cancellation_base64: cancelEnvelope,
     }, "reject replayed rotation cancellation", 180n * TERA, 0n, true);
+    const replayedProposal = await rootCall("propose_receipt_recovery_rotation", {
+      signed_proposal_base64: cancelProposalEnvelope,
+    }, "reject canceled committee proposal replay", 220n * TERA, 0n, true);
+    config = await view(CORE_ID, "receipt_recovery_configuration", {});
+    assert.equal(config.last_rotation_generation, "1");
+    assert.equal(config.pending_rotation, null);
 
     const activationBase = BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec);
     const activationAt = activationBase + minDelay + activationSlack;
@@ -1038,10 +1113,41 @@ async function main() {
     const retireTx = await rootCall("retire_receipt_recovery_epoch", { epoch: 0 }, "retire unused prior committee epoch", 180n * TERA);
     assert.equal(returnedJson(retireTx), true);
     assert.equal(await view(CORE_ID, "receipt_recovery_committee", { epoch: 0 }), null);
+    const reusedCommitteeKeys = [
+      ...rotationKeys.slice(0, 4),
+      committee[0],
+    ].sort((left, right) => Buffer.compare(left.publicKeyBytes, right.publicKeyBytes));
+    const reuseNow = BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec);
+    const reusedKeyMessage = buildRotationMessage(
+      activeConfig,
+      nodeStatus.chain_id,
+      genesisHash,
+      CORE_ID,
+      1,
+      2,
+      3,
+      reusedCommitteeKeys,
+      reuseNow + minDelay + activationSlack,
+    );
+    const reusedKeyEnvelope = signedEnvelope(
+      reusedKeyMessage,
+      "LCP/NEP141/COMMITTEE-ROTATION/V2\0",
+      rotationKeys,
+    );
+    await rootCall("propose_receipt_recovery_rotation", {
+      signed_proposal_base64: reusedKeyEnvelope,
+    }, "reject historical key reuse after prior epoch retirement", 220n * TERA, 0n, true);
+    const configAfterReusedKey = await view(CORE_ID, "receipt_recovery_configuration", {});
+    assert.equal(configAfterReusedKey.current_epoch, 1);
+    assert.equal(configAfterReusedKey.last_rotation_generation, "2");
+    assert.equal(configAfterReusedKey.used_key_count, 10);
+    assert.equal(configAfterReusedKey.pending_rotation, null);
     results.governance = {
       proposal_cancel_transaction_hash: cancelledProposalTx.transaction.hash,
       activation_proposal_transaction_hash: activationProposalTx.transaction.hash,
       activation_transaction_hash: activationTx.transaction.hash,
+      canceled_proposal_replay_rejected: !hasFailedExecution(replayedProposal) ? false : true,
+      historical_key_reuse_after_retirement_rejected: true,
       early_activation_rejected: true,
       canceled_generation: cancelledProposal.proposal_generation,
       activated_generation: activationProposal.proposal_generation,
