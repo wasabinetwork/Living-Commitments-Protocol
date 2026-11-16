@@ -170,18 +170,22 @@ shasum -a 256 tests/sandbox-usdc-callbacks/native-callbacks-sandbox-acceptance-2
 Build the fixture-enabled recovery core and both mock-token variants. Install
 the pinned Cargo NEAR CLI if needed, then use its Wasm optimization step for the
 recovery core. Plain `cargo build` output is 1,575,617 bytes and exceeds the
-local Sandbox RPC server's HTTP request-body limit during deployment; Cargo
-NEAR's `wasm-opt -O` output is 1,115,281 bytes and deploys successfully. This is
-a local harness transport constraint, not a NEAR consensus size-limit result.
+local Sandbox RPC server's HTTP request-body limit during deployment; the
+optimized fixture from the November 16 run is 1,124,792 bytes and deploys
+successfully. This is a local harness transport constraint, not a NEAR
+consensus size-limit result.
 The following enables receipt recovery and the test-only ten-second governance
 delay, and overwrites the core WASM from the earlier default build:
 
 ```sh
 cargo install cargo-near --version 0.23.0 --locked
+mkdir -p /tmp/lcp-near-sandbox-cache/wasm-opt-output target/wasm32-unknown-unknown/release
 cargo near build non-reproducible-wasm --locked --no-abi \
   --features 'sandbox-callback-fixture usdc-receipt-recovery' \
   --manifest-path contracts/lcp-core/Cargo.toml \
-  --out-dir target/wasm32-unknown-unknown/release
+  --out-dir /tmp/lcp-near-sandbox-cache/wasm-opt-output
+cp /tmp/lcp-near-sandbox-cache/wasm-opt-output/lcp_core.wasm \
+  target/wasm32-unknown-unknown/release/lcp_core.wasm
 ```
 
 Then run only the recovery lifecycle with:
@@ -216,7 +220,13 @@ after the rejected cross-transfer attempt and later settle with their own
 certificates. A direct callback from another account, a different account's
 recovery-credit withdrawal, and a payer withdrawal carrying one yoctoNEAR were
 also rejected with the complete credit view unchanged; the payer's later
-exact-margin withdrawal succeeded. A replay after successful settlement found
+exact-margin withdrawal succeeded. The payer-authorized Sandbox fixture also
+placed a credit in flight, then called the production private callback with a
+mismatched amount and a mismatched nonce; each callback preserved the complete
+credit view. A test-only predecessor failure followed by the production
+callback restored the exact credit to `refund_pending` with its accrued amount
+unchanged and no transfer scheduled. The subsequent real payer withdrawal
+succeeded at the exact cash margin. A replay after successful settlement found
 no credit, emitted only its failed method receipt, and scheduled no second
 transfer or callback. A weak committee key was rejected at bootstrap without
 consuming the one-time setup

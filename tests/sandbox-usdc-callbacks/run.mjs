@@ -1246,6 +1246,44 @@ async function main() {
     assert.deepEqual(creditAfterDepositAttempt, creditBeforeRevaluation,
       "attached-deposit rejection must not mutate the credit");
 
+    const beginCreditCallbackTx = await creditPayerCall(
+      "sandbox_begin_recovery_credit_callback_fixture",
+      { credit_id_hex: creditId },
+      "fixture a payer-authorized in-flight recovery-credit withdrawal",
+      150n * TERA,
+    );
+    const [callbackAmount, callbackNonce] = returnedJson(beginCreditCallbackTx).map(BigInt);
+    assert.ok(callbackAmount > 0n);
+    const creditWithWithdrawalInFlight = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
+    assert.equal(creditWithWithdrawalInFlight.state, "withdrawing");
+    assert.equal(BigInt(creditWithWithdrawalInFlight.in_flight_yocto), callbackAmount);
+    const mismatchedAmountCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: (callbackAmount + 1n).toString(),
+      nonce: callbackNonce.toString(),
+      result_succeeds: true,
+    }, "ignore recovery-credit callback with mismatched amount", 220n * TERA);
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
+      "mismatched callback amount must preserve the in-flight payer credit");
+    const mismatchedNonceCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: callbackAmount.toString(),
+      nonce: (callbackNonce + 1n).toString(),
+      result_succeeds: true,
+    }, "ignore recovery-credit callback with mismatched nonce", 220n * TERA);
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
+      "mismatched callback nonce must preserve the in-flight payer credit");
+    const failedExactCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: callbackAmount.toString(),
+      nonce: callbackNonce.toString(),
+      result_succeeds: false,
+    }, "restore the payer credit after an exact failed callback", 220n * TERA, 0n, true);
+    const creditAfterFailedCallback = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
+    assert.equal(creditAfterFailedCallback.state, "refund_pending");
+    assert.equal(creditAfterFailedCallback.accrued_yocto, creditWithWithdrawalInFlight.accrued_yocto);
+    assert.equal(BigInt(creditAfterFailedCallback.in_flight_yocto), 0n);
+
     await rootCall("sandbox_mark_recovery_storage_price_stale", {}, "fixture a stale reserve price", 100n * TERA);
     const beginRevaluationTx = await rootCall("begin_recovery_storage_revaluation", {}, "begin storage-reserve revaluation", 100n * TERA);
     assert.equal(returnedJson(beginRevaluationTx), true);
@@ -1286,7 +1324,7 @@ async function main() {
     }, "reject one-yocto-short recovery-credit withdrawal", 150n * TERA, true);
     assert.ok(hasFailedExecution(shortWithdrawal));
     credit = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
-    assert.equal(credit.state, "available");
+    assert.equal(credit.state, "refund_pending");
     assert.equal(BigInt(credit.accrued_yocto), withdrawable);
     assert.equal(BigInt(credit.in_flight_yocto), 0n);
 
@@ -1332,6 +1370,15 @@ async function main() {
       unauthorized_withdrawal_preserved_credit: true,
       attached_deposit_rejection_transaction_hash: attachedDepositWithdrawal.transaction.hash,
       attached_deposit_rejection_preserved_credit: true,
+      callback_attempt_transaction_hash: beginCreditCallbackTx.transaction.hash,
+      callback_attempt_amount_yocto: callbackAmount.toString(),
+      callback_attempt_nonce: callbackNonce.toString(),
+      mismatched_amount_callback_transaction_hash: mismatchedAmountCallbackTx.transaction.hash,
+      mismatched_amount_callback_preserved_withdrawing_credit: true,
+      mismatched_nonce_callback_transaction_hash: mismatchedNonceCallbackTx.transaction.hash,
+      mismatched_nonce_callback_preserved_withdrawing_credit: true,
+      exact_failed_callback_transaction_hash: failedExactCallbackTx.transaction.hash,
+      exact_failed_callback_restored_refund_pending_credit: true,
       revaluation_batches: revaluation,
       blocked_during_revaluation: true,
       one_yocto_short_rejected: true,
@@ -1442,9 +1489,10 @@ async function main() {
     const blockBeforeGovernance = await rpc("block", { finality: "final" });
     const nowNs = BigInt(blockBeforeGovernance.header.timestamp_nanosec);
     // Sandbox-only build uses a ten-second rotation delay; release builds
-    // continue to enforce seven days. Keep a one-second signed safety buffer.
+    // continue to enforce seven days. Leave enough signed slack for the local
+    // RPC and transaction-signing round trip before the proposal is recorded.
     const minDelay = 10_000_000_000n;
-    const activationSlack = 1_000_000_000n;
+    const activationSlack = 30_000_000_000n;
     const cancelProposalMessage = buildRotationMessage(
       config, nodeStatus.chain_id, genesisHash, CORE_ID, 0, 1, 1, rotationKeys, nowNs + minDelay + activationSlack,
     );

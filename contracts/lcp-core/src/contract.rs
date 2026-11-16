@@ -1197,6 +1197,126 @@ impl Contract {
         native_cash::read_refund_attempt(attempt_id.0).is_some()
     }
 
+    /// Creates a funded in-flight recovery-credit attempt without scheduling
+    /// the payout transfer. This fixture state lets the Sandbox harness call
+    /// the real private callback with deliberately mismatched arguments.
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    pub fn sandbox_begin_recovery_credit_callback_fixture(
+        &mut self,
+        credit_id_hex: String,
+    ) -> Vec<U128> {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        let credit_id = crate::recovery_config::parse_credit_id(&credit_id_hex);
+        let credit = crate::recovery_accounting::read_persisted_refund_credit(&credit_id)
+            .unwrap_or_else(|| env::panic_str("refund credit does not exist"));
+        require!(
+            env::predecessor_account_id() == credit.payer,
+            "fixture must be called by the credit payer"
+        );
+        let attempt = crate::recovery_accounting::begin_persisted_refund_withdrawal(credit_id);
+        // Clear the preflight reservation without materializing a transfer.
+        // The accrued credit remains a liability throughout the fixture.
+        native_cash::assert_solvency();
+        vec![U128(attempt.amount_yocto), U128(u128::from(attempt.nonce))]
+    }
+
+    /// Queues a same-contract promise result and then invokes the production
+    /// private recovery-credit callback. `result_succeeds = false` restores
+    /// the exact active attempt to RefundPending without paying it.
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    pub fn sandbox_queue_recovery_credit_callback_fixture(
+        &mut self,
+        credit_id_hex: String,
+        amount: U128,
+        nonce: U64,
+        result_succeeds: bool,
+    ) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            env::predecessor_account_id().as_str() == "sandbox",
+            "fixture must be called by the Sandbox root"
+        );
+        let callback_method = "on_receipt_recovery_credit_withdrawal";
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "credit_id_hex": credit_id_hex,
+            "amount": amount,
+            "nonce": nonce,
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize fixture credit callback"));
+        let current = env::current_account_id();
+        let trigger_method = if result_succeeds {
+            "sandbox_recovery_callback_success"
+        } else {
+            "sandbox_recovery_callback_failure"
+        };
+        let trigger = Promise::new(current.clone()).function_call(
+            trigger_method.to_string(),
+            b"{}".to_vec(),
+            NearToken::from_yoctonear(0),
+            Gas::from_tgas(5),
+        );
+        let callback = Promise::new(current).function_call(
+            callback_method.to_string(),
+            callback_args,
+            NearToken::from_yoctonear(0),
+            Gas::from_tgas(CALLBACK_GAS_TGAS),
+        );
+        drop(trigger.then(callback));
+    }
+
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    #[private]
+    pub fn sandbox_recovery_callback_success(&self) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+    }
+
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    #[private]
+    pub fn sandbox_recovery_callback_failure(&self) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        env::panic_str("intentional Sandbox callback failure result");
+    }
+
     /// Adds a fixture-only recovery-credit liability so the native-cash ledger
     /// has exactly the requested free balance. This avoids moving Sandbox
     /// account funds and is never compiled into deployment artifacts.
