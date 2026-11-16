@@ -1521,10 +1521,6 @@ impl Contract {
             env::predecessor_account_id().as_str() == "sandbox",
             "fixture margin must be set by the Sandbox root"
         );
-        require!(
-            target_free_balance_yocto.0 > 0,
-            "fixture target margin must be positive"
-        );
         let storage_cost = env::storage_byte_cost()
             .as_yoctonear()
             .checked_mul(u128::from(env::storage_usage()))
@@ -1694,6 +1690,125 @@ impl Contract {
         self.commitments.flush();
         self.evaluation_records.flush();
         self.next_commitment_id = self.next_commitment_id.max(commitment_id.0);
+    }
+
+    /// Seeds an active heartbeat commitment for the real OutLayer dispatch
+    /// path in local Sandbox only. Operations liability must be backed by the
+    /// isolated core account balance; underfunded fixtures exercise the
+    /// pre-dispatch budget rejection.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    pub fn sandbox_seed_outlayer_dispatch_commitment(
+        &mut self,
+        commitment_id: U64,
+        evaluator: AccountId,
+        maintainer_public_key_hex: String,
+        operations_funded_yocto: U128,
+        execution_deposit_yocto: U128,
+    ) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            env::predecessor_account_id().as_str() == "sandbox",
+            "fixture commitment must be seeded by the Sandbox root"
+        );
+        require!(
+            commitment_id.0 > 0 && self.commitments.get(&commitment_id.0).is_none(),
+            "fixture commitment ID must be positive and unused"
+        );
+        require!(
+            execution_deposit_yocto.0 > 0,
+            "fixture evaluator deposit must be positive"
+        );
+        require!(
+            operations_funded_yocto.0 <= execution_deposit_yocto.0,
+            "fixture operations funding cannot exceed the requested evaluator deposit"
+        );
+        let maintainer_public_key = decode_32_byte_hex(&maintainer_public_key_hex)
+            .unwrap_or_else(|| env::panic_str("fixture maintainer key must be 32-byte hex"));
+        require!(
+            encode_hex(&maintainer_public_key) == maintainer_public_key_hex,
+            "fixture maintainer key must use lowercase hex"
+        );
+
+        let now_ns = env::block_timestamp();
+        let sponsor: AccountId = "sandbox".parse().unwrap();
+        let policy = CommitmentPolicy {
+            version: 1,
+            temporal: TemporalPolicy {
+                initial_window_ns: 60_000_000_000,
+                evidence_ttl_ns: 3_600_000_000_000,
+                grace_ns: 60_000_000_000,
+                max_source_lag_ns: 60_000_000_000,
+                challenge_window_ns: 1_000_000_000,
+                resolution_timeout_ns: 60_000_000_000,
+                recovery_allowed: true,
+            },
+            evidence: EvidencePolicy {
+                maintainer_public_key,
+            },
+            evaluator: EvaluatorPolicy {
+                outlayer_account: evaluator,
+                wasm_url: "https://sandbox.invalid/evaluator.wasm".to_string(),
+                wasm_sha256: [0x71; 32],
+                build_target: "wasm32-wasip1".to_string(),
+                max_instructions: 1_000_000,
+                max_memory_mb: 64,
+                max_execution_seconds: 30,
+                request_timeout_ns: 300_000_000_000,
+                execution_deposit_yocto: execution_deposit_yocto.0,
+            },
+            budget: BudgetPolicy {
+                sponsor: sponsor.clone(),
+                beneficiary: "outlayer-beneficiary.sandbox".parse().unwrap(),
+                epoch_ns: 86_400_000_000_000,
+                max_epochs: 1,
+                tranche_yocto: 1,
+            },
+        };
+        validate_commitment_policy(&policy);
+        let commitment = Commitment {
+            id: commitment_id.0,
+            subject: "Sandbox OutLayer cash-dispatch fixture".to_string(),
+            creator: sponsor,
+            maintainer: "sandbox".parse().unwrap(),
+            arbiter: "outlayer-arbiter.sandbox".parse().unwrap(),
+            lifecycle: Lifecycle::Active,
+            policy_hash: commitment_policy_digest(&policy, None),
+            policy,
+            activated_at_ns: Some(now_ns.saturating_sub(30_000_000_000)),
+            last_good: None,
+            last_observed_at_ns: None,
+            negative_since_ns: None,
+            pending_evaluation_id: None,
+            active_challenge_id: None,
+            breach_latched: false,
+            escrow_funded_yocto: 0,
+            escrow_paid_yocto: 0,
+            escrow_refunded_yocto: 0,
+            escrow_pending_yocto: 0,
+            operations_funded_yocto: operations_funded_yocto.0,
+            operations_authorized_spend_yocto: 0,
+            storage_deposit_yocto: 0,
+            next_evaluation_id: 1,
+            challenge_count: 0,
+            pending_transfer_count: 0,
+        };
+
+        native_cash::adjust(
+            native_cash::NativeLiability::Operations,
+            true,
+            operations_funded_yocto.0,
+        );
+        self.commitments.insert(commitment_id.0, commitment);
+        self.commitments.flush();
+        self.next_commitment_id = self.next_commitment_id.max(commitment_id.0);
+        native_cash::assert_solvency();
     }
 
     /// Seeds a closed commitment with refundable native escrow and operations

@@ -9,11 +9,19 @@ sidecar, and the native cash gate checks that it is current and solvent. The
 recovery acceptance runner below creates intents and payer credits and
 exercises their lifecycle in Sandbox.
 
-From the repository root, build both artifacts:
+From the repository root, build the optimized fixture core and both mock-token
+artifacts. The local Sandbox RPC rejects the larger unoptimized core artifact.
 
 ```sh
-cargo build --locked --release --target wasm32-unknown-unknown \
-  -p lcp-core --features sandbox-callback-fixture
+cargo install cargo-near --version 0.23.0 --locked
+mkdir -p /tmp/lcp-near-sandbox-cache/wasm-opt-default \
+  target/wasm32-unknown-unknown/release
+cargo near build non-reproducible-wasm --locked --no-abi \
+  --manifest-path contracts/lcp-core/Cargo.toml \
+  --features sandbox-callback-fixture \
+  --out-dir /tmp/lcp-near-sandbox-cache/wasm-opt-default
+cp /tmp/lcp-near-sandbox-cache/wasm-opt-default/lcp_core.wasm \
+  target/wasm32-unknown-unknown/release/lcp_core.wasm
 cargo build --locked --release --target wasm32-unknown-unknown \
   -p sandbox-mock-ft
 CARGO_TARGET_DIR=target/lcp-sandbox-variant-b cargo build --locked --release \
@@ -47,6 +55,46 @@ probe rejects a one-yocto shortfall, accepts the exact-balance control, and
 confirms the recipient is credited after settlement. The historical receipt
 fixture predates this builder-versus-host measurement and must be regenerated
 when the follow-up Sandbox acceptance is run.
+
+To run only the actual OutLayer `request_evaluation` dispatch matrix, use the
+same optimized fixture core and mock-token artifacts, then run:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_OUTLAYER_DISPATCH_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_OUTLAYER_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/outlayer-dispatch-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+This focused protocol-88 run seeds one commitment with exactly 0.01 NEAR of
+operations funding and a second one yocto below that amount. It discovers the
+first commitment's storage bond through an expected, rolled-back underpayment,
+rejects a one-yocto-short retry without dispatch, then submits with the exact
+bond at zero pre-existing free cash. The evaluator receiver intentionally has
+no code. Its request receipt fails, the failed action's 0.01 NEAR deposit is
+returned to the core, the callback marks the evaluation failed, and the
+operations-spend counter remains charged for that amount. The capture checks
+the evaluator's unchanged balance and the core's exact retained storage bond.
+underfunded commitment is rejected before evaluation state or an evaluator
+receipt is created. The receipt and state capture is
+[`outlayer-dispatch-sandbox-acceptance-2026-11-16.json`](outlayer-dispatch-sandbox-acceptance-2026-11-16.json), with its [checksum manifest](outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256). This proves local LCP dispatch accounting and failure handling; it
+does not test the hosted OutLayer service, `schedule_service_evaluation`, or
+real-network latency and refunds.
+
+Regenerate the capture manifest after a rerun or any source/document change:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/outlayer-dispatch-sandbox-acceptance-2026-11-16.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  > tests/sandbox-usdc-callbacks/outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256
+```
 
 The full run also funds the isolated core account with a plain NEAR `Transfer`
 action and checks that its balance increases by at least the transferred

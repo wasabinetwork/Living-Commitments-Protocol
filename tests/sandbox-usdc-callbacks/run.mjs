@@ -2135,6 +2135,241 @@ async function main() {
       return;
     }
 
+    if (process.env.LCP_OUTLAYER_DISPATCH_ONLY === "1") {
+      const fundedCommitmentId = "777";
+      const underfundedCommitmentId = "778";
+      const executionDeposit = ONE_NEAR / 100n;
+      const maintainer = newKey();
+      const publicKeyHex = maintainer.publicKeyBytes.toString("hex");
+
+      for (const [commitmentId, operationsFunded] of [
+        [fundedCommitmentId, executionDeposit],
+        [underfundedCommitmentId, executionDeposit - 1n],
+      ]) {
+        await submitAndWaitForTransaction(
+          "sandbox",
+          rootKey,
+          CORE_ID,
+          [actionFunctionCall("sandbox_seed_outlayer_dispatch_commitment", {
+            commitment_id: commitmentId,
+            evaluator: NO_CODE_TOKEN_ID,
+            maintainer_public_key_hex: publicKeyHex,
+            operations_funded_yocto: operationsFunded.toString(),
+            execution_deposit_yocto: executionDeposit.toString(),
+          }, 120n * TERA)],
+          `seed OutLayer dispatch commitment ${commitmentId}`,
+        );
+      }
+
+      const margin = await setNativeFreeMargin(0n, "OutLayer dispatch boundary");
+      const fundedCommitment = await view(CORE_ID, "get_commitment", {
+        commitment_id: fundedCommitmentId,
+      });
+      const observedBlock = await rpc("block", { finality: "final" });
+      const observedAtNs = BigInt(observedBlock.header.timestamp_nanosec) - 1_000_000_000n;
+      const artifactHash = "72".repeat(32);
+      const payload = JSON.stringify({
+        schema: "lcp.heartbeat.v1",
+        commitment_id: fundedCommitmentId,
+        evaluation_id: "1",
+        policy_version: 1,
+        policy_hash: fundedCommitment.policy_hash,
+        observed_at_ns: observedAtNs.toString(),
+        subject: fundedCommitment.subject,
+        artifact_hash: artifactHash,
+      });
+      const evidence = {
+        type: "signed_maintenance_heartbeat",
+        artifact_hash: artifactHash,
+        maintainer_public_key: publicKeyHex,
+        signature: sign(null, Buffer.from(payload, "utf8"), maintainer.privateKeyObject).toString("hex"),
+        payload,
+      };
+
+      const requestAction = (commitmentId, deposit) => actionFunctionCall(
+        "request_evaluation",
+        { commitment_id: commitmentId, evidence },
+        200n * TERA,
+        deposit,
+      );
+      const discoveryFailure = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [requestAction(fundedCommitmentId, 0n)],
+        "measure OutLayer request storage bond",
+        { expectFailure: true },
+      );
+      const discoveryLogs = (discoveryFailure.receipts_outcome ?? [])
+        .flatMap((receipt) => receipt.outcome?.logs ?? []);
+      const discoveryText = [
+        ...discoveryLogs,
+        JSON.stringify(discoveryFailure.status),
+        ...(discoveryFailure.receipts_outcome ?? []).map((receipt) =>
+          JSON.stringify(receipt.outcome?.status)),
+      ].join("\n");
+      const storageBondMatch = discoveryText.match(
+        /attach at least (\d+) yoctoNEAR for evaluation storage/,
+      );
+      assert.ok(storageBondMatch,
+        `storage-bond probe did not report its requirement: ${discoveryText}`);
+      const storageBond = BigInt(storageBondMatch[1]);
+      assert.ok(storageBond > 1n, "evaluation storage bond must exceed one yoctoNEAR");
+      assert.equal(
+        (discoveryFailure.receipts_outcome ?? []).some(
+          (receipt) => receipt.outcome?.executor_id === NO_CODE_TOKEN_ID,
+        ),
+        false,
+        "storage-bond discovery failure must not dispatch the evaluator",
+      );
+
+      const oneShortFailure = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [requestAction(fundedCommitmentId, storageBond - 1n)],
+        "reject one-yocto-short OutLayer evaluation storage deposit",
+        { expectFailure: true },
+      );
+      assert.equal(
+        (oneShortFailure.receipts_outcome ?? []).some(
+          (receipt) => receipt.outcome?.executor_id === NO_CODE_TOKEN_ID,
+        ),
+        false,
+        "underfunded storage must not dispatch the evaluator",
+      );
+      const fundedStateAfterStorageRejection = await view(CORE_ID, "get_commitment", {
+        commitment_id: fundedCommitmentId,
+      });
+      assert.equal(fundedStateAfterStorageRejection.pending_evaluation_id, null);
+      assert.equal(fundedStateAfterStorageRejection.next_evaluation_id, "1");
+      assert.equal(fundedStateAfterStorageRejection.operations_authorized_spend_yocto, "0");
+
+      const underfundedBudgetFailure = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [requestAction(underfundedCommitmentId, 0n)],
+        "reject OutLayer evaluation without its full operations budget",
+        { expectFailure: true },
+      );
+      const underfundedLogs = (underfundedBudgetFailure.receipts_outcome ?? [])
+        .flatMap((receipt) => receipt.outcome?.logs ?? []);
+      const underfundedText = [
+        ...underfundedLogs,
+        JSON.stringify(underfundedBudgetFailure.status),
+        ...(underfundedBudgetFailure.receipts_outcome ?? []).map((receipt) =>
+          JSON.stringify(receipt.outcome?.status)),
+      ].join("\n");
+      assert.ok(underfundedText.includes("evaluator operations budget is exhausted"),
+        "underfunded budget should reject before attempting request construction");
+      assert.equal(
+        (underfundedBudgetFailure.receipts_outcome ?? []).some(
+          (receipt) => receipt.outcome?.executor_id === NO_CODE_TOKEN_ID,
+        ),
+        false,
+        "insufficient operations must not dispatch the evaluator",
+      );
+      const underfundedState = await view(CORE_ID, "get_commitment", {
+        commitment_id: underfundedCommitmentId,
+      });
+      assert.equal(underfundedState.pending_evaluation_id, null);
+      assert.equal(underfundedState.next_evaluation_id, "1");
+      assert.equal(underfundedState.operations_authorized_spend_yocto, "0");
+      assert.equal(await view(CORE_ID, "get_evaluation", {
+        commitment_id: underfundedCommitmentId,
+        evaluation_id: "1",
+      }), null);
+
+      const cashBeforeDispatch = await nativeCashSnapshot();
+      assert.equal(nativeFreeMargin(cashBeforeDispatch), 0n,
+        "exact-storage dispatch fixture must begin at zero free cash");
+      const evaluatorBalanceBefore = await accountBalance(NO_CODE_TOKEN_ID);
+      const requestTx = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [requestAction(fundedCommitmentId, storageBond)],
+        "dispatch OutLayer request at the exact evaluation storage bond",
+      );
+      const outlayerReceipt = (requestTx.receipts_outcome ?? []).find(
+        (receipt) => receipt.outcome?.executor_id === NO_CODE_TOKEN_ID,
+      );
+      assert.ok(outlayerReceipt, "missing materialized OutLayer request receipt");
+      assert.ok(isFailedExecution(outlayerReceipt.outcome.status),
+        "the no-code evaluator fixture should fail its request receipt");
+      const failedEvaluation = await waitFor("failed OutLayer dispatch callback", async () => {
+        const evaluation = await view(CORE_ID, "get_evaluation", {
+          commitment_id: fundedCommitmentId,
+          evaluation_id: "1",
+        });
+        return evaluation?.status === "Failed"
+          ? { done: true, value: evaluation }
+          : { done: false, value: evaluation?.status ?? null };
+      });
+      const fundedStateAfterFailure = await view(CORE_ID, "get_commitment", {
+        commitment_id: fundedCommitmentId,
+      });
+      assert.equal(fundedStateAfterFailure.pending_evaluation_id, null);
+      assert.equal(fundedStateAfterFailure.operations_authorized_spend_yocto,
+        executionDeposit.toString(),
+        "failed evaluator execution must not restore operations spend");
+      assert.equal(fundedStateAfterFailure.operations_funded_yocto, executionDeposit.toString());
+      const cashAfterFailure = await nativeCashSnapshot();
+      assert.equal(cashBeforeDispatch[5] - cashAfterFailure[5], executionDeposit,
+        "dispatch should reduce the global operations liability by the exact evaluator deposit");
+      assert.equal(cashAfterFailure[4], 0n,
+        "the dispatch receipt must clear its planned-outflow reservation");
+      assert.equal(await accountBalance(NO_CODE_TOKEN_ID), evaluatorBalanceBefore,
+        "the failed evaluator receipt must not retain its attached deposit");
+      assert.equal(cashAfterFailure[0] - cashBeforeDispatch[0], storageBond,
+        "the failed OutLayer action's deposit must return to core while its exact storage bond remains");
+
+      fixtures.outlayer_dispatch_acceptance = {
+        funded_commitment_id: fundedCommitmentId,
+        underfunded_commitment_id: underfundedCommitmentId,
+        evaluator_account: NO_CODE_TOKEN_ID,
+        evaluator_has_code: false,
+        execution_deposit_yocto: executionDeposit.toString(),
+        operations_funded_for_underfunded_commitment_yocto: (executionDeposit - 1n).toString(),
+        exact_evaluation_storage_bond_yocto: storageBond.toString(),
+        free_cash_margin_before_dispatch_yocto: nativeFreeMargin(cashBeforeDispatch).toString(),
+        maintainer_public_key_hex: publicKeyHex,
+        evidence_payload: payload,
+        evidence_signature_hex: evidence.signature,
+        storage_bond_discovery_transaction: discoveryFailure,
+        one_yocto_underfunded_transaction: oneShortFailure,
+        underfunded_operations_transaction: underfundedBudgetFailure,
+        dispatch_transaction: requestTx,
+        failed_outlayer_receipt: outlayerReceipt,
+        evaluation_after_failure: failedEvaluation,
+        commitment_after_failure: fundedStateAfterFailure,
+        native_cash_before_dispatch: cashBeforeDispatch.map(String),
+        native_cash_after_failure: cashAfterFailure.map(String),
+        evaluator_balance_before: evaluatorBalanceBefore.toString(),
+        evaluator_balance_after: (await accountBalance(NO_CODE_TOKEN_ID)).toString(),
+        core_balance_delta_yocto: (cashAfterFailure[0] - cashBeforeDispatch[0]).toString(),
+        operations_liability_reduction_yocto: (cashBeforeDispatch[5] - cashAfterFailure[5]).toString(),
+        note: "Isolated Sandbox only. The evaluator account intentionally has no code. The test checks LCP dispatch accounting and failure handling; it does not characterize hosted OutLayer latency or service reliability.",
+      };
+      const fixturePath = process.env.LCP_OUTLAYER_FIXTURE_OUTPUT
+        ?? join(here, "outlayer-dispatch-sandbox-acceptance-2026-11-16.json");
+      await writeFile(fixturePath, `${JSON.stringify({
+        fixture_schema: "lcp.outlayer-dispatch-sandbox-acceptance.v1",
+        captured_at: new Date().toISOString(),
+        node: fixtures.node,
+        wasm_artifacts: fixtures.artifacts,
+        scenario: fixtures.outlayer_dispatch_acceptance,
+      }, null, 2)}\n`);
+      console.log("PASS real request_evaluation dispatch materializes at zero free cash using the exact storage bond and operations reserve");
+      console.log("PASS failed evaluator execution keeps the deposit charged to operations spend");
+      console.log("PASS failed evaluator action returns its NEAR deposit to core without restoring operations budget");
+      console.log("PASS one-yocto-underfunded storage and insufficient operations emit no evaluator action");
+      console.log(`CAPTURED ${fixturePath}`);
+      console.log("All isolated OutLayer dispatch Sandbox checks passed; no public network was used.");
+      return;
+    }
+
     const nativeCommitmentId = "90";
     const nativeTrancheAmount = 10n ** 22n;
     await functionCall(CORE_ID, coreKey, "sandbox_seed_native_claimable_commitment", {
