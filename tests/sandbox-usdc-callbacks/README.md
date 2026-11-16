@@ -223,8 +223,10 @@ also rejected with the complete credit view unchanged; the payer's later
 exact-margin withdrawal succeeded. The payer-authorized Sandbox fixture also
 placed a credit in flight, then called the production private callback with a
 mismatched amount and a mismatched nonce; each callback preserved the complete
-credit view. Zero-result and two-result callbacks also left it unchanged. A
-test-only predecessor failure followed by the production callback restored the
+credit view. Zero-result, two-result, and one successful result with an
+unexpected nonempty payload also left it unchanged. The latter confirms the
+production callback accepts only the empty result expected from a native
+transfer. A test-only predecessor failure followed by the production callback restored the
 exact credit to `refund_pending` with its accrued amount unchanged and no
 transfer scheduled. After a second attempt began, the prior nonce could not
 settle it; a subsequent exact failed callback restored the credit again, and a

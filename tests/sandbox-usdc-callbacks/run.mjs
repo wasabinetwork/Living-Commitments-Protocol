@@ -1262,6 +1262,7 @@ async function main() {
       amount: (callbackAmount + 1n).toString(),
       nonce: callbackNonce.toString(),
       result_count: 1,
+      result_too_long: false,
       result_succeeds: true,
     }, "ignore recovery-credit callback with mismatched amount", 220n * TERA);
     assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
@@ -1271,6 +1272,7 @@ async function main() {
       amount: callbackAmount.toString(),
       nonce: (callbackNonce + 1n).toString(),
       result_count: 1,
+      result_too_long: false,
       result_succeeds: true,
     }, "ignore recovery-credit callback with mismatched nonce", 220n * TERA);
     assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
@@ -1280,6 +1282,7 @@ async function main() {
       amount: callbackAmount.toString(),
       nonce: callbackNonce.toString(),
       result_count: 0,
+      result_too_long: false,
       result_succeeds: true,
     }, "ignore recovery-credit callback without a promise result", 220n * TERA);
     assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
@@ -1289,15 +1292,27 @@ async function main() {
       amount: callbackAmount.toString(),
       nonce: callbackNonce.toString(),
       result_count: 2,
+      result_too_long: false,
       result_succeeds: true,
     }, "ignore recovery-credit callback with multiple promise results", 220n * TERA);
     assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
       "callback with multiple promise results must preserve the in-flight payer credit");
+    const nonemptyResultCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: callbackAmount.toString(),
+      nonce: callbackNonce.toString(),
+      result_count: 1,
+      result_too_long: true,
+      result_succeeds: true,
+    }, "ignore recovery-credit callback with an unexpected successful payload", 220n * TERA);
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
+      "callback with a nonempty successful result must preserve the in-flight payer credit");
     const failedExactCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
       credit_id_hex: creditId,
       amount: callbackAmount.toString(),
       nonce: callbackNonce.toString(),
       result_count: 1,
+      result_too_long: false,
       result_succeeds: false,
     }, "restore the payer credit after an exact failed callback", 220n * TERA, 0n, true);
     const creditAfterFailedCallback = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
@@ -1321,6 +1336,7 @@ async function main() {
       amount: retryCallbackAmount.toString(),
       nonce: callbackNonce.toString(),
       result_count: 1,
+      result_too_long: false,
       result_succeeds: true,
     }, "ignore a stale callback from the previous withdrawal attempt", 220n * TERA);
     assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithRetryInFlight,
@@ -1330,6 +1346,7 @@ async function main() {
       amount: retryCallbackAmount.toString(),
       nonce: retryCallbackNonce.toString(),
       result_count: 1,
+      result_too_long: false,
       result_succeeds: false,
     }, "restore the credit after the newer withdrawal fails", 220n * TERA, 0n, true);
     const creditAfterRetryFailure = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
@@ -1341,6 +1358,7 @@ async function main() {
       amount: retryCallbackAmount.toString(),
       nonce: retryCallbackNonce.toString(),
       result_count: 1,
+      result_too_long: false,
       result_succeeds: true,
     }, "ignore a duplicate callback after the attempt has failed", 220n * TERA);
     assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditAfterRetryFailure,
@@ -1416,6 +1434,7 @@ async function main() {
       amount: withdrawable.toString(),
       nonce: duplicateSettledCallbackNonce.toString(),
       result_count: 1,
+      result_too_long: false,
       result_succeeds: true,
     }, "ignore recovery-credit callback replay after successful settlement", 220n * TERA);
     assert.equal(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), null,
@@ -1453,6 +1472,8 @@ async function main() {
       zero_result_callback_preserved_withdrawing_credit: true,
       multiple_result_callback_transaction_hash: multipleResultCallbackTx.transaction.hash,
       multiple_result_callback_preserved_withdrawing_credit: true,
+      nonempty_result_callback_transaction_hash: nonemptyResultCallbackTx.transaction.hash,
+      nonempty_result_callback_preserved_withdrawing_credit: true,
       exact_failed_callback_transaction_hash: failedExactCallbackTx.transaction.hash,
       exact_failed_callback_restored_refund_pending_credit: true,
       retry_callback_attempt_transaction_hash: retryCreditCallbackTx.transaction.hash,

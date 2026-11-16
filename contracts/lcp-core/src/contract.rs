@@ -1232,7 +1232,9 @@ impl Contract {
 
     /// Queues a same-contract promise result and then invokes the production
     /// private recovery-credit callback. `result_succeeds = false` restores
-    /// the exact active attempt to RefundPending without paying it.
+    /// the exact active attempt to RefundPending without paying it. A
+    /// successful nonempty result exercises the production callback's strict
+    /// zero-length transfer-result check.
     #[cfg(all(
         feature = "sandbox-callback-fixture",
         feature = "usdc-receipt-recovery"
@@ -1243,6 +1245,7 @@ impl Contract {
         amount: U128,
         nonce: U64,
         result_count: u8,
+        result_too_long: bool,
         result_succeeds: bool,
     ) {
         require!(
@@ -1265,7 +1268,9 @@ impl Contract {
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize fixture credit callback"));
         let current = env::current_account_id();
-        let trigger_method = if result_succeeds {
+        let trigger_method = if result_too_long {
+            "sandbox_recovery_callback_nonempty_value"
+        } else if result_succeeds {
             "sandbox_recovery_callback_success"
         } else {
             "sandbox_recovery_callback_failure"
@@ -1348,6 +1353,23 @@ impl Contract {
             env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
             "fixture contract account required"
         );
+    }
+
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    #[private]
+    pub fn sandbox_recovery_callback_nonempty_value(&self) -> String {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        "unexpected callback result payload".to_string()
     }
 
     #[cfg(all(
