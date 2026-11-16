@@ -108,12 +108,20 @@ a public-network receipt proof, independent reproduction, or recovery-verifier
 acceptance. The fixture output contains ephemeral local-chain identifiers and
 is replaced on each run. Verify the captured artifact and source hashes with
 `shasum -a 256 -c tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.sha256`.
+Run the separate integrity checker with
+`node tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs`. It checks
+source digests, Base58/SHA-256 code-hash agreement, receipt hash encodings,
+rollback and conservation outcomes, and same-receipt action order. It validates
+the captured data's internal consistency; it does not recreate the Sandbox run
+or verify the receipt Merkle proofs against block headers.
 After regenerating the fixture from the repository root, regenerate the
 manifest with:
 
 ```sh
 shasum -a 256 tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.json \
-  tests/sandbox-usdc-callbacks/run.mjs contracts/sandbox-mock-ft/src/lib.rs \
+  tests/sandbox-usdc-callbacks/run.mjs \
+  tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs \
+  contracts/sandbox-mock-ft/src/lib.rs \
   contracts/sandbox-mock-ft/Cargo.toml contracts/lcp-core/src/contract.rs \
   contracts/lcp-core/src/lib.rs contracts/lcp-core/src/native_cash.rs \
   contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/Cargo.toml \
