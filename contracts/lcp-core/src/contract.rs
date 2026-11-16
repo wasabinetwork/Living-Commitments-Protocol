@@ -52,6 +52,8 @@ const MAX_REASON_CODES: usize = 16;
 const MAX_REASON_CODE_BYTES: usize = 64;
 const OUTLAYER_REQUEST_GAS_TGAS: u64 = 100;
 const CALLBACK_GAS_TGAS: u64 = 20;
+#[cfg(feature = "sandbox-callback-fixture")]
+const SANDBOX_RECOVERY_CALLBACK_DELAY_KEY: &[u8] = b"lcp:sandbox:recovery_callback_delay";
 const CHALLENGE_COMPLETION_STORAGE_PREFIX: &[u8] = b"lcp:challenge-completion:v1:";
 const CHALLENGE_RESERVED_EPOCH_STORAGE_PREFIX: &[u8] = b"lcp:challenge-reserved-epoch:v1:";
 const SERVICE_POLICY_STORAGE_PREFIX: &[u8] = b"lcp:service-policy:v3:";
@@ -532,14 +534,40 @@ impl Contract {
             "nonce": U64(attempt.nonce),
         }))
         .unwrap_or_else(|_| env::panic_str("failed to serialize recovery credit callback"));
-        let _withdrawal = Promise::new(credit.payer.clone())
-            .transfer(NearToken::from_yoctonear(attempt.amount_yocto))
-            .then(Promise::new(env::current_account_id()).function_call(
-                "on_receipt_recovery_credit_withdrawal".to_string(),
-                callback_args,
-                NearToken::from_yoctonear(0),
-                Gas::from_tgas(CALLBACK_GAS_TGAS),
-            ));
+        let transfer = Promise::new(credit.payer.clone())
+            .transfer(NearToken::from_yoctonear(attempt.amount_yocto));
+        #[cfg(feature = "sandbox-callback-fixture")]
+        let transfer = {
+            let mut delayed = transfer;
+            if let Some(bytes) = env::storage_read(SANDBOX_RECOVERY_CALLBACK_DELAY_KEY) {
+                require!(
+                    bytes.len() == 1 && bytes[0] <= 8,
+                    "invalid Sandbox recovery callback delay configuration"
+                );
+                let delay_steps = bytes[0];
+                env::storage_write(SANDBOX_RECOVERY_CALLBACK_DELAY_KEY, &[0]);
+                for step in 1..=delay_steps {
+                    let args = near_sdk::serde_json::to_vec(&json!({
+                        "credit_id_hex": credit_id_hex.clone(),
+                        "step": step,
+                    }))
+                    .unwrap_or_else(|_| env::panic_str("failed to serialize delay step"));
+                    delayed = delayed.then(Promise::new(env::current_account_id()).function_call(
+                        "sandbox_recovery_credit_callback_delay_step".to_string(),
+                        args,
+                        NearToken::from_yoctonear(0),
+                        Gas::from_tgas(8),
+                    ));
+                }
+            }
+            delayed
+        };
+        let _withdrawal = transfer.then(Promise::new(env::current_account_id()).function_call(
+            "on_receipt_recovery_credit_withdrawal".to_string(),
+            callback_args,
+            NearToken::from_yoctonear(0),
+            Gas::from_tgas(CALLBACK_GAS_TGAS),
+        ));
         native_cash::assert_solvency();
         emit_event(
             "receipt_recovery_credit_withdrawal_requested",
@@ -1337,6 +1365,93 @@ impl Contract {
                 Gas::from_tgas(1),
             ));
         native_cash::assert_solvency();
+    }
+
+    /// Enables a bounded no-op promise chain for the next payer withdrawal.
+    /// The branch is compiled only into the isolated Sandbox fixture build.
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    pub fn sandbox_set_recovery_credit_callback_delay(&mut self, delay_steps: u8) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            env::predecessor_account_id().as_str() == "sandbox",
+            "fixture delay must be configured by the Sandbox root"
+        );
+        require!(
+            delay_steps <= 8,
+            "Sandbox recovery callback delay is too long"
+        );
+        env::storage_write(SANDBOX_RECOVERY_CALLBACK_DELAY_KEY, &[delay_steps]);
+        native_cash::assert_solvency();
+    }
+
+    /// Records cash/liability snapshots at intermediate receipts between the
+    /// transfer and production recovery-credit callback.
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    #[private]
+    pub fn sandbox_recovery_credit_callback_delay_step(&self, credit_id_hex: String, step: u8) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!((1..=8).contains(&step), "invalid Sandbox delay step");
+        require!(
+            env::promise_results_count() == 1,
+            "Sandbox delay step requires exactly one result"
+        );
+        match env::promise_result_checked(0, 0) {
+            Ok(_) => {}
+            Err(near_sdk::PromiseError::Failed) => {
+                env::panic_str("prior native transfer or delay step failed")
+            }
+            Err(_) => env::panic_str("prior native transfer or delay step was malformed"),
+        }
+        let credit_id = crate::recovery_config::parse_credit_id(&credit_id_hex);
+        let credit = crate::recovery_accounting::read_persisted_refund_credit(&credit_id)
+            .unwrap_or_else(|| env::panic_str("delayed recovery credit does not exist"));
+        require!(
+            matches!(
+                &credit.state,
+                crate::recovery_accounting::RefundCreditStateV1::Withdrawing
+            ),
+            "delayed recovery credit is not in flight"
+        );
+        native_cash::assert_solvency();
+        let ledger = native_cash::load();
+        let storage_cost = env::storage_byte_cost()
+            .as_yoctonear()
+            .checked_mul(u128::from(env::storage_usage()))
+            .unwrap_or_else(|| env::panic_str("Sandbox delay storage cost overflow"));
+        env::log_str(&format!(
+            "LCP_RECOVERY_DELAY_CASH step={} state=withdrawing in_flight={} C={} S={} E={} R={} O={} Q={} F={} X={} shortfall={}",
+            step,
+            credit.attempt_amount_yocto,
+            env::account_balance().as_yoctonear(),
+            storage_cost,
+            ledger.native_escrow_liability,
+            ledger.storage_refund_liability,
+            ledger.operations_liability,
+            ledger.recovery_credit_liability,
+            ledger.storage_backing,
+            ledger.scheduled_outflow_yocto,
+            ledger.storage_shortfall,
+        ));
     }
 
     #[cfg(all(

@@ -468,6 +468,10 @@ function hasFailedExecution(result) {
     || (result.receipts_outcome ?? []).some((receipt) => isFailedExecution(receipt.outcome?.status));
 }
 
+function shouldRetryTransactionLookup(error) {
+  return /unknown transaction|does not exist|not found|PENDING|TIMEOUT_ERROR|Timeout/i.test(String(error));
+}
+
 function assertTransactionSucceeded(result, description) {
   if (isFailedExecution(result.status)) {
     throw new Error(`${description} failed:\n${JSON.stringify(result, null, 2)}`);
@@ -548,7 +552,7 @@ async function main() {
             ? { done: true, value: status }
             : { done: false, value: status.status };
         } catch (lookupError) {
-          if (/unknown transaction|does not exist|not found/i.test(String(lookupError))) {
+          if (shouldRetryTransactionLookup(lookupError)) {
             return { done: false, value: String(lookupError) };
           }
           throw lookupError;
@@ -690,7 +694,7 @@ async function main() {
           ? { done: true, value: status }
           : { done: false, value: status.status };
       } catch (error) {
-        if (/unknown transaction|does not exist|not found/i.test(String(error))) {
+        if (shouldRetryTransactionLookup(error)) {
           return { done: false, value: String(error) };
         }
         throw error;
@@ -1121,7 +1125,7 @@ async function main() {
         const complete = status.status && (Object.hasOwn(status.status, "SuccessValue") || Object.hasOwn(status.status, "Failure"));
         return complete ? { done: true, value: status } : { done: false, value: status.status };
       } catch (error) {
-        if (/unknown transaction|does not exist|not found/i.test(String(error))) return { done: false, value: String(error) };
+        if (shouldRetryTransactionLookup(error)) return { done: false, value: String(error) };
         throw error;
       }
     });
@@ -1131,7 +1135,7 @@ async function main() {
         const complete = status.status && (Object.hasOwn(status.status, "SuccessValue") || Object.hasOwn(status.status, "Failure"));
         return complete ? { done: true, value: status } : { done: false, value: status.status };
       } catch (error) {
-        if (/unknown transaction|does not exist|not found/i.test(String(error))) return { done: false, value: String(error) };
+        if (shouldRetryTransactionLookup(error)) return { done: false, value: String(error) };
         throw error;
       }
     });
@@ -1408,11 +1412,87 @@ async function main() {
     assert.equal(BigInt(credit.accrued_yocto), withdrawable);
     assert.equal(BigInt(credit.in_flight_yocto), 0n);
 
+    const delayedCallbackSteps = 8;
+    const delayConfiguration = await rootCall("sandbox_set_recovery_credit_callback_delay", {
+      delay_steps: delayedCallbackSteps,
+    }, "configure eight intermediate callback receipts", 100n * TERA);
     await setNativeFreeMargin(withdrawable, "exact recovery-credit withdrawal boundary");
     const payerBalanceBefore = await accountBalance(CASH_RECIPIENT_ID);
-    const exactWithdrawal = await creditPayerCall("withdraw_receipt_recovery_credit", {
-      credit_id_hex: creditId,
-    }, "withdraw recovery credit at exact cash margin", 150n * TERA);
+    const exactWithdrawalHash = String(await sendTransaction(
+      CASH_RECIPIENT_ID,
+      cashRecipientKey,
+      CORE_ID,
+      [actionFunctionCall("withdraw_receipt_recovery_credit", { credit_id_hex: creditId }, 150n * TERA)],
+      "withdraw recovery credit at exact cash margin with delayed callback",
+      { broadcastMethod: "broadcast_tx_async" },
+    ));
+    const exactWithdrawal = await waitFor("delayed recovery-credit callback", async () => {
+      let status;
+      try {
+        status = await rpc("tx", [exactWithdrawalHash, CASH_RECIPIENT_ID]);
+      } catch (error) {
+        if (shouldRetryTransactionLookup(error)) {
+          return { done: false, value: String(error) };
+        }
+        throw error;
+      }
+      const complete = status.status && (
+        Object.hasOwn(status.status, "SuccessValue")
+        || Object.hasOwn(status.status, "Failure")
+      );
+      return complete
+        ? { done: true, value: status }
+        : { done: false, value: status.status };
+    }, 120_000);
+    assert.ok(!hasFailedExecution(exactWithdrawal),
+      `delayed recovery-credit withdrawal failed: ${JSON.stringify(exactWithdrawal.status)}`);
+    const delayedCallbackReceipts = (exactWithdrawal.receipts_outcome ?? []).flatMap((receipt, index) =>
+      (receipt.outcome?.logs ?? []).flatMap((line) => {
+        const match = line.match(/^LCP_RECOVERY_DELAY_CASH step=(\d+) state=withdrawing in_flight=(\d+) C=(\d+) S=(\d+) E=(\d+) R=(\d+) O=(\d+) Q=(\d+) F=(\d+) X=(\d+) shortfall=(\d+)$/);
+        return match ? [{ receipt_index: index, receipt_id: receipt.id, block_hash: receipt.block_hash,
+          step: Number(match[1]), in_flight: BigInt(match[2]), C: BigInt(match[3]), S: BigInt(match[4]),
+          E: BigInt(match[5]), R: BigInt(match[6]), O: BigInt(match[7]), Q: BigInt(match[8]),
+          F: BigInt(match[9]), X: BigInt(match[10]), shortfall: BigInt(match[11]) }] : [];
+      }));
+    assert.deepEqual(delayedCallbackReceipts.map(({ step }) => step),
+      Array.from({ length: delayedCallbackSteps }, (_, index) => index + 1),
+    "all delayed callback receipts must execute in order before settlement");
+    const delayedCashPhases = await Promise.all(delayedCallbackReceipts.map(async (phase) => {
+      assert.equal(phase.in_flight, withdrawable,
+        `delayed callback step ${phase.step} must preserve the exact withdrawal attempt`);
+      const required = phase.S + phase.E + phase.R + phase.O + phase.Q + phase.F + phase.X;
+      assert.equal(phase.C, required,
+        `delayed callback step ${phase.step} must preserve the exact zero-free-cash boundary`);
+      assert.equal(phase.shortfall, 0n);
+      assert.ok(phase.Q >= withdrawable,
+        `delayed callback step ${phase.step} must keep the entire credit as a liability`);
+      const block = await rpc("block", { block_id: phase.block_hash });
+      return {
+        step: phase.step,
+        receipt_id: phase.receipt_id,
+        block_height: block.header.height,
+        account_balance_yocto: phase.C.toString(),
+        required_balance_yocto: required.toString(),
+        free_cash_yocto: (phase.C - required).toString(),
+        recovery_credit_liability_yocto: phase.Q.toString(),
+        scheduled_outflow_yocto: phase.X.toString(),
+      };
+    }));
+    const callbackOutcome = (exactWithdrawal.receipts_outcome ?? []).find((receipt) =>
+      receipt.outcome?.executor_id === CORE_ID
+      && (receipt.outcome?.logs ?? []).some((line) =>
+        line.includes('"event":"receipt_recovery_credit_withdrawn"')));
+    const payerTransferOutcome = (exactWithdrawal.receipts_outcome ?? []).find((receipt) =>
+      receipt.outcome?.executor_id === CASH_RECIPIENT_ID);
+    assert.ok(callbackOutcome, "production withdrawal callback must settle after delayed receipts");
+    assert.ok(payerTransferOutcome, "native transfer receipt must appear before callback settlement");
+    const [transferBlock, callbackBlock] = await Promise.all([
+      rpc("block", { block_id: payerTransferOutcome.block_hash }),
+      rpc("block", { block_id: callbackOutcome.block_hash }),
+    ]);
+    assert.ok(callbackBlock.header.height > transferBlock.header.height,
+      "production callback must settle in a later block than the payer transfer");
+    console.log(`PASS exact-margin payer withdrawal preserves solvency across ${delayedCallbackSteps} delayed callback receipts`);
     const withdrawalFees = BigInt(exactWithdrawal.transaction_outcome?.outcome?.tokens_burnt ?? 0)
       + (exactWithdrawal.receipts_outcome ?? []).reduce(
         (sum, receipt) => sum + BigInt(receipt.outcome?.tokens_burnt ?? 0), 0n,
@@ -1487,7 +1567,13 @@ async function main() {
       revaluation_batches: revaluation,
       blocked_during_revaluation: true,
       one_yocto_short_rejected: true,
-      exact_withdrawal_transaction_hash: exactWithdrawal.transaction.hash,
+      exact_withdrawal_transaction_hash: exactWithdrawalHash,
+      delayed_callback_configuration_transaction_hash: delayConfiguration.transaction.hash,
+      delayed_callback_steps: delayedCallbackSteps,
+      delayed_callback_receipts: delayedCashPhases,
+      transfer_block_height: transferBlock.header.height,
+      callback_block_height: callbackBlock.header.height,
+      callback_delay_blocks: callbackBlock.header.height - transferBlock.header.height,
       duplicate_settled_callback_transaction_hash: duplicateSettledCallbackTx.transaction.hash,
       duplicate_settled_callback_did_not_recreate_credit: true,
       payer_balance_before: payerBalanceBefore.toString(),
@@ -1760,7 +1846,7 @@ async function main() {
           item.outcome?.executor_id === CORE_ID && isFailedExecution(item.outcome?.status));
         return failed ? { done: true, value: { status, receipt } } : { done: false, value: status.status };
       } catch (error) {
-        if (/unknown transaction|does not exist|not found/i.test(String(error))) return { done: false, value: String(error) };
+        if (shouldRetryTransactionLookup(error)) return { done: false, value: String(error) };
         throw error;
       }
     });

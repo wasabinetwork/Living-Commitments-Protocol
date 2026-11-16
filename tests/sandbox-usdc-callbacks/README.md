@@ -78,8 +78,10 @@ before the refund request is emitted and leaves the escrow and cash snapshot
 unchanged; a conservative 1.07 NEAR margin allows the failure/retry flow to
 settle. A 0.005 NEAR storage credit likewise rejects a 0.005 NEAR margin and
 passes failure/retry at 0.06 NEAR. These checks bound tested behavior, not the
-minimum margin or a production funding rule. Delayed callback timing remains
-untested; the deliberately out-of-gas callback case is described below.
+minimum margin or a production funding rule. An eight-receipt delayed callback
+case is measured below; it does not establish real-network callback latency or
+a production funding rule. The deliberately out-of-gas callback case is also
+described below.
 
 The harness confirms callback out-of-gas reservation behavior, explicit token
 failure and retry, missing-code failure before contract execution, and rollback
@@ -231,8 +233,16 @@ exact credit to `refund_pending` with its accrued amount unchanged and no
 transfer scheduled. After a second attempt began, the prior nonce could not
 settle it; a subsequent exact failed callback restored the credit again, and a
 duplicate callback left that retryable state unchanged. The later real payer
-withdrawal succeeded at the exact cash margin. A duplicate successful callback
-after settlement also left the deleted credit row absent. A separate case used an actual
+withdrawal succeeded at the exact cash margin. For the delayed case, the
+production withdrawal path sent the NEAR transfer in block 406, ran eight
+fixture receipts in blocks 407–414, and settled the production callback in
+block 415. Each intermediate receipt confirmed the exact credit remained
+`withdrawing` and asserted `C = S + N + Q + F + X`; observed free cash was zero
+at every step, with no storage shortfall. The 1-yocto-short withdrawal still
+failed before payout. This proves the tested phase accounting at that exact
+boundary, not a safe funding recommendation for real or arbitrarily delayed
+callbacks. A duplicate successful callback after settlement also left the
+deleted credit row absent. A separate case used an actual
 Sandbox transfer followed by a production callback limited to 1 Tgas. The
 transfer succeeded, the callback failed with `Exceeded the prepaid gas.`, the
 payer received exactly the accrued amount after transaction gas, and the credit
