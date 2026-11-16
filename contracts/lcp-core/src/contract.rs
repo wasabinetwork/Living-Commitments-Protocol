@@ -1242,6 +1242,7 @@ impl Contract {
         credit_id_hex: String,
         amount: U128,
         nonce: U64,
+        result_count: u8,
         result_succeeds: bool,
     ) {
         require!(
@@ -1269,19 +1270,27 @@ impl Contract {
         } else {
             "sandbox_recovery_callback_failure"
         };
-        let trigger = Promise::new(current.clone()).function_call(
-            trigger_method.to_string(),
-            b"{}".to_vec(),
-            NearToken::from_yoctonear(0),
-            Gas::from_tgas(5),
-        );
         let callback = Promise::new(current).function_call(
             callback_method.to_string(),
             callback_args,
             NearToken::from_yoctonear(0),
             Gas::from_tgas(CALLBACK_GAS_TGAS),
         );
-        drop(trigger.then(callback));
+        let make_trigger = || {
+            Promise::new(env::current_account_id()).function_call(
+                trigger_method.to_string(),
+                b"{}".to_vec(),
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(5),
+            )
+        };
+        let callback_chain = match result_count {
+            0 => callback,
+            1 => make_trigger().then(callback),
+            2 => make_trigger().and(make_trigger()).then(callback),
+            _ => env::panic_str("fixture supports zero, one, or two callback results"),
+        };
+        drop(callback_chain);
     }
 
     #[cfg(all(

@@ -1261,6 +1261,7 @@ async function main() {
       credit_id_hex: creditId,
       amount: (callbackAmount + 1n).toString(),
       nonce: callbackNonce.toString(),
+      result_count: 1,
       result_succeeds: true,
     }, "ignore recovery-credit callback with mismatched amount", 220n * TERA);
     assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
@@ -1269,20 +1270,81 @@ async function main() {
       credit_id_hex: creditId,
       amount: callbackAmount.toString(),
       nonce: (callbackNonce + 1n).toString(),
+      result_count: 1,
       result_succeeds: true,
     }, "ignore recovery-credit callback with mismatched nonce", 220n * TERA);
     assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
       "mismatched callback nonce must preserve the in-flight payer credit");
+    const zeroResultCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: callbackAmount.toString(),
+      nonce: callbackNonce.toString(),
+      result_count: 0,
+      result_succeeds: true,
+    }, "ignore recovery-credit callback without a promise result", 220n * TERA);
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
+      "callback with zero promise results must preserve the in-flight payer credit");
+    const multipleResultCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: callbackAmount.toString(),
+      nonce: callbackNonce.toString(),
+      result_count: 2,
+      result_succeeds: true,
+    }, "ignore recovery-credit callback with multiple promise results", 220n * TERA);
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithWithdrawalInFlight,
+      "callback with multiple promise results must preserve the in-flight payer credit");
     const failedExactCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
       credit_id_hex: creditId,
       amount: callbackAmount.toString(),
       nonce: callbackNonce.toString(),
+      result_count: 1,
       result_succeeds: false,
     }, "restore the payer credit after an exact failed callback", 220n * TERA, 0n, true);
     const creditAfterFailedCallback = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
     assert.equal(creditAfterFailedCallback.state, "refund_pending");
     assert.equal(creditAfterFailedCallback.accrued_yocto, creditWithWithdrawalInFlight.accrued_yocto);
     assert.equal(BigInt(creditAfterFailedCallback.in_flight_yocto), 0n);
+
+    const retryCreditCallbackTx = await creditPayerCall(
+      "sandbox_begin_recovery_credit_callback_fixture",
+      { credit_id_hex: creditId },
+      "begin a newer recovery-credit withdrawal attempt",
+      150n * TERA,
+    );
+    const [retryCallbackAmount, retryCallbackNonce] = returnedJson(retryCreditCallbackTx).map(BigInt);
+    assert.equal(retryCallbackAmount, callbackAmount);
+    assert.equal(retryCallbackNonce, callbackNonce + 1n);
+    const creditWithRetryInFlight = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
+    assert.equal(creditWithRetryInFlight.state, "withdrawing");
+    const staleCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: retryCallbackAmount.toString(),
+      nonce: callbackNonce.toString(),
+      result_count: 1,
+      result_succeeds: true,
+    }, "ignore a stale callback from the previous withdrawal attempt", 220n * TERA);
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditWithRetryInFlight,
+      "stale callback from a previous nonce must preserve the newer in-flight credit");
+    const failedRetryCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: retryCallbackAmount.toString(),
+      nonce: retryCallbackNonce.toString(),
+      result_count: 1,
+      result_succeeds: false,
+    }, "restore the credit after the newer withdrawal fails", 220n * TERA, 0n, true);
+    const creditAfterRetryFailure = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId });
+    assert.equal(creditAfterRetryFailure.state, "refund_pending");
+    assert.equal(creditAfterRetryFailure.accrued_yocto, creditAfterFailedCallback.accrued_yocto);
+    assert.equal(BigInt(creditAfterRetryFailure.in_flight_yocto), 0n);
+    const duplicateCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: creditId,
+      amount: retryCallbackAmount.toString(),
+      nonce: retryCallbackNonce.toString(),
+      result_count: 1,
+      result_succeeds: true,
+    }, "ignore a duplicate callback after the attempt has failed", 220n * TERA);
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), creditAfterRetryFailure,
+      "duplicate callback after failure must not change the retryable credit");
 
     await rootCall("sandbox_mark_recovery_storage_price_stale", {}, "fixture a stale reserve price", 100n * TERA);
     const beginRevaluationTx = await rootCall("begin_recovery_storage_revaluation", {}, "begin storage-reserve revaluation", 100n * TERA);
@@ -1377,8 +1439,20 @@ async function main() {
       mismatched_amount_callback_preserved_withdrawing_credit: true,
       mismatched_nonce_callback_transaction_hash: mismatchedNonceCallbackTx.transaction.hash,
       mismatched_nonce_callback_preserved_withdrawing_credit: true,
+      zero_result_callback_transaction_hash: zeroResultCallbackTx.transaction.hash,
+      zero_result_callback_preserved_withdrawing_credit: true,
+      multiple_result_callback_transaction_hash: multipleResultCallbackTx.transaction.hash,
+      multiple_result_callback_preserved_withdrawing_credit: true,
       exact_failed_callback_transaction_hash: failedExactCallbackTx.transaction.hash,
       exact_failed_callback_restored_refund_pending_credit: true,
+      retry_callback_attempt_transaction_hash: retryCreditCallbackTx.transaction.hash,
+      retry_callback_attempt_nonce: retryCallbackNonce.toString(),
+      stale_callback_transaction_hash: staleCallbackTx.transaction.hash,
+      stale_callback_preserved_newer_withdrawing_credit: true,
+      failed_retry_callback_transaction_hash: failedRetryCallbackTx.transaction.hash,
+      failed_retry_callback_restored_refund_pending_credit: true,
+      duplicate_callback_transaction_hash: duplicateCallbackTx.transaction.hash,
+      duplicate_callback_preserved_refund_pending_credit: true,
       revaluation_batches: revaluation,
       blocked_during_revaluation: true,
       one_yocto_short_rejected: true,
