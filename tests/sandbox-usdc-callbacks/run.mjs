@@ -973,19 +973,83 @@ async function main() {
       transfer_id: certFirst.transferId,
       certificate_base64: validCertFirst.envelope,
     }, "reject replayed recovery certificate", 220n * TERA, 0n, true);
+    const conflictingCertFirst = recoveryCertificate(certFirstPending.intent, "failure", committee);
+    await rootCall("recover_nep141_transfer", {
+      transfer_id: certFirst.transferId,
+      certificate_base64: conflictingCertFirst.envelope,
+    }, "reject conflicting outcome after recovery settlement", 220n * TERA, 0n, true);
+    await assertEscrow(102, { pending_raw: 0n, paid_raw: AMOUNT, free_raw: 0n });
     assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance,
-      "certificate replay changed the token balance");
+      "replayed or conflicting certificate changed the token balance");
     results.certificate_first = {
       transaction_hash: certFirst.tx.transaction.hash,
       recovery_transaction_hash: certFirstRecoveryTx.transaction.hash,
       transfer_id: certFirst.transferId,
       rejected_certificates: invalidEnvelopes.map(([label]) => label),
+      replay_rejected: true,
+      conflicting_terminal_outcome_rejected: true,
       escrow: certFirstState,
       recovery_receipt_gas_burnt: (certFirstRecoveryTx.receipts_outcome ?? [])
         .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n).toString(),
       recipient_token_balance: (await tokenBalance(CASH_RECIPIENT_ID)).toString(),
     };
     console.log("PASS certificate-first recovery settles after callback OOG; 56 malformed, mutated, or replayed envelopes leave state unchanged");
+
+    const crossTransferA = await queueRecovery(106, 1, "cross-transfer certificate source intent");
+    const crossTransferB = await queueRecovery(107, 1, "cross-transfer certificate target intent");
+    const crossTransferPending = await waitFor("two cross-transfer pending intents", async () => {
+      const [stateA, intentA, stateB, intentB, balance] = await Promise.all([
+        escrow(106), recoveryIntent(crossTransferA.transferId),
+        escrow(107), recoveryIntent(crossTransferB.transferId),
+        tokenBalance(CASH_RECIPIENT_ID),
+      ]);
+      const pending = stateA && stateB && intentA && intentB
+        && BigInt(stateA.pending_raw) === AMOUNT && intentA.terminal_outcome === null
+        && BigInt(stateB.pending_raw) === AMOUNT && intentB.terminal_outcome === null
+        && balance === certFirstPending.balance + (AMOUNT * 2n);
+      return pending
+        ? { done: true, value: { stateA, intentA, stateB, intentB, balance } }
+        : { done: false, value: { stateA, intentA: intentA?.terminal_outcome, stateB, intentB: intentB?.terminal_outcome, balance: balance?.toString() } };
+    });
+    const transferACertificate = recoveryCertificate(crossTransferPending.intentA, "success", committee);
+    const rejectedCrossTransferTx = await rootCall("recover_nep141_transfer", {
+      transfer_id: crossTransferB.transferId,
+      certificate_base64: transferACertificate.envelope,
+    }, "reject transfer A certificate against transfer B", 220n * TERA, 0n, true);
+    assert.equal((await recoveryIntent(crossTransferA.transferId)).terminal_outcome, null,
+      "cross-transfer rejection changed source intent");
+    assert.equal((await recoveryIntent(crossTransferB.transferId)).terminal_outcome, null,
+      "cross-transfer rejection changed target intent");
+    await assertEscrow(106, { pending_raw: AMOUNT, paid_raw: 0n, free_raw: 0n });
+    await assertEscrow(107, { pending_raw: AMOUNT, paid_raw: 0n, free_raw: 0n });
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), crossTransferPending.balance,
+      "cross-transfer certificate rejection changed token balances");
+    const crossTransferARecovery = await rootCall("recover_nep141_transfer", {
+      transfer_id: crossTransferA.transferId,
+      certificate_base64: transferACertificate.envelope,
+    }, "settle source transfer with its own certificate", 220n * TERA);
+    const transferBCertificate = recoveryCertificate(crossTransferPending.intentB, "success", committee);
+    const crossTransferBRecovery = await rootCall("recover_nep141_transfer", {
+      transfer_id: crossTransferB.transferId,
+      certificate_base64: transferBCertificate.envelope,
+    }, "settle target transfer with its own certificate", 220n * TERA);
+    await assertEscrow(106, { pending_raw: 0n, paid_raw: AMOUNT, free_raw: 0n });
+    await assertEscrow(107, { pending_raw: 0n, paid_raw: AMOUNT, free_raw: 0n });
+    assert.equal((await recoveryIntent(crossTransferA.transferId)).terminal_outcome, "success");
+    assert.equal((await recoveryIntent(crossTransferB.transferId)).terminal_outcome, "success");
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), crossTransferPending.balance,
+      "certificate settlement must not repeat either completed token transfer");
+    results.cross_transfer_certificate = {
+      source_transfer_id: crossTransferA.transferId,
+      target_transfer_id: crossTransferB.transferId,
+      rejected_cross_transfer_transaction_hash: rejectedCrossTransferTx.transaction.hash,
+      source_recovery_transaction_hash: crossTransferARecovery.transaction.hash,
+      target_recovery_transaction_hash: crossTransferBRecovery.transaction.hash,
+      both_pending_intents_unchanged_on_rejection: true,
+      both_transfers_later_settled_with_own_certificate: true,
+      no_duplicate_token_transfer: true,
+    };
+    console.log("PASS certificate for one pending transfer cannot settle another; both transfers later settle against their own intent");
 
     const fiveOfFiveBalanceBefore = await tokenBalance(CASH_RECIPIENT_ID);
     const fiveOfFiveTransfer = await queueRecovery(105, 1, "five-of-five recovery certificate");
@@ -1049,7 +1113,7 @@ async function main() {
     const raceIntent = await recoveryIntent(raceTransferId);
     assert.equal(raceIntent.terminal_outcome, "success");
     assert.equal((await tranche(103)).status, "Paid");
-    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + (AMOUNT * 2n),
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), fiveOfFiveBalanceBefore + (AMOUNT * 2n),
       "racing settlement paths must not duplicate the token payment");
     const raceRecoveryStatus = await waitFor("concurrent recovery transaction result", async () => {
       try {
@@ -1098,7 +1162,7 @@ async function main() {
     }, "recover failed FT transfer", 220n * TERA);
     const failedRecovered = await assertEscrow(104, { pending_raw: 0n, paid_raw: 0n, free_raw: AMOUNT });
     assert.equal((await tranche(104)).status, "Failed");
-    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + (AMOUNT * 2n),
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), fiveOfFiveBalanceBefore + (AMOUNT * 2n),
       "failed token execution must not change recipient balance");
     await functionCall(TOKEN_ID, tokenKey, "set_fail_transfers", { fail: false });
     const retry = await queueRecovery(104, 20, "retry certificate-recovered failed transfer");
@@ -1108,7 +1172,7 @@ async function main() {
         ? { done: true, value: state } : { done: false, value: state };
     });
     assert.equal((await tranche(104)).status, "Paid");
-    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), certFirstPending.balance + AMOUNT * 3n,
+    assert.equal(await tokenBalance(CASH_RECIPIENT_ID), fiveOfFiveBalanceBefore + AMOUNT * 3n,
       "one successful retry must result in one token payment");
     results.failed_transfer_recovery = {
       initial_transaction_hash: failedTransfer.tx.transaction.hash,

@@ -209,8 +209,12 @@ failed-transfer recovery and retry, storage-reserve revaluation, failed and
 exact-margin credit withdrawals, two simultaneous native outflows, aggregation
 of multiple failed refund callbacks, committee rotation, canceled-proposal
 replay rejection, permanent key non-reuse after old epoch retirement, and
-rollback after an overflow panic. A weak committee key was rejected at
-bootstrap without consuming the one-time setup authority. All 56 negative
+rollback after an overflow panic. It also rejects a conflicting failure
+certificate after success is terminal, and rejects a valid certificate for
+transfer A when submitted against transfer B. Both intents remain unchanged
+after the rejected cross-transfer attempt and later settle with their own
+certificates. A weak committee key was rejected at bootstrap without consuming
+the one-time setup authority. All 56 negative
 envelope cases were rejected without changing the pending intent, escrow, or
 token balance. A 1,202-byte decoded input
 passed the outer size gate and failed structural parsing, while 1,203 bytes and
