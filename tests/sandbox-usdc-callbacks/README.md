@@ -216,8 +216,10 @@ after the rejected cross-transfer attempt and later settle with their own
 certificates. A direct callback from another account, a different account's
 recovery-credit withdrawal, and a payer withdrawal carrying one yoctoNEAR were
 also rejected with the complete credit view unchanged; the payer's later
-exact-margin withdrawal succeeded. A weak
-committee key was rejected at bootstrap without consuming the one-time setup
+exact-margin withdrawal succeeded. A replay after successful settlement found
+no credit, emitted only its failed method receipt, and scheduled no second
+transfer or callback. A weak committee key was rejected at bootstrap without
+consuming the one-time setup
 authority. All 56 negative
 envelope cases were rejected without changing the pending intent, escrow, or
 token balance. A 1,202-byte decoded input

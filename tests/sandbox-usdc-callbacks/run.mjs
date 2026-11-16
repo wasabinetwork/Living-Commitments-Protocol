@@ -1310,6 +1310,16 @@ async function main() {
     });
     assert.equal(payerBalanceAfter + withdrawalFees, payerBalanceBefore + withdrawable,
       "payer balance delta must equal the recovery credit after accounting for transaction gas");
+
+    const duplicateWithdrawal = await creditPayerCall("withdraw_receipt_recovery_credit", {
+      credit_id_hex: creditId,
+    }, "reject recovery-credit withdrawal replay after settlement", 150n * TERA, true);
+    assert.equal(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: creditId }), null,
+      "replayed withdrawal must not recreate the settled credit");
+    assert.equal(duplicateWithdrawal.receipts_outcome.length, 1,
+      "replayed withdrawal must fail before scheduling a transfer or callback");
+    const payerBalanceAfterDuplicate = await accountBalance(CASH_RECIPIENT_ID);
+
     results.recovery_credit = {
       credit_id: creditId,
       initial_credit: creditBeforeRevaluation,
@@ -1329,6 +1339,10 @@ async function main() {
       payer_balance_before: payerBalanceBefore.toString(),
       payer_balance_after: payerBalanceAfter.toString(),
       payer_transaction_gas_fee_yocto: withdrawalFees.toString(),
+      replayed_withdrawal_transaction_hash: duplicateWithdrawal.transaction.hash,
+      replayed_withdrawal_rejected: true,
+      replayed_withdrawal_receipt_count: duplicateWithdrawal.receipts_outcome.length,
+      payer_balance_after_replay: payerBalanceAfterDuplicate.toString(),
       credit_after_callback: creditAfter,
       tombstone_cleanup: "successful callback removed the settled zero-credit row",
     };
@@ -1336,21 +1350,21 @@ async function main() {
 
     const stagedFirst = 11n;
     const stagedSecond = 17n;
-    const firstNativeBefore = await accountBalance(CASH_RECIPIENT_ID);
-    const secondNativeBefore = await accountBalance(RECIPIENT_ID);
+    const firstNativeBefore = await accountBalance(ORDER_A_ID);
+    const secondNativeBefore = await accountBalance(ORDER_B_ID);
     const underfundedStaged = await rootCall("sandbox_probe_native_staged_outflows", {
-      first_recipient: CASH_RECIPIENT_ID,
-      second_recipient: RECIPIENT_ID,
+      first_recipient: ORDER_A_ID,
+      second_recipient: ORDER_B_ID,
       first_outflow_yocto: stagedFirst.toString(),
       second_outflow_yocto: stagedSecond.toString(),
       underfund_by_one: true,
     }, "reject one-yocto-short staged outflows", 120n * TERA, 0n, true);
     assert.ok(hasFailedExecution(underfundedStaged));
-    assert.equal(await accountBalance(CASH_RECIPIENT_ID), firstNativeBefore);
-    assert.equal(await accountBalance(RECIPIENT_ID), secondNativeBefore);
+    assert.equal(await accountBalance(ORDER_A_ID), firstNativeBefore);
+    assert.equal(await accountBalance(ORDER_B_ID), secondNativeBefore);
     const exactStaged = await functionCall(CORE_ID, coreKey, "sandbox_probe_native_staged_outflows", {
-      first_recipient: CASH_RECIPIENT_ID,
-      second_recipient: RECIPIENT_ID,
+      first_recipient: ORDER_A_ID,
+      second_recipient: ORDER_B_ID,
       first_outflow_yocto: stagedFirst.toString(),
       second_outflow_yocto: stagedSecond.toString(),
       underfund_by_one: false,
@@ -1359,10 +1373,10 @@ async function main() {
     assert.equal(stagedMeasures[1], stagedMeasures[0]);
     assert.equal(stagedMeasures[2], stagedMeasures[0] - stagedFirst - stagedSecond);
     assert.equal(await waitFor("first staged native outflow", async () => {
-      const balance = await accountBalance(CASH_RECIPIENT_ID);
+      const balance = await accountBalance(ORDER_A_ID);
       return balance === firstNativeBefore + stagedFirst ? { done: true, value: balance } : { done: false, value: balance.toString() };
     }), firstNativeBefore + stagedFirst);
-    assert.equal(await accountBalance(RECIPIENT_ID), secondNativeBefore + stagedSecond);
+    assert.equal(await accountBalance(ORDER_B_ID), secondNativeBefore + stagedSecond);
     results.staged_native_outflows = {
       balance_before: stagedMeasures[0].toString(),
       balance_after_builders: stagedMeasures[1].toString(),
