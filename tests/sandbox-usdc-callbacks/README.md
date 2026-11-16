@@ -159,13 +159,21 @@ shasum -a 256 tests/sandbox-usdc-callbacks/native-callbacks-sandbox-acceptance-2
 
 ## Receipt-recovery VM/Sandbox acceptance
 
-Build the fixture-enabled recovery core and both mock-token variants. This
-command enables receipt recovery and the test-only ten-second governance delay;
-it overwrites the core WASM from the default build above:
+Build the fixture-enabled recovery core and both mock-token variants. Install
+the pinned Cargo NEAR CLI if needed, then use its Wasm optimization step for the
+recovery core. Plain `cargo build` output is 1,575,617 bytes and exceeds the
+local Sandbox RPC server's HTTP request-body limit during deployment; Cargo
+NEAR's `wasm-opt -O` output is 1,115,281 bytes and deploys successfully. This is
+a local harness transport constraint, not a NEAR consensus size-limit result.
+The following enables receipt recovery and the test-only ten-second governance
+delay, and overwrites the core WASM from the earlier default build:
 
 ```sh
-cargo build --locked --release --target wasm32-unknown-unknown -p lcp-core \
-  --features 'sandbox-callback-fixture usdc-receipt-recovery'
+cargo install cargo-near --version 0.23.0 --locked
+cargo near build non-reproducible-wasm --locked --no-abi \
+  --features 'sandbox-callback-fixture usdc-receipt-recovery' \
+  --manifest-path contracts/lcp-core/Cargo.toml \
+  --out-dir target/wasm32-unknown-unknown/release
 ```
 
 Then run only the recovery lifecycle with:
@@ -177,7 +185,12 @@ docker run --rm --init --platform linux/amd64 \
   'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/receipt-recovery-sandbox-acceptance-2026-11-16.json node run.mjs'
 ```
 
-This run passed callback-first finality, certificate-first settlement after a
+This run passed a read-only contract-VM probe of a valid maximum-size
+certificate envelope: 500-byte intent, 714-byte certificate, five signatures,
+1,202 decoded bytes, and 1,604 Base64 characters. This synthetic probe uses the
+configured committee and real parser/signature verifier, but it is not a
+pending transfer and cannot settle escrow. The same run passed callback-first
+finality, certificate-first settlement after a
 1 Tgas callback runs out of gas, rejection of mutations to every one of the 28
 `RecoveryCertificateV1` fields, 0–3-signature and five-invalid-signature
 certificates, valid 4-of-5 and 5-of-5 certificates, wrong-domain and replayed
@@ -193,12 +206,12 @@ bootstrap without consuming the one-time setup authority. All 56 negative
 envelope cases were rejected without changing the pending intent, escrow, or
 token balance. A 1,202-byte decoded input
 passed the outer size gate and failed structural parsing, while 1,203 bytes and
-1,608 Base64 characters were rejected by their respective limits. A well-formed
-maximum-size positive contract envelope remains open. Permissionless intent
+1,608 Base64 characters were rejected by their respective limits. The positive
+maximum-size parser probe used 14.024 Tgas. Permissionless intent
 finalization was forced to fail at 1 Tgas; its
 terminal intent and payer credit remained unchanged, then finalization
-succeeded on retry. The latest captured recovery settlement receipts used
-15.531 Tgas for 4-of-5 and 17.475 Tgas for 5-of-5. These are observed cases, not a
+succeeded on retry. The optimized fixture's captured recovery settlement
+receipts used 15.092 Tgas for 4-of-5 and 17.003 Tgas for 5-of-5. These are observed cases, not a
 worst-case method gas bound. The runner escalates a lingering local Sandbox
 process from SIGTERM to SIGKILL after five seconds so Docker exits after results
 are written; this affects only the isolated local process. The capture is

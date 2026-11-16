@@ -289,6 +289,57 @@ impl Contract {
         crate::recovery_config::configuration_view()
     }
 
+    /// Isolated Sandbox-only parser probe for the exact configured recovery
+    /// envelope limits. This synthetic message is not a pending transfer and
+    /// cannot settle escrow; it exercises the real contract parser and strict
+    /// signature verifier against a 500-byte intent and 1,202-byte envelope.
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    pub fn sandbox_verify_maximum_recovery_envelope(&self, certificate_base64: String) -> bool {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        let configuration = crate::recovery_config::configuration_view()
+            .unwrap_or_else(|| env::panic_str("receipt recovery is not configured"));
+        let committee =
+            crate::recovery_config::committee_keys_for_epoch(configuration.current_epoch)
+                .unwrap_or_else(|| env::panic_str("current recovery committee is unavailable"));
+        let expected_intent = crate::receipt_recovery::RecoveryIntentV1 {
+            schema_version: 1,
+            chain_id: format!("test-chain-{}", "a".repeat(117)),
+            genesis_hash: [0x11; 32],
+            core_account_id: "a".repeat(64),
+            instance_id: [0x22; 32],
+            committee_epoch: configuration.current_epoch,
+            transfer_id: 1,
+            commitment_id: 1,
+            kind: crate::receipt_recovery::TransferKindV1::Tranche,
+            tranche_epoch: Some(0),
+            token_account_id: "a".repeat(64),
+            recipient_id: "a".repeat(64),
+            amount_raw: 1,
+            origin_method: crate::receipt_recovery::OriginMethodV1::ClaimTranche,
+            token_code_hash: [0x33; 32],
+            ft_transfer_deposit_yocto: 1,
+            ft_transfer_gas_tgas: 25,
+        };
+        crate::receipt_recovery::parse_and_verify_envelope(
+            &certificate_base64,
+            &expected_intent,
+            configuration.current_epoch,
+            &committee,
+        )
+        .unwrap_or_else(|message| env::panic_str(&message));
+        true
+    }
+
     /// Returns the canonical intent and payer metadata for a recovery-bound
     /// NEP-141 transfer. The Base64 payload is the exact Borsh message signers
     /// must bind their certificate to.

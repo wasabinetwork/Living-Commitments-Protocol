@@ -142,6 +142,52 @@ function recoveryCertificate(intentView, outcome, committee, domain = "LCP/NEP14
   };
 }
 
+function maximumRecoveryEnvelope(committee) {
+  const intentBytes = Buffer.concat([
+    u8(1),
+    borshString(`test-chain-${"a".repeat(117)}`),
+    Buffer.alloc(32, 0x11),
+    borshString("a".repeat(64)),
+    Buffer.alloc(32, 0x22),
+    u32(0),
+    u64(1),
+    u64(1),
+    u8(0),
+    u8(1),
+    u32(0),
+    borshString("a".repeat(64)),
+    borshString("a".repeat(64)),
+    u128(1),
+    u8(0),
+    Buffer.alloc(32, 0x33),
+    u128(1),
+    u64(25),
+  ]);
+  const intentHash = sha256Bytes(Buffer.from("LCP/NEP141/INTENT/V1\0", "utf8"), intentBytes);
+  const identity = (label) => sha256Bytes(Buffer.from(label), intentBytes);
+  const certificate = Buffer.concat([
+    u8(1),
+    intentBytes,
+    intentHash,
+    identity("sandbox-origin-transaction"),
+    identity("sandbox-origin-receipt"),
+    identity("sandbox-origin-block"),
+    u64(10),
+    identity("sandbox-token-receipt"),
+    u32(0),
+    identity("sandbox-outcome-block"),
+    u64(11),
+    u8(0),
+  ]);
+  const envelope = signedEnvelope(
+    certificate,
+    "LCP/NEP141/RECOVERY/V1\0",
+    committee,
+    5,
+  );
+  return { intentBytes, certificate, envelope };
+}
+
 function recoveryCertificateFieldMutations(certificate, intentBytes) {
   const offsets = { certificate_schema_version: 0, intent_schema_version: 1 };
   let intentOffset = 0;
@@ -446,7 +492,13 @@ async function main() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
     });
-    const body = await response.json();
+    const responseText = await response.text();
+    let body;
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      throw new Error(`${method} RPC returned non-JSON HTTP ${response.status}: ${responseText.slice(0, 500)}`);
+    }
     if (!response.ok || body.error) {
       throw new Error(`${method} RPC failed: ${JSON.stringify(body.error ?? body)}`);
     }
@@ -766,6 +818,37 @@ async function main() {
     assert.equal(config.used_key_count, 5);
     results.bootstrap_configuration = config;
     console.log("PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys");
+
+    const maximumEnvelope = maximumRecoveryEnvelope(committee);
+    const maximumEnvelopeBytes = Buffer.from(maximumEnvelope.envelope, "base64");
+    assert.equal(maximumEnvelope.intentBytes.length, 500, "maximum intent must use the configured 500-byte limit");
+    assert.equal(maximumEnvelope.certificate.length, 714, "maximum certificate must use the configured 714-byte limit");
+    assert.equal(maximumEnvelopeBytes.length, 1_202, "maximum envelope must use the configured 1,202-byte limit");
+    assert.equal(maximumEnvelope.envelope.length, 1_604, "maximum Base64 must use the configured 1,604-character limit");
+    const maximumEnvelopeTx = await functionCall(
+      CORE_ID,
+      coreKey,
+      "sandbox_verify_maximum_recovery_envelope",
+      { certificate_base64: maximumEnvelope.envelope },
+      220n * TERA,
+    );
+    assert.equal(returnedJson(maximumEnvelopeTx), true,
+      "contract VM must accept the canonical maximum-size 5-of-5 envelope");
+    assert.deepEqual(await view(CORE_ID, "receipt_recovery_configuration", {}), config,
+      "read-only maximum envelope verification must not change recovery configuration");
+    results.maximum_size_positive_contract_envelope = {
+      transaction_hash: maximumEnvelopeTx.transaction.hash,
+      intent_bytes: maximumEnvelope.intentBytes.length,
+      certificate_bytes: maximumEnvelope.certificate.length,
+      decoded_envelope_bytes: maximumEnvelopeBytes.length,
+      encoded_base64_characters: maximumEnvelope.envelope.length,
+      signature_count: 5,
+      receipt_gas_burnt: (maximumEnvelopeTx.receipts_outcome ?? [])
+        .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n).toString(),
+      synthetic_fixture_only: true,
+      settlement_state_unchanged: true,
+    };
+    console.log("PASS 500-byte intent and 1,202-byte 5-of-5 envelope in the contract VM parser");
 
     const recoveryIntent = (transferId) => view(CORE_ID, "receipt_recovery_intent", {
       transfer_id: String(transferId),
