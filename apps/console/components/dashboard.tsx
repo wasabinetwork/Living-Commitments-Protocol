@@ -66,6 +66,7 @@ interface NearWalletPort {
 }
 
 interface ConnectorAccountEvent {
+  wallet: { manifest: { id: string } };
   accounts: Array<{ accountId: string }>;
 }
 
@@ -73,8 +74,8 @@ interface NearConnectorPort {
   whenManifestLoaded?: Promise<void>;
   on(event: "wallet:signIn", handler: (event: ConnectorAccountEvent) => void): unknown;
   on(event: "wallet:signOut", handler: () => void): unknown;
-  getConnectedWallet(): Promise<{ wallet: unknown; accounts: Array<{ accountId: string }> }>;
-  connect(): Promise<unknown>;
+  getConnectedWallet(): Promise<{ wallet: { manifest: { id: string } }; accounts: Array<{ accountId: string }> }>;
+  connect(input?: { walletId?: string }): Promise<unknown>;
   disconnect(): Promise<void>;
   wallet(): Promise<NearWalletPort>;
 }
@@ -146,6 +147,7 @@ const MAX_EVIDENCE_ARTIFACT_BYTES = 25 * 1024 * 1024;
 const EVALUATION_HISTORY_LIMIT = 10;
 const COMMITMENT_PAGE_SIZE = 10;
 const THEME_STORAGE_KEY = "lcp-color-theme";
+const WALLET_ACCOUNT_STORAGE_KEY = "lcp-connected-wallet-account";
 
 type ColorTheme = "light" | "dark";
 type SettlementCurrency = "near" | "usdc";
@@ -165,6 +167,8 @@ export function Dashboard() {
   const connectorRef = useRef<NearConnectorPort | null>(null);
   const connectorInitRef = useRef<Promise<NearConnectorPort> | null>(null);
   const recordViewRef = useRef<HTMLDivElement | null>(null);
+  const healthHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const focusHealthHeadingAfterLoadRef = useRef(false);
   const advancedDetailsRef = useRef<HTMLDetailsElement | null>(null);
   const displayedCommitmentIdRef = useRef<string | null>(null);
   const dataRef = useRef<CommitmentData | null>(null);
@@ -172,8 +176,7 @@ export function Dashboard() {
   const liveRefreshInFlightRef = useRef(false);
   const liveRefreshRef = useRef<(id: string) => Promise<void>>(async () => undefined);
   const walletAccountIdRef = useRef<string | null>(null);
-  const walletAccountVersionRef = useRef(0);
-  const walletSyncInFlightRef = useRef(false);
+  const connectedWalletIdRef = useRef<string | null>(null);
   const [theme, setTheme] = useState<ColorTheme | null>(null);
   const [commitmentId, setCommitmentId] = useState("");
   const [commitments, setCommitments] = useState<CommitmentSummaryView[]>([]);
@@ -213,14 +216,22 @@ export function Dashboard() {
   dataRef.current = data;
   loadingRef.current = loading;
 
-  const publishWalletAccount = useCallback((nextAccountId: string | null) => {
-    if (walletAccountIdRef.current === nextAccountId) return;
+  const publishWalletSession = useCallback((nextAccountId: string | null, nextWalletId: string | null) => {
+    if (walletAccountIdRef.current === nextAccountId && connectedWalletIdRef.current === nextWalletId) return;
     const previousAccountId = walletAccountIdRef.current;
     walletAccountIdRef.current = nextAccountId;
-    walletAccountVersionRef.current += 1;
+    connectedWalletIdRef.current = nextWalletId;
     setAccountId(nextAccountId);
+    try {
+      if (nextAccountId) window.localStorage.setItem(WALLET_ACCOUNT_STORAGE_KEY, nextAccountId);
+      else window.localStorage.removeItem(WALLET_ACCOUNT_STORAGE_KEY);
+    } catch {
+      // Wallet signing remains available if browser storage is disabled.
+    }
     if (nextAccountId && previousAccountId) {
-      setWalletAccountAnnouncement(`Wallet account changed from ${previousAccountId} to ${nextAccountId}.`);
+      if (previousAccountId !== nextAccountId) {
+        setWalletAccountAnnouncement(`Wallet account changed from ${previousAccountId} to ${nextAccountId}.`);
+      }
     } else if (nextAccountId) {
       setWalletAccountAnnouncement(`Wallet connected as ${nextAccountId}.`);
     } else if (previousAccountId) {
@@ -238,8 +249,11 @@ export function Dashboard() {
         network: NEAR_NETWORK_ID,
         features: { testnet: NEAR_NETWORK_ID === "testnet" },
       }) as unknown as NearConnectorPort;
-      connector.on("wallet:signIn", (event) => publishWalletAccount(event.accounts[0]?.accountId ?? null));
-      connector.on("wallet:signOut", () => publishWalletAccount(null));
+      connector.on("wallet:signIn", (event) => publishWalletSession(
+        event.accounts[0]?.accountId ?? null,
+        event.wallet.manifest.id,
+      ));
+      connector.on("wallet:signOut", () => publishWalletSession(null, null));
       await connector.whenManifestLoaded?.catch(() => undefined);
       connectorRef.current = connector;
       return connector;
@@ -251,29 +265,31 @@ export function Dashboard() {
       connectorInitRef.current = null;
       throw cause;
     }
-  }, [publishWalletAccount]);
+  }, [publishWalletSession]);
 
-  const syncConnectedWalletAccount = useCallback(async () => {
+  const restoreWalletSession = useCallback(async () => {
     const connector = connectorRef.current;
-    if (!connector || walletSyncInFlightRef.current) return;
-
-    const accountVersion = walletAccountVersionRef.current;
-    walletSyncInFlightRef.current = true;
+    if (!connector) return;
     try {
-      const { accounts } = await connector.getConnectedWallet();
-      if (accountVersion === walletAccountVersionRef.current) {
-        publishWalletAccount(accounts[0]?.accountId ?? null);
+      const { wallet, accounts } = await connector.getConnectedWallet();
+      let rememberedAccountId: string | null = null;
+      try {
+        rememberedAccountId = window.localStorage.getItem(WALLET_ACCOUNT_STORAGE_KEY);
+      } catch {
+        // Fall back to the wallet's first visible account when storage is disabled.
       }
+      const accountIdToRestore = accounts.find((account) => account.accountId === rememberedAccountId)?.accountId
+        ?? accounts[0]?.accountId
+        ?? null;
+      publishWalletSession(accountIdToRestore, accountIdToRestore ? wallet.manifest.id : null);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "";
-      if (accountVersion === walletAccountVersionRef.current && /No wallet selected|No accounts found/i.test(message)) {
-        publishWalletAccount(null);
+      if (/No wallet selected|No accounts found/i.test(message)) {
+        publishWalletSession(null, null);
       }
       // Preserve the last known account for transient wallet or bridge errors.
-    } finally {
-      walletSyncInFlightRef.current = false;
     }
-  }, [publishWalletAccount]);
+  }, [publishWalletSession]);
 
   useEffect(() => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
@@ -297,7 +313,7 @@ export function Dashboard() {
     void (async () => {
       try {
         await ensureConnector();
-        if (active) await syncConnectedWalletAccount();
+        if (active) await restoreWalletSession();
       } catch {
         // A missing persisted wallet is the normal disconnected state.
       } finally {
@@ -305,25 +321,7 @@ export function Dashboard() {
       }
     })();
     return () => { active = false; };
-  }, [ensureConnector, syncConnectedWalletAccount]);
-
-  useEffect(() => {
-    if (!accountId || walletRestoring) return;
-
-    const syncWhenVisible = () => {
-      if (document.visibilityState === "visible") void syncConnectedWalletAccount();
-    };
-    const interval = window.setInterval(syncWhenVisible, 2_000);
-    window.addEventListener("focus", syncWhenVisible);
-    window.addEventListener("pageshow", syncWhenVisible);
-    document.addEventListener("visibilitychange", syncWhenVisible);
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener("focus", syncWhenVisible);
-      window.removeEventListener("pageshow", syncWhenVisible);
-      document.removeEventListener("visibilitychange", syncWhenVisible);
-    };
-  }, [accountId, walletRestoring, syncConnectedWalletAccount]);
+  }, [ensureConnector, restoreWalletSession]);
 
   useEffect(() => {
     let active = true;
@@ -444,6 +442,15 @@ export function Dashboard() {
     const frame = window.requestAnimationFrame(() => recordViewRef.current?.scrollIntoView({ behavior, block: "start" }));
     return () => window.cancelAnimationFrame(frame);
   }, [currentCommitmentId]);
+
+  useEffect(() => {
+    if (!data || !focusHealthHeadingAfterLoadRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      focusHealthHeadingAfterLoadRef.current = false;
+      healthHeadingRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [data]);
 
   function toggleTheme() {
     const currentTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -572,7 +579,11 @@ export function Dashboard() {
         allChallengeHistory.push(activeChallenge);
       }
       const challenge = activeChallenge ?? allChallengeHistory.find((item) => item.evaluation_id === evaluation?.evaluation_id) ?? null;
+      focusHealthHeadingAfterLoadRef.current = !quiet;
       setData({ commitment, policy, serviceAvailabilityPolicy, serviceReportInbox, serviceReportInboxAvailable: reportInboxState.available, servicePolicyAmendment, latestAuthorityGrant, governanceMethodsAvailable: amendmentView.available && authorityView.available, amendmentRejectionSupported, chainTimeNs: chainTimeSnapshot.chainTimeNs, chainTimeCapturedAtMs: chainTimeSnapshot.capturedAtMs, evaluation, evaluationHistory, evaluationTimeoutNs, challenge, challengeHistory: allChallengeHistory, eligibility, escrow, epoch, tranche });
+      if (!quiet) {
+        setChainUpdateAnnouncement(`Commitment ${normalizedId} loaded. ${eligibility?.eligible ? "A tranche is eligible to claim." : "No tranche is currently eligible."}`);
+      }
       if (quiet && previousData?.commitment.id === normalizedId) {
         const updates: string[] = [];
         if (previousData.commitment.effective_health !== commitment.effective_health) {
@@ -698,9 +709,11 @@ export function Dashboard() {
   liveRefreshRef.current = refreshLiveSnapshot;
 
   useEffect(() => {
-    if (!accountId || !data?.commitment.id) return;
-    void loadCommitment(data.commitment.id);
-  }, [accountId, data?.commitment.id]);
+    if (!accountId) return;
+    const id = dataRef.current?.commitment.id;
+    if (!id) return;
+    void loadCommitment(id, { quiet: true });
+  }, [accountId]);
 
   useEffect(() => {
     const id = currentCommitmentId;
@@ -731,20 +744,27 @@ export function Dashboard() {
     return new LcpClient(CONTRACT_ID, new NearJsonRpcTransport({ rpcUrl: RPC_URL }));
   }
 
-  async function connectWallet() {
+  async function connectWallet(walletId?: string) {
     setConnecting(true);
     setError(null);
     try {
       const connector = await ensureConnector();
       await connector.whenManifestLoaded?.catch(() => undefined);
-      await connector.connect();
-      const { accounts } = await connector.getConnectedWallet();
-      publishWalletAccount(accounts[0]?.accountId ?? null);
+      await connector.connect(walletId ? { walletId } : undefined);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Wallet connection was not completed.");
     } finally {
       setConnecting(false);
     }
+  }
+
+  async function switchWalletAccount() {
+    const walletId = connectedWalletIdRef.current;
+    if (!walletId) {
+      setError("The connected wallet could not be identified. Disconnect and connect it again to restore wallet controls.");
+      return;
+    }
+    await connectWallet(walletId);
   }
 
   async function disconnectWallet() {
@@ -756,7 +776,7 @@ export function Dashboard() {
     setActionMessage(null);
     try {
       await connector.disconnect();
-      publishWalletAccount(null);
+      publishWalletSession(null, null);
       setActionMessage("Wallet disconnected.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Wallet disconnection was not completed.");
@@ -1665,7 +1685,8 @@ export function Dashboard() {
                 : "Collect operator reports and request an evaluation when the configured quorum is ready.";
 
   return (
-    <main className="app-shell">
+    <div className="app-shell">
+      <a className="skip-link" href="#explorer-title">Skip to commitment tools</a>
       <header className="topbar">
         <a className="brand" href="#top" aria-label="Living Commitments Protocol home">
           <span className="brand-mark" aria-hidden="true"><span /></span>
@@ -1689,10 +1710,20 @@ export function Dashboard() {
                 {shortenAccount(accountId)}
               </span>
               <button
+                className="wallet-button wallet-disconnect-button wallet-switch-button"
+                type="button"
+                onClick={() => void switchWalletAccount()}
+                disabled={connecting || disconnecting}
+                aria-label="Change connected wallet account"
+                title="Ask the connected wallet to authorize a different account."
+              >
+                {connecting ? "Opening wallet…" : "Change account"}
+              </button>
+              <button
                 className="wallet-button wallet-disconnect-button"
                 type="button"
                 onClick={() => void disconnectWallet()}
-                disabled={disconnecting}
+                disabled={connecting || disconnecting}
               >
                 {disconnecting ? "Disconnecting…" : "Disconnect"}
               </button>
@@ -1706,6 +1737,7 @@ export function Dashboard() {
         </div>
       </header>
 
+      <main className="page-main">
       {accountId && BigInt(storageRefundBalance) > 0n && (
         <section className="storage-refund-banner" aria-label="Withdrawable storage refunds">
           <div><strong>Withdrawable storage refund</strong><span>{formatNear(storageRefundBalance)} NEAR · {accountId}</span></div>
@@ -1752,12 +1784,12 @@ export function Dashboard() {
         <div className="section-heading">
           <div>
             <p className="eyebrow">THE COMMITMENT EXPLORER <span className="heading-index">01 / 03</span></p>
-            <h2 id="explorer-title">A promise, in the open.</h2>
+            <h2 id="explorer-title" tabIndex={-1}>A promise, in the open.</h2>
           </div>
           <span className="read-source"><span className="live-pulse" />LIVE CONTRACT READ</span>
         </div>
 
-        <form className="lookup-bar" onSubmit={(event) => { event.preventDefault(); void loadCommitment(); }}>
+        <form className="lookup-bar" aria-busy={loading} onSubmit={(event) => { event.preventDefault(); if (!loading) void loadCommitment(); }}>
           <label className="lookup-label" htmlFor="commitment-id">COMMITMENT ID</label>
           <div className="lookup-field">
             <span className="lookup-prefix">LCP /</span>
@@ -1770,7 +1802,7 @@ export function Dashboard() {
               onChange={(event) => setCommitmentId(event.target.value)}
               aria-describedby="contract-hint"
             />
-            <button className="lookup-button" type="submit" disabled={loading || !CONTRACT_ID}>
+            <button className="lookup-button" type="submit" disabled={!CONTRACT_ID} aria-disabled={loading}>
               {loading ? <><span className="spinner" />Reading</> : <>Inspect commitment <span aria-hidden="true">↗</span></>}
             </button>
           </div>
@@ -1779,14 +1811,16 @@ export function Dashboard() {
           </p>
         </form>
 
-        <section className="commitment-browser" aria-label="Recent commitments">
+        <section className="commitment-browser" aria-label="Recent commitments" aria-busy={loadingCommitments}>
           <div className="browser-toolbar">
             <p>Browse commitments in reverse creation order.</p>
             <button
               className="browser-button"
               type="button"
-              disabled={loadingCommitments || !CONTRACT_ID}
+              disabled={!CONTRACT_ID}
+              aria-disabled={loadingCommitments}
               onClick={() => {
+                if (loadingCommitments) return;
                 if (commitmentsVisible) setCommitmentsVisible(false);
                 else void loadCommitmentPage(null, false);
               }}
@@ -1798,32 +1832,32 @@ export function Dashboard() {
             <div className="browser-panel">
               <div className="browser-panel-heading">
                 <div><strong>Recent commitments</strong><span>Latest on-chain state · page size {COMMITMENT_PAGE_SIZE}</span></div>
-                <button className="browser-text-button" type="button" disabled={loadingCommitments} onClick={() => void loadCommitmentPage(null, false)}>Latest</button>
+                <button className="browser-text-button" type="button" aria-disabled={loadingCommitments} onClick={() => { if (!loadingCommitments) void loadCommitmentPage(null, false); }}>Latest</button>
               </div>
               {commitments.length > 0 ? (
-                <div className="commitment-list" role="list">
+                <ul className="commitment-list" aria-label="Recent commitment records">
                   {commitments.map((commitment) => (
-                    <button
-                      className="commitment-list-item"
-                      type="button"
-                      role="listitem"
-                      key={commitment.id}
-                      disabled={loading}
-                      onClick={() => void loadCommitment(commitment.id)}
-                    >
-                      <span className="commitment-list-id">#{commitment.id}</span>
-                      <span className="commitment-list-subject">{commitment.subject}</span>
-                      <span className="commitment-list-status">{commitment.lifecycle} · {commitment.effective_health}</span>
-                      <span className="commitment-list-escrow">{formatAssetValue(commitment.escrow_paid_raw ?? commitment.escrow_paid_yocto, commitment.settlement_asset ?? { kind: "near" })} / {formatAssetValue(commitment.escrow_funded_raw ?? commitment.escrow_funded_yocto, commitment.settlement_asset ?? { kind: "near" })} paid</span>
-                      <span className="commitment-list-arrow" aria-hidden="true">↗</span>
-                    </button>
+                    <li key={commitment.id}>
+                      <button
+                        className="commitment-list-item"
+                        type="button"
+                        aria-disabled={loading}
+                        onClick={() => { if (!loading) void loadCommitment(commitment.id); }}
+                      >
+                        <span className="commitment-list-id">#{commitment.id}</span>
+                        <span className="commitment-list-subject">{commitment.subject}</span>
+                        <span className="commitment-list-status">{commitment.lifecycle} · {commitment.effective_health}</span>
+                        <span className="commitment-list-escrow">{formatAssetValue(commitment.escrow_paid_raw ?? commitment.escrow_paid_yocto, commitment.settlement_asset ?? { kind: "near" })} / {formatAssetValue(commitment.escrow_funded_raw ?? commitment.escrow_funded_yocto, commitment.settlement_asset ?? { kind: "near" })} paid</span>
+                        <span className="commitment-list-arrow" aria-hidden="true">↗</span>
+                      </button>
+                    </li>
                   ))}
-                </div>
+                </ul>
               ) : (
                 <p className="browser-empty">{loadingCommitments ? "Reading recent commitments…" : "No commitments found yet."}</p>
               )}
               {hasMoreCommitments && commitmentCursor && (
-                <button className="browser-more-button" type="button" disabled={loadingCommitments} onClick={() => void loadCommitmentPage(commitmentCursor, true)}>
+                <button className="browser-more-button" type="button" aria-disabled={loadingCommitments} onClick={() => { if (!loadingCommitments) void loadCommitmentPage(commitmentCursor, true); }}>
                   {loadingCommitments ? "Loading…" : "Load older commitments"}
                 </button>
               )}
@@ -1854,7 +1888,7 @@ export function Dashboard() {
                 <div className="health-panel-top">
                   <div>
                     <p className="eyebrow">EFFECTIVE HEALTH <span className="chain-source">NEAR · {data.commitment.lifecycle.toUpperCase()}</span></p>
-                    <div className="health-title-row"><span className="health-indicator" /><h3>{healthLabel(health)}</h3></div>
+                    <div className="health-title-row"><span className="health-indicator" /><h3 ref={healthHeadingRef} tabIndex={-1}>{healthLabel(health)}</h3></div>
                     <p className="health-copy">{healthDescription(health, data.eligibility)}</p>
                   </div>
                   <span className="commitment-number">#{data.commitment.id}</span>
@@ -2312,6 +2346,7 @@ export function Dashboard() {
           </section>
         )}
       </section>
+      </main>
 
       <footer className="footer">
         <div className="footer-topline">
@@ -2338,7 +2373,7 @@ export function Dashboard() {
           </a>
         </nav>
       </footer>
-    </main>
+    </div>
   );
 }
 

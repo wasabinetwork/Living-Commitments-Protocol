@@ -106,7 +106,7 @@ Use the sponsor, maintainer, beneficiary, and arbiter accounts for amendment app
 Run this pass on the preview or local Console before closing the WCAG 2.1 review:
 
 1. Set the viewport to 320 CSS px and then browser zoom to 200%. Confirm primary actions remain visible, controls and text do not overlap, and the page has no horizontal scrolling.
-2. Use only Tab, Shift+Tab, Enter, and Space. Confirm focus is always visible and reaches the wallet controls, journey navigation, form fields, helper disclosures, and advanced sections in a logical order.
+2. Reload and use only Tab, Shift+Tab, Enter, and Space. Confirm the first Tab reveals **Skip to commitment tools** and Enter moves focus to the explorer heading. Then confirm focus is visible and reaches wallet controls, journey navigation, form fields, helper disclosures, and advanced sections in a logical order. Recent commitment entries should be announced as list items containing keyboard-operable buttons.
 3. In Firefox DevTools, add this temporary text-spacing rule and confirm no labels, instructions, or actions are clipped:
 
    ```css
@@ -114,6 +114,7 @@ Run this pass on the preview or local Console before closing the WCAG 2.1 review
    p { margin-bottom: 2em !important; }
    ```
 4. With a screen reader, confirm action success, errors, wallet/session changes, completed evaluation results, health changes, and claim-eligibility changes are announced without moving focus unexpectedly. Routine 30-second snapshot timestamps should stay silent; a sync failure should be announced. Check light and dark text, controls, and focus indicators against WCAG 2.1 AA contrast targets.
+5. With a wallet connected, click **Change account**, choose another account in the same wallet, and confirm the Console updates without disconnecting first. Refresh and confirm the selected account is restored.
 
 Record browser version, viewport/zoom, theme, screen reader if used, and any failing element before closing this item.
 
