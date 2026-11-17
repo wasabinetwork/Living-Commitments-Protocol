@@ -1,0 +1,70 @@
+diff --git a/P2-USDC-NATIVE-EXCESS-REFUND-SANDBOX-REVIEW.md b/P2-USDC-NATIVE-EXCESS-REFUND-SANDBOX-REVIEW.md
+new file mode 100644
+index 0000000..91bf91c
+--- /dev/null
++++ b/P2-USDC-NATIVE-EXCESS-REFUND-SANDBOX-REVIEW.md
+@@ -0,0 +1,39 @@
++# Native Excess-Refund Sandbox Reproduction Review
++
++## Review objective
++
++Independently reproduce the failed native excess-refund and payer-credit recovery scenario in an isolated NEAR Sandbox, then inspect whether the fixture and captured receipts support the stated result. Use a fresh checkout of the reviewed commit and an independently managed runtime. Do not deploy this fixture to testnet or mainnet.
++
++## Reviewed revision and evidence
++
++- Source revision: `519e59b` (verify the full commit from `origin/main` before starting).
++- Sandbox: `near-sandbox` 0.3.5, NEAR Sandbox 2.14.0, protocol 88.
++- Feature-built core SHA-256: `33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872`.
++- Corresponding NEAR code hash: `4URYaJBxtUGhYbafSHMRkVyGcHcY8Zs1uwugpRM1p76Z`.
++- Primary evidence: [captured receipt tree](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json), [source manifest](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256), and [capture checker](tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs).
++
++## Reproduction
++
++Build the core with the fixture and receipt-recovery features using the pinned Rust toolchain and `cargo-near` 0.23.0. Build both mock token variants as documented in [the Sandbox guide](tests/sandbox-usdc-callbacks/README.md#receipt-recovery-vmsandbox-acceptance). Then run this command from the repository root; it writes a fresh capture outside the checkout:
++
++```sh
++docker run --rm --init --platform linux/amd64 \
++  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
++  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
++  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/sandbox-cache/independent-native-excess-refund.json node run.mjs'
++```
++
++Compare the independent output with the committed capture and review the core source path in `contracts/lcp-core/src/contract.rs` and `contracts/lcp-core/src/native_cash.rs`.
++
++## Expected observations
++
++1. `refund_excess` records a `0.01 NEAR` liability and attempts the native transfer. The test-only recipient override points to a missing Sandbox account; the root action and production callback run, the transfer receipt fails, and the callback restores the full amount as the payer's storage-refund credit.
++2. A withdrawal with `0.01 NEAR` free margin fails at the solvency check before the transfer is requested. The credit and native cash snapshot remain unchanged.
++3. The persisted withdrawal attempt adds `0.00026 NEAR` of measured storage in this fixture. A retry with exactly `0.01026 NEAR` free margin succeeds; the callback closes the liability and the payer's balance change plus measured transaction/receipt fees equals `0.01 NEAR`.
++4. The final native cash snapshot has no storage shortfall, refund liability, or scheduled outflow and remains solvent.
++
++Also build the default release Wasm and confirm that it contains no `sandbox_*` exports. The fixture method that selects a missing recipient must be absent from the release ABI. Record the independent core artifact hash, Sandbox version/protocol, transaction and receipt hashes, payer balance equation, and any deviation from the expected observations.
++
++## Scope limits
++
++This review concerns local receipt and accounting behavior only. It does not validate Circle USDC, public-network execution, receipt Merkle proofs against block headers, production liquidity recommendations, or deployment safety. A different runtime result should be reported with full logs and artifacts; do not “fix” the capture by editing its expected values.
+diff --git a/TODO.md b/TODO.md
+index 95925d0..88c1c1e 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -206,7 +206,7 @@ Ordered to resolve protocol and safety questions before mainnet deployment:
+    - [x] Confirm withdrawal replay after a successful credit settlement is rejected because the row is closed; the transaction emitted only its failed method receipt and no second transfer/callback.
+    - [x] Exercise a valid maximum-size recovery envelope in the feature-gated NEAR VM parser: 500-byte intent, 714-byte certificate, five signatures, and exact 1,202-byte/1,604-character envelope limits. The read-only synthetic probe cannot settle a transfer; the run measured 14.024 Tgas. See the [Sandbox artifact](tests/sandbox-usdc-callbacks/receipt-recovery-sandbox-acceptance-2026-11-16.json).
+    - [x] Add separate capture-integrity checkers that do not import the Sandbox runner: the protocol-88 verifier checks source hashes, code-hash derivation, receipt encodings, rollback/conservation assertions, and action-order metadata; the native excess-refund verifier checks the failed transfer, preserved credit, measured storage boundary, successful payout, balance reconciliation, and solvency. These validate internal consistency only; they do not regenerate Sandbox runs or cryptographically anchor receipt proofs.
+-   - [ ] Obtain an independently administered reproduction of the protocol-88 Sandbox receipt fixtures; cover remaining operator receipt interpretation, receipt mapping, migration, and gas/storage boundaries before any canary.
++   - [ ] Obtain an independently administered reproduction of the protocol-88 Sandbox receipt fixtures; cover remaining operator receipt interpretation, receipt mapping, migration, and gas/storage boundaries before any canary. The native excess-refund case is ready to hand off in [its reproduction review package](P2-USDC-NATIVE-EXCESS-REFUND-SANDBOX-REVIEW.md).
+    - [x] Record the implementation/deployment boundary: owner authorized local, preview, and isolated testnet development on 2026-11-15; no production-domain contract upgrade before 2026-11-19. The testnet path is a fresh child instance such as `dev.livingcommitmentsprotocol.testnet`, with no state or liability migration from the existing contract. See [the recovery design](P2-USDC-RECEIPT-RECOVERY-DESIGN.md#state-storage-migration-and-atomic-settlement).
+    - [x] Resolve legacy cash-ledger bootstrap: do not migrate the current testnet contract's incomplete liability inventory. Initialize the recovery ledger from zero on a dedicated fresh child account; keep all predecessor balances, commitments, pending transfers, and refund obligations on the existing instance.
+    - [ ] Complete native cash-ledger and receipt-recovery acceptance before a canary:
+diff --git a/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256 b/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
+index b9e3b60..765ed8e 100644
+--- a/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
++++ b/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
+@@ -17,6 +17,6 @@ dbf4985d208c6aeadd5bd946f7d6e232bc3d4347363cd77b5b919464b82d2998  contracts/lcp-
+ 7cb326d7d5353e56723f50a906d8419702095a2f984165df11e0ae243117b8e0  contracts/lcp-core/src/receipt_recovery.rs
+ e29062846a172e88c4b58aabfb4b8f33333535a0472687ac02256aecfdd5c3aa  contracts/sandbox-mock-ft/Cargo.toml
+ 1e8d9a239aa01fb6c005bc3bfe11d1c96ce6da7b3016585c3bff403760087ffe  contracts/sandbox-mock-ft/src/lib.rs
+-049570fbfd98ac4cf0386d356aa9c8f0b249d64af161a78c0c7b014463c0b8f5  TODO.md
++8c5004fb80d884de6f494fbe1f1c74b29a6d2b1231c39181916f6ee8064fdbad  TODO.md
+ 928ed71e1b3bcffd97cf996f3138367175e655dbbba9b13fccd4b1f3fcef7638  P2-USDC-RECEIPT-RECOVERY-DESIGN.md
+ 3252e09897f2571feba3b17ca0619fbe9986995289f8082802ca924bca85c4ed  P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md

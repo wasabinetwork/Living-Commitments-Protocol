@@ -514,6 +514,49 @@ async function main() {
     return body.result;
   }
 
+  async function finalTransactionStatus(transactionHash, signerId, description) {
+    const result = await rpc("EXPERIMENTAL_tx_status", {
+      tx_hash: transactionHash,
+      sender_account_id: signerId,
+      wait_until: "FINAL",
+    });
+    assert.equal(result.final_execution_status, "FINAL",
+      `${description} must be fully finalized before capture`);
+    assert.ok(result.transaction_outcome?.outcome,
+      `${description} must include its transaction outcome`);
+    assert.ok(Array.isArray(result.receipts_outcome),
+      `${description} must include finalized receipt outcomes`);
+    assert.ok(Array.isArray(result.receipts),
+      `${description} must include raw receipt bodies`);
+    const outcomeIds = new Set(result.receipts_outcome.map(({ id }) => id));
+    assert.equal(outcomeIds.size, result.receipts_outcome.length,
+      `${description} must not contain duplicate receipt outcome IDs`);
+    const referencedIds = [
+      ...(result.transaction_outcome.outcome.receipt_ids ?? []),
+      ...result.receipts_outcome.flatMap(({ outcome }) => outcome?.receipt_ids ?? []),
+    ];
+    const missingIds = [...new Set(referencedIds)].filter((id) => !outcomeIds.has(id));
+    assert.deepEqual(missingIds, [],
+      `${description} receipt graph must include every referenced child outcome`);
+    const bodyIds = new Set(result.receipts.map(({ receipt_id }) => receipt_id));
+    assert.equal(bodyIds.size, result.receipts.length,
+      `${description} must not contain duplicate raw receipt bodies`);
+    assert.deepEqual(
+      [...outcomeIds].filter((id) => !bodyIds.has(id)),
+      [],
+      `${description} must include the raw body for every receipt outcome`,
+    );
+    assert.deepEqual(
+      [...bodyIds].filter((id) => !outcomeIds.has(id)),
+      [],
+      `${description} must not contain receipt bodies without outcomes`,
+    );
+    assert.ok(result.receipts_outcome.every(({ outcome }) =>
+      !Object.hasOwn(outcome?.status ?? {}, "Unknown")),
+    `${description} must not leave any receipt outcome unknown at FINAL`);
+    return result;
+  }
+
   async function sendTransaction(signerId, key, receiverId, actions, description, options = {}) {
     const block = await rpc("block", { finality: "final" });
     let nonce = options.nonce;
@@ -1290,10 +1333,11 @@ async function main() {
         [actionFunctionCall("sandbox_queue_excess_refund_failure", {}, 120n * TERA, refundAmount)],
         "production excess-refund callback with a forced missing recipient",
       );
-      const excessRefundReceiptTree = await rpc("tx", [
+      const excessRefundReceiptTree = await finalTransactionStatus(
         excessRefundTx.transaction.hash,
         RECIPIENT_ID,
-      ]);
+        "failed excess-refund transaction",
+      );
       const failedExcessReceipt = excessRefundReceiptTree.receipts_outcome?.find(
         ({ outcome }) => outcome.executor_id === "missing-excess-refund.sandbox",
       );
@@ -1333,7 +1377,12 @@ async function main() {
         "native excess-refund credit withdrawal at one-transfer margin",
         { expectFailure: true },
       );
-      const underfundedWithdrawalLogs = (underfundedCreditWithdrawalTx.receipts_outcome ?? [])
+      const underfundedCreditWithdrawalReceiptTree = await finalTransactionStatus(
+        underfundedCreditWithdrawalTx.transaction.hash,
+        RECIPIENT_ID,
+        "underfunded excess-credit withdrawal",
+      );
+      const underfundedWithdrawalLogs = (underfundedCreditWithdrawalReceiptTree.receipts_outcome ?? [])
         .flatMap(({ outcome }) => outcome?.logs ?? []);
       const cashGateLog = underfundedWithdrawalLogs.find((log) =>
         log.includes("SANDBOX_CASH_GATE_FAILED"));
@@ -1375,10 +1424,11 @@ async function main() {
           ? { done: true, value: cash }
           : { done: false, value: { credit, cash: cash.map(String) } };
       });
-      const creditWithdrawalReceiptTree = await rpc("tx", [
+      const creditWithdrawalReceiptTree = await finalTransactionStatus(
         creditWithdrawalTx.transaction.hash,
         RECIPIENT_ID,
-      ]);
+        "successful excess-credit withdrawal",
+      );
       assert.ok(
         creditWithdrawalReceiptTree.receipts_outcome?.some(({ outcome }) =>
           outcome.executor_id === CORE_ID
@@ -1402,28 +1452,75 @@ async function main() {
       const finalNativeCash = await nativeCashSnapshot();
       assert.ok(nativeFreeMargin(finalNativeCash) >= 0n,
         "successful excess-credit withdrawal must preserve native solvency");
+      const finalPayerCredit = await view(CORE_ID, "get_storage_refund_balance", {
+        account_id: RECIPIENT_ID,
+      });
+      assert.equal(finalPayerCredit, "0", "successful withdrawal must close the payer credit");
+      const replayedWithdrawalTx = await sendTransaction(
+        RECIPIENT_ID,
+        recipientKey,
+        CORE_ID,
+        [actionFunctionCall("withdraw_storage_refund", {}, 120n * TERA)],
+        "replay excess-refund credit withdrawal after settlement",
+        { expectFailure: true },
+      );
+      const replayedWithdrawalReceiptTree = await finalTransactionStatus(
+        replayedWithdrawalTx.transaction.hash,
+        RECIPIENT_ID,
+        "replayed excess-credit withdrawal",
+      );
+      assert.ok(hasFailedExecution(replayedWithdrawalReceiptTree),
+        "withdrawal replay after settlement must fail");
+      assert.ok(!(replayedWithdrawalReceiptTree.receipts_outcome ?? []).some(({ outcome }) =>
+        outcome?.logs?.some((log) => log.includes('"event":"service_report_refund_requested"'))),
+      "withdrawal replay must not schedule another payout");
+      assert.equal(await view(CORE_ID, "get_storage_refund_balance", { account_id: RECIPIENT_ID }), "0",
+        "withdrawal replay must not recreate the settled payer credit");
       results.native_excess_refund_cash_gate = {
         payer: RECIPIENT_ID,
         amount_yocto: refundAmount.toString(),
         free_margin_fixture: freeMargin,
         failure_transaction_hash: excessRefundTx.transaction.hash,
+        failure_final_execution_status: excessRefundReceiptTree.final_execution_status,
+        failure_status: excessRefundReceiptTree.status,
+        failure_transaction_outcome: excessRefundReceiptTree.transaction_outcome,
         failure_receipts_outcome: excessRefundReceiptTree.receipts_outcome,
+        failure_receipts: excessRefundReceiptTree.receipts,
         failed_credit_balance_yocto: excessRefundState.credit,
         cash_after_failed_refund: excessRefundState.cash.map(String),
         one_transfer_withdrawal_margin_fixture: oneTransferMargin,
         underfunded_withdrawal_transaction_hash: underfundedCreditWithdrawalTx.transaction.hash,
-        underfunded_withdrawal_status: underfundedCreditWithdrawalTx.status,
-        underfunded_withdrawal_receipts_outcome: underfundedCreditWithdrawalTx.receipts_outcome,
+        underfunded_withdrawal_status: underfundedCreditWithdrawalReceiptTree.status,
+        underfunded_withdrawal_final_execution_status:
+          underfundedCreditWithdrawalReceiptTree.final_execution_status,
+        underfunded_withdrawal_transaction_outcome:
+          underfundedCreditWithdrawalReceiptTree.transaction_outcome,
+        underfunded_withdrawal_receipts_outcome:
+          underfundedCreditWithdrawalReceiptTree.receipts_outcome,
+        underfunded_withdrawal_receipts: underfundedCreditWithdrawalReceiptTree.receipts,
         cash_before_underfunded_withdrawal: cashBeforeUnderfundedWithdrawal.map(String),
         cash_after_underfunded_withdrawal: cashAfterUnderfundedWithdrawal.map(String),
         measured_withdrawal_storage_growth_yocto: withdrawalStorageGrowth.toString(),
         withdrawal_margin_fixture: withdrawalMargin,
         withdrawal_transaction_hash: creditWithdrawalTx.transaction.hash,
+        withdrawal_final_execution_status: creditWithdrawalReceiptTree.final_execution_status,
+        withdrawal_status: creditWithdrawalReceiptTree.status,
         withdrawal_fees_yocto: withdrawalFees.toString(),
         withdrawal_transaction_outcome: creditWithdrawalReceiptTree.transaction_outcome,
         payer_balance_before_yocto: payerBalanceBefore.toString(),
         payer_balance_after_yocto: payerBalanceAfter.toString(),
         withdrawal_receipts_outcome: creditWithdrawalReceiptTree.receipts_outcome,
+        withdrawal_receipts: creditWithdrawalReceiptTree.receipts,
+        final_payer_credit_yocto: finalPayerCredit,
+        replay_transaction_hash: replayedWithdrawalTx.transaction.hash,
+        replay_final_execution_status: replayedWithdrawalReceiptTree.final_execution_status,
+        replay_transaction_outcome: replayedWithdrawalReceiptTree.transaction_outcome,
+        replay_status: replayedWithdrawalReceiptTree.status,
+        replay_receipts_outcome: replayedWithdrawalReceiptTree.receipts_outcome,
+        replay_receipts: replayedWithdrawalReceiptTree.receipts,
+        payer_credit_after_replay_yocto: await view(CORE_ID, "get_storage_refund_balance", {
+          account_id: RECIPIENT_ID,
+        }),
         cash_after_withdrawal: finalNativeCash.map(String),
         isolated_sandbox_only: true,
       };

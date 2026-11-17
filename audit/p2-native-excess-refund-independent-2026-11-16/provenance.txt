@@ -1,0 +1,17 @@
+origin	https://github.com/wasabinetwork/Living-Commitments-Protocol.git (fetch)
+origin	https://github.com/wasabinetwork/Living-Commitments-Protocol.git (push)
+commit 09d18c65cb941183b92603834301a4a4e1e045a2
+Author:     Wasabi <94765983+wasabinetwork@users.noreply.github.com>
+AuthorDate: Mon Nov 16 23:26:05 2026 -0400
+Commit:     Wasabi <94765983+wasabinetwork@users.noreply.github.com>
+CommitDate: Mon Nov 16 23:26:05 2026 -0400
+
+    docs: prepare native refund reproduction review
+
+commit 519e59bad5115d2cad9d6564c898d548d94b2648
+Author:     Wasabi <94765983+wasabinetwork@users.noreply.github.com>
+AuthorDate: Mon Nov 16 23:23:56 2026 -0400
+Commit:     Wasabi <94765983+wasabinetwork@users.noreply.github.com>
+CommitDate: Mon Nov 16 23:23:56 2026 -0400
+
+    test: verify native refund Sandbox capture

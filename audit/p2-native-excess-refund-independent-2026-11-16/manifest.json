@@ -1,0 +1,134 @@
+[
+  {
+    "path": "tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json",
+    "expected": "5f97af99fdd3d355be3d517cd091cde54d6134a8b957a1a79cd51346e1e37a5f",
+    "original": "5f97af99fdd3d355be3d517cd091cde54d6134a8b957a1a79cd51346e1e37a5f",
+    "checkout": "5f97af99fdd3d355be3d517cd091cde54d6134a8b957a1a79cd51346e1e37a5f"
+  },
+  {
+    "path": "tests/sandbox-usdc-callbacks/run.mjs",
+    "expected": "fc0568794ead7248d64a79a23a62ca23c04a297af49f05b32db6dbe442a54e34",
+    "original": "fc0568794ead7248d64a79a23a62ca23c04a297af49f05b32db6dbe442a54e34",
+    "checkout": "fc0568794ead7248d64a79a23a62ca23c04a297af49f05b32db6dbe442a54e34"
+  },
+  {
+    "path": "tests/sandbox-usdc-callbacks/README.md",
+    "expected": "c037ca3c5e7d405acfa3ffd840dde9d2eb29a78f5d56c513de25f0d89b85bef6",
+    "original": "c037ca3c5e7d405acfa3ffd840dde9d2eb29a78f5d56c513de25f0d89b85bef6",
+    "checkout": "c037ca3c5e7d405acfa3ffd840dde9d2eb29a78f5d56c513de25f0d89b85bef6"
+  },
+  {
+    "path": "tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs",
+    "expected": "4f46be55e35b20a772ef9c6c6f687daca60a22a73f032ee342dbace01dbce032",
+    "original": "4f46be55e35b20a772ef9c6c6f687daca60a22a73f032ee342dbace01dbce032",
+    "checkout": "4f46be55e35b20a772ef9c6c6f687daca60a22a73f032ee342dbace01dbce032"
+  },
+  {
+    "path": "tests/sandbox-usdc-callbacks/package.json",
+    "expected": "d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548",
+    "original": "d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548",
+    "checkout": "d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548"
+  },
+  {
+    "path": "tests/sandbox-usdc-callbacks/package-lock.json",
+    "expected": "c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e",
+    "original": "c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e",
+    "checkout": "c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e"
+  },
+  {
+    "path": "Cargo.toml",
+    "expected": "93037e60b51cc4ef4b8e62e4bb0580ac88bbd9b82fd29dca54337bbe61091ab7",
+    "original": "93037e60b51cc4ef4b8e62e4bb0580ac88bbd9b82fd29dca54337bbe61091ab7",
+    "checkout": "93037e60b51cc4ef4b8e62e4bb0580ac88bbd9b82fd29dca54337bbe61091ab7"
+  },
+  {
+    "path": "Cargo.lock",
+    "expected": "877a0c3370baecb3d4e8e8d27cc8edd1f46ffbd519e222e75c3168ae7a328eb2",
+    "original": "877a0c3370baecb3d4e8e8d27cc8edd1f46ffbd519e222e75c3168ae7a328eb2",
+    "checkout": "877a0c3370baecb3d4e8e8d27cc8edd1f46ffbd519e222e75c3168ae7a328eb2"
+  },
+  {
+    "path": "rust-toolchain.toml",
+    "expected": "8ea81d2f0f2b68bec4abdd4419023c303a596abada7da66d1366191219a61c2d",
+    "original": "8ea81d2f0f2b68bec4abdd4419023c303a596abada7da66d1366191219a61c2d",
+    "checkout": "8ea81d2f0f2b68bec4abdd4419023c303a596abada7da66d1366191219a61c2d"
+  },
+  {
+    "path": "contracts/lcp-core/Cargo.toml",
+    "expected": "d5c6dc5edb37a46ed7baf522577335a2c02eef0fe0868623d9e95f5cc741f7da",
+    "original": "d5c6dc5edb37a46ed7baf522577335a2c02eef0fe0868623d9e95f5cc741f7da",
+    "checkout": "d5c6dc5edb37a46ed7baf522577335a2c02eef0fe0868623d9e95f5cc741f7da"
+  },
+  {
+    "path": "contracts/lcp-core/src/contract.rs",
+    "expected": "0fa9d2193f9b95cb1ade12b27c5c33d60a5d132a00fe72e6dfc05f42250d134e",
+    "original": "0fa9d2193f9b95cb1ade12b27c5c33d60a5d132a00fe72e6dfc05f42250d134e",
+    "checkout": "0fa9d2193f9b95cb1ade12b27c5c33d60a5d132a00fe72e6dfc05f42250d134e"
+  },
+  {
+    "path": "contracts/lcp-core/src/lib.rs",
+    "expected": "d9aae106409779a46c58268fa8989dc03d3d3b4be4a5bf50662f5eb3f5031323",
+    "original": "d9aae106409779a46c58268fa8989dc03d3d3b4be4a5bf50662f5eb3f5031323",
+    "checkout": "d9aae106409779a46c58268fa8989dc03d3d3b4be4a5bf50662f5eb3f5031323"
+  },
+  {
+    "path": "contracts/lcp-core/src/models.rs",
+    "expected": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603",
+    "original": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603",
+    "checkout": "220f21be25a1d93e56588693f063213ec20cf5a1da79682aa9137faa9e475603"
+  },
+  {
+    "path": "contracts/lcp-core/src/native_cash.rs",
+    "expected": "48d5a841392e9d87e51fc286e4a1b95d1c382c01d0484a5518e7623ef1f4e114",
+    "original": "48d5a841392e9d87e51fc286e4a1b95d1c382c01d0484a5518e7623ef1f4e114",
+    "checkout": "48d5a841392e9d87e51fc286e4a1b95d1c382c01d0484a5518e7623ef1f4e114"
+  },
+  {
+    "path": "contracts/lcp-core/src/recovery_accounting.rs",
+    "expected": "dbf4985d208c6aeadd5bd946f7d6e232bc3d4347363cd77b5b919464b82d2998",
+    "original": "dbf4985d208c6aeadd5bd946f7d6e232bc3d4347363cd77b5b919464b82d2998",
+    "checkout": "dbf4985d208c6aeadd5bd946f7d6e232bc3d4347363cd77b5b919464b82d2998"
+  },
+  {
+    "path": "contracts/lcp-core/src/recovery_config.rs",
+    "expected": "4dd4187283eff10eb2b155d5a0b69247396d3c43f78902697ccd733f27c32733",
+    "original": "4dd4187283eff10eb2b155d5a0b69247396d3c43f78902697ccd733f27c32733",
+    "checkout": "4dd4187283eff10eb2b155d5a0b69247396d3c43f78902697ccd733f27c32733"
+  },
+  {
+    "path": "contracts/lcp-core/src/receipt_recovery.rs",
+    "expected": "7cb326d7d5353e56723f50a906d8419702095a2f984165df11e0ae243117b8e0",
+    "original": "7cb326d7d5353e56723f50a906d8419702095a2f984165df11e0ae243117b8e0",
+    "checkout": "7cb326d7d5353e56723f50a906d8419702095a2f984165df11e0ae243117b8e0"
+  },
+  {
+    "path": "contracts/sandbox-mock-ft/Cargo.toml",
+    "expected": "e29062846a172e88c4b58aabfb4b8f33333535a0472687ac02256aecfdd5c3aa",
+    "original": "e29062846a172e88c4b58aabfb4b8f33333535a0472687ac02256aecfdd5c3aa",
+    "checkout": "e29062846a172e88c4b58aabfb4b8f33333535a0472687ac02256aecfdd5c3aa"
+  },
+  {
+    "path": "contracts/sandbox-mock-ft/src/lib.rs",
+    "expected": "1e8d9a239aa01fb6c005bc3bfe11d1c96ce6da7b3016585c3bff403760087ffe",
+    "original": "1e8d9a239aa01fb6c005bc3bfe11d1c96ce6da7b3016585c3bff403760087ffe",
+    "checkout": "1e8d9a239aa01fb6c005bc3bfe11d1c96ce6da7b3016585c3bff403760087ffe"
+  },
+  {
+    "path": "TODO.md",
+    "expected": "8c5004fb80d884de6f494fbe1f1c74b29a6d2b1231c39181916f6ee8064fdbad",
+    "original": "8c5004fb80d884de6f494fbe1f1c74b29a6d2b1231c39181916f6ee8064fdbad",
+    "checkout": "049570fbfd98ac4cf0386d356aa9c8f0b249d64af161a78c0c7b014463c0b8f5"
+  },
+  {
+    "path": "P2-USDC-RECEIPT-RECOVERY-DESIGN.md",
+    "expected": "928ed71e1b3bcffd97cf996f3138367175e655dbbba9b13fccd4b1f3fcef7638",
+    "original": "928ed71e1b3bcffd97cf996f3138367175e655dbbba9b13fccd4b1f3fcef7638",
+    "checkout": "928ed71e1b3bcffd97cf996f3138367175e655dbbba9b13fccd4b1f3fcef7638"
+  },
+  {
+    "path": "P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md",
+    "expected": "3252e09897f2571feba3b17ca0619fbe9986995289f8082802ca924bca85c4ed",
+    "original": "3252e09897f2571feba3b17ca0619fbe9986995289f8082802ca924bca85c4ed",
+    "checkout": "3252e09897f2571feba3b17ca0619fbe9986995289f8082802ca924bca85c4ed"
+  }
+]

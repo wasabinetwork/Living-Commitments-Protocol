@@ -1,0 +1,4 @@
+0.3.5
+neard (release 2.14.0) (build 2.14.0) (commit bc4e9e8cfb03d9e82f027883055624e18576993e) (rustc 1.95.0) (min_protocol 84) (protocol 88) (db 51)
+features: [default, dump_test_contract, json_rpc, near_dump_test_contract, rosetta_rpc, sandbox]
+797b9d7a9a23907048d68a427e86a55c94f1de232dbfb8b8a1eec09ecef3bf13  /sandbox-cache/bin/near-sandbox-2.14.0/near-sandbox

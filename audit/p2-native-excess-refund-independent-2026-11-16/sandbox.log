@@ -1,0 +1,35 @@
+
+added 46 packages in 3s
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice
+PASS create lcp-core-sandbox.sandbox: HGumqC16esXyFBAGR1mmtEiy5qabP49cVi8DvMCYHcXq
+PASS create mock-usdc.sandbox: 2FLxtgzfqGBdRCS86BPjAWKjyxjA7DQfWggJeDfGzuAn
+PASS create no-code-token.sandbox: C1DnXuGvCdAU9XEXZqWnEJH9HomV4mdQ5C8FBp96BciB
+PASS create order-a.sandbox: 8nJcc6NRbJELGTzV5LAbTsnrPkWqMD6cg2nqAWqterRB
+PASS create order-b.sandbox: AMdnWgSxbtg5zffxccDeXDEWwsugybdXrNTyoicQ3UFm
+PASS create cash-recipient.sandbox: J1vzShVV118sZYeNVVnCqSqVdF8p1C3KrtR7LffSWgZg
+PASS create recipient.sandbox: 6K53JcD8s2zZkzswSSTBt6m5gb2JaPbWTbXg16cBBAmK
+SUBMITTED deploy fixture core: BSdDoYDPYA6KFUTkVhwc2YykdDLn7aQ62UAiQex3ZnMY
+PASS deploy fixture core finalized with the expected code hash
+PASS lcp-core-sandbox.sandbox.new: 4ji1XM6hs7dea1xhtgLXv64REnBR4UVbJZ7PpZfJTAP3
+PASS fund isolated core native liquidity margin: 5wAKJ62KuagEUipjB3KBdwfJB8oshQU8aNg2q3qMkBUs
+PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call
+SUBMITTED deploy recovery mock USDC: 7JS1DmzDCxpeyN8gQTNGZPst2wreXMSdQpgDKW2G9oe8
+PASS deploy recovery mock USDC finalized with the expected code hash
+PASS mock-usdc.sandbox.new: F2riUnF2Un8ELmFaYQMdEucyfaDGJd3saHFm1uYYJsd6
+EXPECTED FAILURE RECEIPT lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"transaction_status":{"SuccessReceiptId":"81hPQ9D9hacU2NKuyN4p7hYWcw8BBfUejKDuZDoRnwnq"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"logs":[]},{"status":{"SuccessValue":""},"logs":[]},{"status":{"SuccessValue":""},"logs":[]}]}
+PASS expected failure lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: AWYGV99ZfdoFMBZNAx1yuDvVTqoGhgpsLMoyfhYVJh7J
+PASS lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: DwmLtE2AwqzGCyvsrf9cah6MxA4DGXUPgYizAfyXAsgB
+PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys
+SUBMITTED set free native cash margin for native excess-refund callback failure: CAm3aJ7BbSQGBvEft4gEAF2aCrAfFDv7Rs4GYnR6sewq
+PASS production excess-refund callback with a forced missing recipient: gDWJv6zUsCwhwXKhhtiVugogsqUYca9hbEAByYC5cxG
+SUBMITTED set free native cash margin for native excess-refund credit withdrawal one-transfer boundary: 8kzjpjZUJWSH1HVrFythXBbLa7So8c3NyhE2xU3kuQvq
+EXPECTED FAILURE RECEIPT native excess-refund credit withdrawal at one-transfer margin: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"transaction_status":{"SuccessReceiptId":"D1RHFTarE9BuCDQJvsxtLmVG6PqWXWx1roC2o8hoe8Bc"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"logs":["SANDBOX_CASH_GATE_FAILED C=31000314013336834100000000 S=11645790000000000000000000 escrow=0 operations=0 legacy_refund=10000000000000000000000 recovery_credit=18356344013336834100000000 F=978440000000000000000000 X=10000000000000000000000 storage_shortfall=0"]}]}
+PASS expected failure native excess-refund credit withdrawal at one-transfer margin: CRecZA1TWPYfzrzYViTVGkZPWdVYmvi7N171Zr2YTECj
+SUBMITTED set free native cash margin for native excess-refund credit withdrawal measured storage boundary: JCQnJuv8yHqXYMNSGqqDzxsevoXDDrwfQZJt23SZ6pWU
+PASS withdraw failed excess refund from the production payer-credit path: 8uqkdyoZLuGp7Wc9nL9jqW28TmHKPPREKBEV2Hb2r589
+PASS native excess-refund failure restores payer credit; production withdrawal pays it exactly once
+Isolated native excess-refund callback cash-gate acceptance passed; no public network was used.

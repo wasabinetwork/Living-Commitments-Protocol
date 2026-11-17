@@ -1,0 +1,2 @@
+PASS release Wasm excludes fixture methods: 591f5dee71b5f280ed4bb0b477b16e1f5aaed7b3deaf4162b1325931379c2ed2
+WROTE release feature-boundary capture: ../../../../../../tmp/lcp-independent-b05365/evidence/release-exports.json

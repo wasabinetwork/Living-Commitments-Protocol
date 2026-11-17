@@ -437,7 +437,7 @@ the production legacy payer-credit withdrawal, set
 docker run --rm --init --platform linux/amd64 \
   -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
   -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
-  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json node run.mjs'
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json node run.mjs'
 ```
 
 The feature-gated fixture sends an attached `0.01 NEAR` deposit through the
@@ -448,31 +448,49 @@ margin is rejected before scheduling the transfer because the persisted
 withdrawal attempt increases measured storage by `0.00026 NEAR`. With exactly
 `0.01026 NEAR` free margin, the production withdrawal and callback settle once;
 the final payer balance reconciles to the `0.01 NEAR` credit after measured
-transaction fees, and the native cash ledger remains solvent. Captured on
-protocol 88 (run at 2026-11-16 AST; capture timestamp is UTC) in
-[`native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json)
-with its [source checksum manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256).
+transaction fees, and the native cash ledger remains solvent. A second
+withdrawal after settlement fails without requesting another transfer. The
+runner requests `EXPERIMENTAL_tx_status` with `wait_until: "FINAL"` and stores
+every raw receipt body and execution outcome; the verifier requires a closed
+child graph. Recent nearcore versions do not wait for gas-refund receipts by
+default, so this explicit finality setting prevents partial receipt captures
+([nearcore changelog](https://github.com/near/nearcore/blob/master/CHANGELOG.md)).
+The original independently reviewed November 16 capture remains
+unchanged. The refreshed protocol-88 run is captured on November 17 (UTC
+timestamp) in
+[`native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json)
+with its [source checksum manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256).
+The original capture and manifest are preserved for the independently reviewed
+source revision `519e59bad5115d2cad9d6564c898d548d94b2648`; verify that
+historical manifest at that revision rather than against the refreshed files.
 The missing-recipient method and override exist only in the
 `sandbox-callback-fixture` build; this is local Sandbox evidence, not a testnet
 transfer or a production deployment.
 
-Run the separate capture checker from the repository root:
+Run the separate capture checker and its mutation checks from the repository root:
 
 ```sh
 node tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
+node --test tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
 ```
 
-It validates the recorded receipt outcomes, event fields, cash snapshots,
-measured storage threshold, payer balance reconciliation, code hash, and source
-manifest. It checks internal consistency only; it does not recreate the
-Sandbox execution or validate receipt proofs against block headers.
+The checker pins the independently reproduced fixture WASM hash and code hash,
+exact storage growth, transaction roots, final execution status, complete
+receipt outcome/body graphs, callback events, contract transfer actions,
+cash snapshots, payer balance and credit reconciliation, replay rejection, and
+source manifest. Mutation checks reject a changed artifact, removed failure
+event, duplicate, missing or altered payout, and an incomplete receipt graph.
+To check another capture, pass its repository path and manifest as arguments. The
+checker validates saved Sandbox RPC records; it does not rerun the Sandbox or
+validate cryptographic receipt inclusion proofs against block headers.
 
 Regenerate and verify the capture/source manifest from the repository root:
 
 ```sh
-shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json \
+shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json \
   tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
   tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs \
+  tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs \
   tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
   Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
   contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
@@ -481,8 +499,8 @@ shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbo
   contracts/lcp-core/src/receipt_recovery.rs contracts/sandbox-mock-ft/Cargo.toml \
   contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
   P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
-  > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
-shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
+  > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256
 ```
 
 The broader November 16 recovery-lifecycle run passed a read-only contract-VM

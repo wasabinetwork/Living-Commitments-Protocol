@@ -1,0 +1,249 @@
+{
+  "node": {
+    "sandbox_version": "2.14.0",
+    "protocol_version": 88,
+    "chain_id": "test-chain-86Gc3",
+    "genesis_hash": "BPfQ6pvyyB3A5hSNva3YTk6QN9fPrDxbjTbiJthJ7G9d",
+    "version": {
+      "build": "2.14.0",
+      "commit": "bc4e9e8cfb03d9e82f027883055624e18576993e",
+      "rustc_version": "1.95.0",
+      "version": "2.14.0"
+    }
+  },
+  "artifacts": {
+    "lcp_core_fixture": {
+      "wasm_sha256": "33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872",
+      "near_code_hash": "4URYaJBxtUGhYbafSHMRkVyGcHcY8Zs1uwugpRM1p76Z"
+    },
+    "mock_ft_variant_a": {
+      "wasm_sha256": "c8669f67957668888767cebb360d34c096e0654684e489377b634ab11c898619",
+      "near_code_hash": "EVHJNjrSMLAbCFmTCtQwbqKdXzmf48HgDwioHo2GAkME"
+    },
+    "mock_ft_variant_b": {
+      "wasm_sha256": "56c46e717bf7b12e41ea848b14a6b58e5c73e2c979c2f4a38cb6910561b7e489",
+      "near_code_hash": "6qhneJTJNrGbxyrp2ZHspsCa8GqX7jD6ZZDRw1jpMQ9n"
+    }
+  },
+  "transactions": {
+    "failure_transaction_hash": "FFaWqx1Q9WNvcXMyBxrWVrQj3Wjmz1RcaQPRuapGkYTN",
+    "underfunded_withdrawal_transaction_hash": "DcMkfJRTkE3DjsMiVyEcVBsCriwxquqRP4EsUp8kTggQ",
+    "withdrawal_transaction_hash": "3XtthqwDLDnysrHjXkGSeThn4cP3NdD3RUZKcaRPJbwq"
+  },
+  "snapshots": {
+    "cash_after_failed_refund": [
+      "31000313935668667700000000",
+      "11645530000000000000000000",
+      "0",
+      "10000000000000000000000",
+      "0",
+      "0",
+      "18307363935668667700000000",
+      "978440000000000000000000",
+      "0"
+    ],
+    "cash_before_underfunded_withdrawal": [
+      "31000313935668667700000000",
+      "11645530000000000000000000",
+      "0",
+      "10000000000000000000000",
+      "0",
+      "0",
+      "18356343935668667700000000",
+      "978440000000000000000000",
+      "0"
+    ],
+    "cash_after_underfunded_withdrawal": [
+      "31000313935668667700000000",
+      "11645530000000000000000000",
+      "0",
+      "10000000000000000000000",
+      "0",
+      "0",
+      "18356343935668667700000000",
+      "978440000000000000000000",
+      "0"
+    ],
+    "cash_after_withdrawal": [
+      "30990313935668667700000000",
+      "11644510000000000000000000",
+      "0",
+      "0",
+      "0",
+      "0",
+      "18356083935668667700000000",
+      "978440000000000000000000",
+      "0"
+    ]
+  },
+  "receipts": {
+    "failure_receipts_outcome": [
+      {
+        "id": "278zwuni8oTugjEqQ84Xr4t865sWLtpBpBPqztH9sUng",
+        "executor": "lcp-core-sandbox.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [
+          "kSVGhYcRB4hpYrBmfmDnNVfwhxVtpFYx6dU7hdfBvnC",
+          "FJa1CeyrEnR6vWzoSB8RV8yKsZzJXXS6VrJQRjsSNTRA",
+          "FBt1BNx63VQAgTw3b3GNJCEGzjqUEGrCwYEF8ZhsrVM1"
+        ],
+        "fees": "366937169717300000000"
+      },
+      {
+        "id": "kSVGhYcRB4hpYrBmfmDnNVfwhxVtpFYx6dU7hdfBvnC",
+        "executor": "missing-excess-refund.sandbox",
+        "status": {
+          "Failure": {
+            "ActionError": {
+              "index": 0,
+              "kind": {
+                "AccountDoesNotExist": {
+                  "account_id": "missing-excess-refund.sandbox"
+                }
+              }
+            }
+          }
+        },
+        "children": [
+          "VFpPY7N6sHPM3tVtsKXumMJGoNKcGWiD1f5cP1zw6Ne",
+          "7hZhKkzNASE9hK9nFkQEBcCsRdpC7GW5xn33WcZSAGaX"
+        ],
+        "fees": "22318256250000000000"
+      },
+      {
+        "id": "VFpPY7N6sHPM3tVtsKXumMJGoNKcGWiD1f5cP1zw6Ne",
+        "executor": "lcp-core-sandbox.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [],
+        "fees": "0"
+      },
+      {
+        "id": "7hZhKkzNASE9hK9nFkQEBcCsRdpC7GW5xn33WcZSAGaX",
+        "executor": "recipient.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [],
+        "fees": "0"
+      },
+      {
+        "id": "FJa1CeyrEnR6vWzoSB8RV8yKsZzJXXS6VrJQRjsSNTRA",
+        "executor": "lcp-core-sandbox.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [
+          "HVqe8KLwXhaFQzjaR8PL1e4XwZeCsPXfGXNHDfKcJve9"
+        ],
+        "fees": "303751359690800000000"
+      },
+      {
+        "id": "FBt1BNx63VQAgTw3b3GNJCEGzjqUEGrCwYEF8ZhsrVM1",
+        "executor": "recipient.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [],
+        "fees": "0"
+      }
+    ],
+    "underfunded_withdrawal_receipts_outcome": [
+      {
+        "id": "7u7GJFQGXfCxBcpkVZ4atkjaxyFSqNhsjEXs4gcdAUqd",
+        "executor": "lcp-core-sandbox.sandbox",
+        "status": {
+          "Failure": {
+            "ActionError": {
+              "index": 0,
+              "kind": {
+                "FunctionCallError": {
+                  "ExecutionError": "Smart contract panicked: native cash solvency check failed"
+                }
+              }
+            }
+          }
+        },
+        "children": [
+          "DMgekpYi6ZTqW21jn35g43jtYZm3yVQDUkonXJ7MrCTi"
+        ],
+        "fees": "308601495913700000000"
+      }
+    ],
+    "withdrawal_receipts_outcome": [
+      {
+        "id": "8ukYDnPPpDDLndE5VKkiuC74KT6pD5LobbNuC8SiHLgn",
+        "executor": "lcp-core-sandbox.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [
+          "BgkLqYJLFZ6eiaRJ43uaSoLUJr6FJ6562V9h9iLqQfDf",
+          "3tgAXkwMmDk72WyKybugTkkHxXau6JPPnyGFi77uDe9G",
+          "HLge2Zi6a3YBPXSbN9XZHnkKrN13oGraLeWfMqvofmXQ"
+        ],
+        "fees": "396534552428900000000"
+      },
+      {
+        "id": "BgkLqYJLFZ6eiaRJ43uaSoLUJr6FJ6562V9h9iLqQfDf",
+        "executor": "recipient.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [
+          "2FZukVjLQbcn2zmUb48Kce4Ex28y66ByovRd7Wa4AooT"
+        ],
+        "fees": "22318256250000000000"
+      },
+      {
+        "id": "2FZukVjLQbcn2zmUb48Kce4Ex28y66ByovRd7Wa4AooT",
+        "executor": "recipient.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [],
+        "fees": "0"
+      },
+      {
+        "id": "3tgAXkwMmDk72WyKybugTkkHxXau6JPPnyGFi77uDe9G",
+        "executor": "lcp-core-sandbox.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [
+          "DA3HmyZmZDCesc6FRkkpdsRx1vawUDAVyEdTaCzGnCke"
+        ],
+        "fees": "304207313820100000000"
+      },
+      {
+        "id": "HLge2Zi6a3YBPXSbN9XZHnkKrN13oGraLeWfMqvofmXQ",
+        "executor": "recipient.sandbox",
+        "status": {
+          "SuccessValue": ""
+        },
+        "children": [],
+        "fees": "0"
+      }
+    ]
+  },
+  "unresolved_child_ids": {
+    "failure_receipts_outcome": [
+      "HVqe8KLwXhaFQzjaR8PL1e4XwZeCsPXfGXNHDfKcJve9"
+    ],
+    "underfunded_withdrawal_receipts_outcome": [
+      "DMgekpYi6ZTqW21jn35g43jtYZm3yVQDUkonXJ7MrCTi"
+    ],
+    "withdrawal_receipts_outcome": [
+      "DA3HmyZmZDCesc6FRkkpdsRx1vawUDAVyEdTaCzGnCke"
+    ]
+  },
+  "balance_equation": {
+    "payer_balance_before_yocto": "29988936484179395200000000",
+    "payer_balance_after_yocto": "29998182498897608700000000",
+    "withdrawal_fees_yocto": "753985281786500000000"
+  },
+  "checks": "PASS exact expected quantities, unique receipt IDs and reported unresolved children, withdrawal success, no payer receipt on rejected withdrawal, and fee equation"
+}

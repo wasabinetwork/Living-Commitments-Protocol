@@ -1,0 +1,2 @@
+PASS native excess-refund capture: 22 source hashes, failed transfer, preserved credit, exact storage margin, one successful withdrawal, and solvency
+LIMITATION: validates captured records and manifest consistency; it does not rerun Sandbox or validate receipt Merkle proofs against block headers.

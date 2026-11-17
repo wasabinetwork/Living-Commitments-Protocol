@@ -1,0 +1,5 @@
+cargo near build non-reproducible-wasm --locked --no-abi --manifest-path contracts/lcp-core/Cargo.toml --features "sandbox-callback-fixture usdc-receipt-recovery" --out-dir /tmp/lcp-independent-b05365/build
+cargo build --locked --release --target wasm32-unknown-unknown -p sandbox-mock-ft
+CARGO_TARGET_DIR=target/lcp-sandbox-variant-b cargo build --locked --release --target wasm32-unknown-unknown -p sandbox-mock-ft --features variant-b
+CARGO_TARGET_DIR=target/lcp-release-check cargo build --locked -p lcp-core --no-default-features --target wasm32-unknown-unknown --release
+LCP_RELEASE_FEATURE_CAPTURE=/tmp/lcp-independent-b05365/evidence/release-exports.json node tests/sandbox-usdc-callbacks/verify-release-feature-exclusion.mjs
