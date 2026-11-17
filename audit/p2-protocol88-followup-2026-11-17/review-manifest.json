@@ -1,0 +1,30 @@
+{
+  "package": "P2 protocol-88 follow-up acceptance review",
+  "created": "2026-11-17",
+  "scope": "Independent reproduction and review of local receipt-recovery acceptance; no canary or deployment approval",
+  "contract_source_commit": "950e3cb50fd79f559f5b6ff725fbfa32db70a063",
+  "core_wasm_sha256": "4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad",
+  "near_code_hash": "6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212",
+  "sandbox": {
+    "version": "2.14.0",
+    "protocol_version": 88,
+    "nearcore_commit": "bc4e9e8cfb03d9e82f027883055624e18576993e"
+  },
+  "captures": [
+    "tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture-followup-reproducible-2026-11-17.json",
+    "tests/sandbox-usdc-callbacks/receipt-recovery-sandbox-acceptance-followup-reproducible-2026-11-17.json",
+    "tests/sandbox-usdc-callbacks/bootstrap-activity-guard-followup-reproducible-2026-11-17.json",
+    "tests/sandbox-usdc-callbacks/storage-registry-oog-followup-reproducible-2026-11-17.json"
+  ],
+  "manifests": [
+    "tests/sandbox-usdc-callbacks/protocol-88-followup-reproducible-2026-11-17.sha256",
+    "tests/sandbox-usdc-callbacks/protocol-88-followup-reproducible-2026-11-17.tooling.sha256"
+  ],
+  "remaining_gates": [
+    "Independent operator receipt interpretation and receipt-to-intent mapping review",
+    "Remaining migration, counter-restoration, and stale-state matrix",
+    "Worst-case gas and storage boundaries",
+    "Independent operator administration, quorum, and sign-once drills",
+    "Separate owner-approved disposable testnet canary"
+  ]
+}

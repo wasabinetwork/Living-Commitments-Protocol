@@ -41,7 +41,7 @@ mkdir -p /tmp/lcp-near-sandbox-cache/bin /tmp/lcp-near-sandbox-cache/tmp
 docker run --rm --init --platform linux/amd64 \
   -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
   -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
-  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.json node run.mjs'
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/sandbox-cache/protocol-88-receipt-fixture-local.json node run.mjs'
 ```
 
 To run only the native cash boundary probe, add `LCP_CASH_GATE_ONLY=1` before
@@ -243,30 +243,65 @@ conservation are asserted. The cache path may be changed to any writable
 directory outside the checkout.
 
 The captured node reports NEAR Sandbox 2.14.0, protocol 88, nearcore commit
-`bc4e9e8cfb03d9e82f027883055624e18576993e`. This is local Sandbox evidence, not
-a public-network receipt proof, independent reproduction, or recovery-verifier
-acceptance. The fixture output contains ephemeral local-chain identifiers and
-is replaced on each run. Verify the captured artifact and source hashes with
-`shasum -a 256 -c tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.sha256`.
-Run the separate integrity checker with
-`node tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs`. It checks
-source digests, Base58/SHA-256 code-hash agreement, receipt hash encodings,
-rollback and conservation outcomes, and same-receipt action order. It validates
-the captured data's internal consistency; it does not recreate the Sandbox run
-or verify the receipt Merkle proofs against block headers.
-After regenerating the fixture from the repository root, regenerate the
-manifest with:
+`bc4e9e8cfb03d9e82f027883055624e18576993e`. The original
+[`protocol-88-receipt-fixture.json`](protocol-88-receipt-fixture.json) is a
+historical capture pinned to source commit `1a894926ecc6d0d6705594b7add2b21d7fff5f86`;
+verify it at that detached revision because later runner and contract changes
+intentionally make its historical manifest differ from the current checkout.
+Keep that capture and manifest unchanged.
+
+The 2026-11-17 follow-up reran the callback/rollback and receipt-order matrix
+with the reproducible recovery WASM SHA-256
+`4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad` / NEAR
+code hash `6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212`. The capture set includes
+the [raw protocol-88 fixture](protocol-88-receipt-fixture-followup-reproducible-2026-11-17.json),
+[recovery lifecycle](receipt-recovery-sandbox-acceptance-followup-reproducible-2026-11-17.json),
+[bootstrap-after-activity guard](bootstrap-activity-guard-followup-reproducible-2026-11-17.json),
+and [storage revaluation OOG rollback/retry](storage-registry-oog-followup-reproducible-2026-11-17.json).
+All four use Sandbox 2.14.0/protocol 88. The source manifest pins the captures
+and contract/build inputs; the tooling manifest separately pins the runner and
+verifier. Verify them from the repository root:
 
 ```sh
-shasum -a 256 tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.json \
-  tests/sandbox-usdc-callbacks/run.mjs \
-  tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs \
-  contracts/sandbox-mock-ft/src/lib.rs \
-  contracts/sandbox-mock-ft/Cargo.toml contracts/lcp-core/src/contract.rs \
+node tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs \
+  tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture-followup-reproducible-2026-11-17.json \
+  tests/sandbox-usdc-callbacks/protocol-88-followup-reproducible-2026-11-17.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/protocol-88-followup-reproducible-2026-11-17.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/protocol-88-followup-reproducible-2026-11-17.tooling.sha256
+```
+
+The integrity checker confirms source hashes, Base58/SHA-256 code-hash
+agreement, receipt hash encodings, rollback and conservation outcomes, exact
+cash boundary, and action order. It validates saved records; it does not
+independently rerun Sandbox or verify receipt Merkle proofs against block
+headers. This recapture remains owner-side local evidence and is not an
+independent operator-receipt review, testnet canary, or deployment approval.
+
+The [independent follow-up review package](../../audit/p2-protocol88-followup-2026-11-17/README.md)
+contains the pinned reproducible core and Node container digests, acceptance
+scope, and review questions. It is the handoff for an independent local rerun.
+Regenerate the two follow-up manifests only when intentionally replacing or
+revising this capture set:
+
+```sh
+shasum -a 256 \
+  tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture-followup-reproducible-2026-11-17.json \
+  tests/sandbox-usdc-callbacks/receipt-recovery-sandbox-acceptance-followup-reproducible-2026-11-17.json \
+  tests/sandbox-usdc-callbacks/bootstrap-activity-guard-followup-reproducible-2026-11-17.json \
+  tests/sandbox-usdc-callbacks/storage-registry-oog-followup-reproducible-2026-11-17.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml \
+  contracts/lcp-core/Cargo.toml contracts/lcp-core/src/contract.rs \
   contracts/lcp-core/src/lib.rs contracts/lcp-core/src/native_cash.rs \
-  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/Cargo.toml \
-  Cargo.lock rust-toolchain.toml \
-  > tests/sandbox-usdc-callbacks/protocol-88-receipt-fixture.sha256
+  contracts/lcp-core/src/recovery_accounting.rs \
+  contracts/lcp-core/src/recovery_config.rs contracts/lcp-core/src/receipt_recovery.rs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  > tests/sandbox-usdc-callbacks/protocol-88-followup-reproducible-2026-11-17.sha256
+shasum -a 256 \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs \
+  tests/sandbox-usdc-callbacks/package.json \
+  tests/sandbox-usdc-callbacks/package-lock.json \
+  > tests/sandbox-usdc-callbacks/protocol-88-followup-reproducible-2026-11-17.tooling.sha256
 ```
 
 ## Native callback and rollback VM/Sandbox acceptance

@@ -6,8 +6,15 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
-const fixturePath = join(here, "protocol-88-receipt-fixture.json");
-const manifestPath = join(here, "protocol-88-receipt-fixture.sha256");
+const verifierArgs = process.argv.slice(2);
+assert.ok(verifierArgs.length === 0 || verifierArgs.length === 2,
+  "usage: node verify-protocol-88-fixture.mjs [<repo-relative-capture> <repo-relative-source-manifest>]");
+const fixturePath = verifierArgs.length === 2
+  ? resolve(repoRoot, verifierArgs[0])
+  : join(here, "protocol-88-receipt-fixture.json");
+const manifestPath = verifierArgs.length === 2
+  ? resolve(repoRoot, verifierArgs[1])
+  : join(here, "protocol-88-receipt-fixture.sha256");
 const base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function decodeBase58(text, label) {
@@ -168,10 +175,15 @@ async function main() {
   assert.deepEqual(deployThenTransfer.map((entry) => entry.local), [tokenA.near_code_hash, tokenB.near_code_hash]);
 
   const exactCash = scenarios.native_cash_gate.exact_balance.receipt_measurements;
-  assert.equal(exactCash.balance_after_promise, exactCash.balance_before,
+  const balanceAfterBuilder = exactCash.balance_after_sdk_builder ?? exactCash.balance_after_promise;
+  const balanceAfterMaterialization = exactCash.balance_after_host_materialization
+    ?? exactCash.balance_after_materialization;
+  assert.equal(balanceAfterBuilder, exactCash.balance_before,
     "lazy Promise construction must not materialize the transfer");
   assert.equal(BigInt(exactCash.storage_cost) + BigInt(exactCash.liability) + 1n,
     BigInt(exactCash.balance_before), "exact cash boundary must include the required outflow");
+  assert.equal(BigInt(balanceAfterMaterialization), BigInt(exactCash.balance_before) - 1n,
+    "host materialization must deduct the exact one-yocto transfer outflow");
 
   const receiptsChecked = assertReceiptBundles(scenarios);
   const filesChecked = await verifySourceManifest();

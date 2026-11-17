@@ -1,0 +1,5 @@
+2a156bbcaa9251b4640cad45168864a243047b989f191ed05388613a9c9d9c16  tests/sandbox-usdc-callbacks/run.mjs
+02e3222e10a84267990e17f06c5b3052dfb9f707c6181be54297193dd0eb1372  tests/sandbox-usdc-callbacks/README.md
+6feecc3af6afd68995778dbb02a8cccd91ff90c3ff4277617b9d3dd02d8a6ebc  tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs
+d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548  tests/sandbox-usdc-callbacks/package.json
+c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e  tests/sandbox-usdc-callbacks/package-lock.json
