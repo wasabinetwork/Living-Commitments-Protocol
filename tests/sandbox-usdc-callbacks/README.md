@@ -427,16 +427,41 @@ leaving the count at 2,048 and its credit row absent. A 65-record revaluation
 request failed; 32 production calls revalued 64 records each and restored
 reserve readiness only after the final batch. Maximum observed gas was 45.279
 Tgas for a 32-row seed transaction and 11.785 Tgas for a 64-record revaluation
-transaction. These are fixture observations, not worst-case gas estimates or
-permanent production limits; variable payer-ID lengths, other record states,
-independent reproduction, and the rest of the acceptance matrix remain open.
-The capture is
+transaction. A separate maximum-length payer probe is described below. These
+are fixture observations, not worst-case gas estimates or permanent production
+limits; other record states, independent reproduction, and the rest of the
+acceptance matrix remain open. The capture is
 [`storage-registry-sandbox-acceptance-2026-11-16.json`](storage-registry-sandbox-acceptance-2026-11-16.json).
-Verify its code/source/capture integrity with the adjacent checksum manifest.
-Regenerate that manifest after rerunning the acceptance or changing its inputs:
+Its source-and-capture manifest records the source revision committed as
+`7f7c66eeb5c3fdda78f5b4afc84484bb7ab5d722`; verify the manifest against that
+revision because the runner has since gained another fixture mode.
+
+### Maximum-length payer storage shape
+
+Use the same optimized fixture-enabled recovery core and mock-token artifacts
+to measure the longest valid NEAR account identifier in a credit row:
 
 ```sh
-shasum -a 256 tests/sandbox-usdc-callbacks/storage-registry-sandbox-acceptance-2026-11-16.json \
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_STORAGE_REGISTRY_SHAPE_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/storage-registry-shape-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+The run seeded 64 zero-value rows for the synthetic valid AccountId
+`a` repeated 64 times. The ID was not provisioned as an account; this fixture
+measures persisted identifier size only. Starting from three records, it
+reached 67 records and measured 33,728 bytes of storage growth (527 bytes per
+row). Seeding used 86.972 Tgas; the largest observed 64-record revaluation
+batch used 11.786 Tgas. Reserve readiness stayed off during revaluation and
+returned after both batches completed. These values are observations for this
+row shape and local VM, not a worst-case gas bound or a production limit. See
+the [capture](storage-registry-shape-sandbox-acceptance-2026-11-16.json) and
+[checksum manifest](storage-registry-shape-sandbox-acceptance-2026-11-16.sha256).
+Regenerate that manifest after rerunning or changing the captured inputs:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/storage-registry-shape-sandbox-acceptance-2026-11-16.json \
   tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
   tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
   Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
@@ -448,7 +473,7 @@ shasum -a 256 tests/sandbox-usdc-callbacks/storage-registry-sandbox-acceptance-2
   evaluators/service-availability/test/probe.test.mjs \
   contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
   TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
-  > tests/sandbox-usdc-callbacks/storage-registry-sandbox-acceptance-2026-11-16.sha256
+  > tests/sandbox-usdc-callbacks/storage-registry-shape-sandbox-acceptance-2026-11-16.sha256
 ```
 
 To keep the governance timing check fast, `sandbox-callback-fixture` sets the

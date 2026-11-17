@@ -906,7 +906,7 @@ async function main() {
         const count = Number(remaining < BigInt(seedBatchSize) ? remaining : BigInt(seedBatchSize));
         const transaction = await rootCall(
           "sandbox_seed_recovery_credit_rows",
-          { first_credit_index: String(seededCreditCount), count },
+          { first_credit_index: String(seededCreditCount), count, payer_account_id: "sandbox" },
           `seed ${count} measured storage rows`,
           220n * TERA,
         );
@@ -942,7 +942,7 @@ async function main() {
       const overflowCreditId = fixtureCreditId(seededCreditCount);
       const overCapacity = await rootCall(
         "sandbox_seed_recovery_credit_rows",
-        { first_credit_index: String(seededCreditCount), count: 1 },
+        { first_credit_index: String(seededCreditCount), count: 1, payer_account_id: "sandbox" },
         "reject storage bond record 2049",
         220n * TERA,
         0n,
@@ -1038,6 +1038,110 @@ async function main() {
         no_public_network_used: true,
       };
     };
+    const runStorageRegistryShapeAcceptance = async () => {
+      const gasBurnt = (transaction) => (transaction.receipts_outcome ?? [])
+        .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n);
+      const recordCount = async () => BigInt(await view(CORE_ID, "sandbox_recovery_storage_record_count", {}));
+      const maxLengthPayer = "a".repeat(64);
+      const initialRecordCount = await recordCount();
+      const seedCount = 64;
+      const seed = await rootCall(
+        "sandbox_seed_recovery_credit_rows",
+        { first_credit_index: "0", count: seedCount, payer_account_id: maxLengthPayer },
+        "seed 64 measured rows for maximum-length NEAR account ID",
+        220n * TERA,
+      );
+      const measuredStorageBytes = BigInt(returnedJson(seed));
+      assert.ok(measuredStorageBytes > 0n,
+        "maximum-length payer rows must report positive storage growth");
+      assert.equal(await recordCount(), initialRecordCount + BigInt(seedCount),
+        "maximum-length payer rows must each consume one registry record");
+      const creditId = (index) => createHash("sha256")
+        .update(Buffer.concat([
+          Buffer.from("LCP/SANDBOX/STORAGE-REGISTRY-CAP/V1\0", "utf8"),
+          u32(index),
+        ]))
+        .digest("hex");
+      const sampleCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: creditId(seedCount - 1),
+      });
+      assert.equal(sampleCredit.payer, maxLengthPayer,
+        "the persisted payer field must preserve the maximum-length AccountId");
+      assert.ok(sampleCredit.storage_reserve_ready,
+        "the registry must remain ready after maximum-length payer rows are admitted");
+
+      await rootCall("sandbox_mark_recovery_storage_price_stale", {},
+        "mark storage reserve stale for maximum-payer revaluation");
+      const started = await rootCall("begin_recovery_storage_revaluation", {},
+        "begin maximum-payer storage reserve revaluation");
+      assert.equal(returnedJson(started), true,
+        "stale storage reserve must enter revaluation");
+      const staleCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: creditId(seedCount - 1),
+      });
+      assert.equal(staleCredit.storage_reserve_ready, false,
+        "cash-sensitive actions must remain blocked during revaluation");
+
+      const firstBatch = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: 0, limit: STORAGE_REVALUATION_BATCH_LIMIT },
+        "revalue first 64 records including maximum-length payer rows",
+        220n * TERA,
+      );
+      const firstResult = returnedJson(firstBatch);
+      assert.equal(firstResult.status, "in_progress",
+        "the first 64-record batch must advance the 67-record fixture");
+      assert.equal(Number(firstResult.next_record_index), STORAGE_REVALUATION_BATCH_LIMIT,
+        "the first batch must advance exactly 64 records");
+      const secondBatch = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: STORAGE_REVALUATION_BATCH_LIMIT, limit: STORAGE_REVALUATION_BATCH_LIMIT },
+        "complete remaining maximum-payer storage revaluation",
+        220n * TERA,
+      );
+      const secondResult = returnedJson(secondBatch);
+      assert.equal(secondResult.status, "complete",
+        "the second batch must finish the 67-record fixture");
+      const readyCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: creditId(seedCount - 1),
+      });
+      assert.ok(readyCredit.storage_reserve_ready,
+        "completed revaluation must restore storage-reserve readiness");
+      assert.equal(await recordCount(), initialRecordCount + BigInt(seedCount),
+        "revaluation must preserve maximum-payer registry entries");
+
+      const firstBatchGas = gasBurnt(firstBatch);
+      const secondBatchGas = gasBurnt(secondBatch);
+      return {
+        initial_record_count: initialRecordCount.toString(),
+        maximum_payer_id_length: maxLengthPayer.length,
+        maximum_payer_id: maxLengthPayer,
+        rows_added: seedCount,
+        final_record_count: (initialRecordCount + BigInt(seedCount)).toString(),
+        measured_credit_storage_bytes: measuredStorageBytes.toString(),
+        seed_transaction_gas_burnt: gasBurnt(seed).toString(),
+        revaluation_batch_limit: STORAGE_REVALUATION_BATCH_LIMIT,
+        revaluation_batches: [
+          {
+            start_index: 0,
+            end_index: STORAGE_REVALUATION_BATCH_LIMIT,
+            gas_burnt: firstBatchGas.toString(),
+          },
+          {
+            start_index: STORAGE_REVALUATION_BATCH_LIMIT,
+            end_index: Number(initialRecordCount) + seedCount,
+            gas_burnt: secondBatchGas.toString(),
+          },
+        ],
+        maximum_revaluation_batch_gas_burnt: (firstBatchGas > secondBatchGas
+          ? firstBatchGas
+          : secondBatchGas).toString(),
+        storage_reserve_ready_before_revaluation: true,
+        storage_reserve_blocked_during_revaluation: true,
+        storage_reserve_ready_after_revaluation: true,
+        no_public_network_used: true,
+      };
+    };
     const assertEscrow = async (commitmentId, fields) => {
       const state = await escrow(commitmentId);
       for (const [field, expected] of Object.entries(fields)) {
@@ -1049,6 +1153,10 @@ async function main() {
 
     if (process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1") {
       results.storage_registry_acceptance = await runStorageRegistryAcceptance();
+      return results;
+    }
+    if (process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1") {
+      results.storage_registry_shape_acceptance = await runStorageRegistryShapeAcceptance();
       return results;
     }
 
@@ -2213,14 +2321,18 @@ async function main() {
     };
     console.log("PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call");
 
-    if (process.env.LCP_RECOVERY_ONLY === "1" || process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1") {
+    if (process.env.LCP_RECOVERY_ONLY === "1"
+      || process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
+      || process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1") {
       fixtures.recovery_acceptance = await runRecoveryAcceptance(nodeStatus, tokenWasm, codeHashV1);
       const fixturePath = process.env.LCP_FIXTURE_OUTPUT;
       if (fixturePath) {
         await writeFile(fixturePath, `${JSON.stringify({
           fixture_schema: process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
             ? "lcp.storage-registry-sandbox-acceptance.v1"
-            : "lcp.receipt-recovery-sandbox-acceptance.v1",
+            : process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
+              ? "lcp.storage-registry-shape-sandbox-acceptance.v1"
+              : "lcp.receipt-recovery-sandbox-acceptance.v1",
           captured_at: new Date().toISOString(),
           node: fixtures.node,
           wasm_artifacts: fixtures.artifacts,
@@ -2229,7 +2341,9 @@ async function main() {
       }
       console.log(process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
         ? "Isolated storage registry cap acceptance passed; no public network was used."
-        : "All isolated receipt-recovery Sandbox checks passed; no public network was used.");
+        : process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
+          ? "Isolated maximum-length payer storage acceptance passed; no public network was used."
+          : "All isolated receipt-recovery Sandbox checks passed; no public network was used.");
       return;
     }
 

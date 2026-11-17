@@ -665,7 +665,12 @@ impl Contract {
         feature = "sandbox-callback-fixture",
         feature = "usdc-receipt-recovery"
     ))]
-    pub fn sandbox_seed_recovery_credit_rows(&mut self, first_credit_index: U64, count: u8) -> U64 {
+    pub fn sandbox_seed_recovery_credit_rows(
+        &mut self,
+        first_credit_index: U64,
+        count: u8,
+        payer_account_id: AccountId,
+    ) -> U64 {
         require!(
             env::chain_id().starts_with("test-chain-"),
             "NEAR Sandbox chain required"
@@ -691,7 +696,6 @@ impl Contract {
         let end = first
             .checked_add(u32::from(count))
             .unwrap_or_else(|| env::panic_str("fixture credit index overflow"));
-        let payer = env::predecessor_account_id();
         let mut total_storage_bytes = 0u64;
         for index in first..end {
             let mut preimage = b"LCP/SANDBOX/STORAGE-REGISTRY-CAP/V1\0".to_vec();
@@ -701,7 +705,7 @@ impl Contract {
                 .unwrap_or_else(|_| env::panic_str("fixture credit ID has an invalid length"));
             let measured = crate::recovery_accounting::preallocate_measured_refund_credit(
                 credit_id,
-                payer.clone(),
+                payer_account_id.clone(),
                 0,
                 env::storage_usage(),
             );
