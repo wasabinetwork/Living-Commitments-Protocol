@@ -460,6 +460,8 @@ unchanged. The refreshed protocol-88 run is captured on November 17 (UTC
 timestamp) in
 [`native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json)
 with its [source checksum manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256).
+The E1/E2 independent follow-up scope and reproduction checklist are in the
+[review handoff](../../P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md).
 The original capture and manifest are preserved for the independently reviewed
 source revision `519e59bad5115d2cad9d6564c898d548d94b2648`; verify that
 historical manifest at that revision rather than against the refreshed files.
@@ -497,7 +499,8 @@ shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbo
   contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
   contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
   contracts/lcp-core/src/receipt_recovery.rs contracts/sandbox-mock-ft/Cargo.toml \
-  contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+  contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md \
+  P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
   P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
   > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256
 shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256
