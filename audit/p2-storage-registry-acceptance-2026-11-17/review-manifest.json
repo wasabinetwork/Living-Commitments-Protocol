@@ -1,7 +1,7 @@
 {
   "schema": "lcp.independent-review-package.v1",
   "package": "p2-storage-registry-acceptance-2026-11-17",
-  "source_commit": "d34cfbdadfcb71ee9e8ceac866b60a3b4ef6b969",
+  "source_commit": "bd6ac7a8830b4a85a26568219e05527247beb21c",
   "excluded_from_archive": [
     "audit/p2-storage-registry-acceptance-2026-11-17/ (the review package itself)",
     ".env.testnet and other untracked or ignored files",
@@ -9,13 +9,13 @@
   ],
   "review_instructions": {
     "file": "README.md",
-    "sha256": "be6b4b2d922293843beaeb43a41fb57d9872f923faa608b6c3f8679f94fafdd9"
+    "sha256": "7f0caca6023bc3bdd01eab35262713bfedc64ea260800d4343a4289193db5511"
   },
   "archive": {
     "file": "review-inputs.zip",
-    "sha256": "199c44524b6eb036bd3d05d3f4d8cddbe7d7f5e4fc384789ee391bf948f51483",
-    "tracked_file_count": 202,
-    "uncompressed_bytes": 5923663
+    "sha256": "448faf789cd04edc6ba84485e7067e92e59b33e9a8b5adf9db5d6e6d4e32b0cf",
+    "tracked_file_count": 205,
+    "uncompressed_bytes": 5933969
   },
   "current_source_hashes": {
     "Cargo.toml": "93037e60b51cc4ef4b8e62e4bb0580ac88bbd9b82fd29dca54337bbe61091ab7",
@@ -28,9 +28,14 @@
     "contracts/lcp-core/src/recovery_config.rs": "4dd4187283eff10eb2b155d5a0b69247396d3c43f78902697ccd733f27c32733",
     "contracts/lcp-core/src/receipt_recovery.rs": "7cb326d7d5353e56723f50a906d8419702095a2f984165df11e0ae243117b8e0",
     "tests/sandbox-usdc-callbacks/run.mjs": "44220602cb5a3382da47a36a6a227996b2fce390e2e8cb867bead6bc9338168f",
-    "tests/sandbox-usdc-callbacks/README.md": "4fc2650a825139f79e3a9bfcc256ba2e1447abff5ec5c76218ae299092c45659",
-    "TODO.md": "7107e1052216a2fe114a5559a7e711d3eb49fee6aec3b51c3c258e6d70a351f9",
-    "P2-USDC-RECEIPT-RECOVERY-DESIGN.md": "4f706974ce9caf08b12dfb6a76d9df695f00f74113c6883d6714f99e102e0856"
+    "tests/sandbox-usdc-callbacks/verify-release-feature-exclusion.mjs": "22043d03a606134d58b79c03c48f0e7dc4df982e5855c309d5e29ab02832dccd",
+    "tests/sandbox-usdc-callbacks/README.md": "7a60d33fb4b236b072558f3e434979a022b076f1ff235056914b5e7f4bccca02",
+    "tests/sandbox-usdc-callbacks/storage-registry-oog-sandbox-acceptance-2026-11-16.json": "c68c9a19a7fe1a7680fbd816f424599b6f273afbf42625b868d936ccf4404cf9",
+    "tests/sandbox-usdc-callbacks/storage-registry-oog-sandbox-acceptance-2026-11-16.sha256": "188092006b5e42cc26335e2065bbff37ea68877cb48a50b10c352db32739badd",
+    "tests/sandbox-usdc-callbacks/release-feature-exclusion-2026-11-16.json": "f418f155ee2c026f393ec73336224467405cb5b6434f35d4a9bd98050a95cba3",
+    "tests/sandbox-usdc-callbacks/release-feature-exclusion-2026-11-16.sha256": "a894785e588db04a1e281dc5619ab3d72d654a92948be0db842eeb4aa8792763",
+    "TODO.md": "eebcb4b3ef307af6ba1fef418410f5d385d7f5faefa10d1c4839089bff114377",
+    "P2-USDC-RECEIPT-RECOVERY-DESIGN.md": "928ed71e1b3bcffd97cf996f3138367175e655dbbba9b13fccd4b1f3fcef7638"
   },
   "captures": [
     {
@@ -60,6 +65,13 @@
       "source_commit": "d34cfbdadfcb71ee9e8ceac866b60a3b4ef6b969",
       "wasm_sha256": "8bf0f73ccdd898f26089a2962dd589f908e69bc7bafeda732efd6b3054fae2db",
       "near_code_hash": "ARGnKRZTejPgjtLU7dkcvoAZ6NXQfmfEeMeuZCqBJ1DU"
+    },
+    {
+      "file": "tests/sandbox-usdc-callbacks/release-feature-exclusion-2026-11-16.json",
+      "sha256": "f418f155ee2c026f393ec73336224467405cb5b6434f35d4a9bd98050a95cba3",
+      "source_commit": "1cfff59c21bd751ecb20f5861e08631b1cb31bdd",
+      "wasm_sha256": "fbd9327750454d76949ed48c56a27917e2475337d469ab27c9a4eb0d4e52faee",
+      "near_code_hash": "Hx7RVu7bZe5w44XEZq7gdWJg8emiTAh6xSnNjCs3LPMw"
     }
   ]
 }

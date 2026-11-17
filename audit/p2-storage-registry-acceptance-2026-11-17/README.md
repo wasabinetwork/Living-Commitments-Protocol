@@ -4,7 +4,7 @@
 
 Review the provisional storage-bond registry cap and revaluation batch implementation, and independently reproduce the isolated Sandbox measurements. This review does not authorize a testnet canary, contract upgrade, or production deployment.
 
-The portable [`review-inputs.zip`](review-inputs.zip) contains the tracked repository source snapshot at commit `d34cfbd` (full hash in [`review-manifest.json`](review-manifest.json)), excluding this review-package directory to avoid nesting the archive. It contains no Git history, credentials, `.env.testnet`, local build output, or `node_modules`.
+The portable [`review-inputs.zip`](review-inputs.zip) contains the tracked repository source snapshot at commit `bd6ac7a` (full hash in [`review-manifest.json`](review-manifest.json)), excluding this review-package directory to avoid nesting the archive. It contains no Git history, credentials, `.env.testnet`, local build output, or `node_modules`.
 
 ## Review scope
 
@@ -13,7 +13,8 @@ The portable [`review-inputs.zip`](review-inputs.zip) contains the tracked repos
 3. Confirm funded credits increment recovery liability `Q` by their exact admission excess; the captured 0.64 NEAR deposit remains accounted while `Pending` and unchanged by storage revaluation.
 4. Review the 64-record revaluation bound, index progression, completion, and reserve readiness before, during, and after maintenance. Confirm the oversized 65-record batch rejects.
 5. Independently reproduce the 10 Tgas out-of-gas batch. Verify the pending credit, `Q`, and registry remain unchanged; zero-length and out-of-sequence calls reject without state changes; retry from record zero advances to 64 and the next batch completes.
-6. Assess whether the measured storage and gas evidence supports retaining these provisional bounds. Do not treat fixture measurements as worst-case gas or final production limits.
+6. Rebuild the default release artifact without features, inspect its Wasm exports, and confirm required production methods remain while all `sandbox_*` fixture exports are absent.
+7. Assess whether the measured storage and gas evidence supports retaining these provisional bounds. Do not treat fixture measurements as worst-case gas or final production limits.
 
 ## Reproduction
 
@@ -25,20 +26,22 @@ unzip -q review-inputs.zip -d /tmp/lcp-storage-registry-review
 cd /tmp/lcp-storage-registry-review
 ```
 
-Follow the optimized Sandbox build and run instructions in `tests/sandbox-usdc-callbacks/README.md`. For the focused rollback scenario, run the command under “Storage-reserve revaluation out-of-gas rollback and retry.” The package includes its capture and adjacent source checksum manifest. The recovery-enabled Rust suite command is:
+Follow the optimized Sandbox build and run instructions in `tests/sandbox-usdc-callbacks/README.md`. For the focused rollback scenario, run the command under “Storage-reserve revaluation out-of-gas rollback and retry.” For release feature exclusion, run the command under “Release artifact feature boundary.” Both captures and source checksum manifests are included.
+
+The recovery-enabled Rust suite command is:
 
 ```sh
 cargo test --locked -p lcp-core --features 'sandbox-callback-fixture usdc-receipt-recovery'
 ```
 
-The recovery-enabled suite passed 100 tests in the preceding acceptance run. The contract source is unchanged from that run; repeat the command as part of independent review. The capture uses Sandbox 2.14.0 / protocol 88 and core WASM SHA-256 `8bf0f73ccdd898f26089a2962dd589f908e69bc7bafeda732efd6b3054fae2db` (NEAR code hash `ARGnKRZTejPgjtLU7dkcvoAZ6NXQfmfEeMeuZCqBJ1DU`). No public network was used.
+The recovery-enabled suite passed 100 tests in the preceding acceptance run. The contract source is unchanged from that run; repeat the command as part of independent review. The Sandbox capture uses version 2.14.0 / protocol 88. The release feature-boundary capture records its compiler, source revision, Wasm digest, and NEAR code hash. No public network was used.
 
-The captures cover the 2,048-record cap, rejection of record 2,049 and an oversized batch, maximum-length payer rows, funded pending-credit accounting, OOG rollback, invalid batch rejection, and successful retry. Older capacity captures retain their own source manifests and source commits; the OOG capture uses the package snapshot revision.
+The captures cover the 2,048-record cap, rejection of record 2,049 and an oversized batch, maximum-length payer rows, funded pending-credit accounting, OOG rollback, invalid batch rejection, successful retry, and the no-fixture release export set. Older capacity captures retain their own source manifests and source commits; the OOG and release captures use the package snapshot revision.
 
 ## Known limitations
 
 - The capacity run uses short `sandbox` payer IDs; maximum-length payer runs cover only 64 records, not a full-cap distribution.
-- Measurements are local protocol-88 Sandbox observations, not real-network results, worst-case gas bounds, or a production funding recommendation.
+- Measurements are local protocol-88 Sandbox observations, not real-network results, worst-case gas bounds, reproducible-build verification, or a production funding recommendation.
 - Independent reproduction, other record-state/payer distributions, and the broader receipt-recovery matrix remain open.
 
 ## Reviewer deliverable
