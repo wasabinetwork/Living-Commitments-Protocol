@@ -1,0 +1,46 @@
+{
+  "schema": "lcp.independent-review-package.v1",
+  "package": "p2-storage-registry-acceptance-2026-11-17",
+  "source_commit": "a7a0b2a1192711221cb723378b63f05c088aff6f",
+  "review_instructions": {
+    "file": "README.md",
+    "sha256": "9c306d71e14fab5e55ae8ba4a233a916dd12b67be099eebed0e8cd219d099475"
+  },
+  "archive": {
+    "file": "review-inputs.zip",
+    "sha256": "66f4f024983bba2219c2e8d2d3b53e37acb61fa3c59adf115e15f26e4a0d7d73",
+    "tracked_file_count": 251,
+    "uncompressed_bytes": 5894383
+  },
+  "current_source_hashes": {
+    "Cargo.toml": "93037e60b51cc4ef4b8e62e4bb0580ac88bbd9b82fd29dca54337bbe61091ab7",
+    "Cargo.lock": "877a0c3370baecb3d4e8e8d27cc8edd1f46ffbd519e222e75c3168ae7a328eb2",
+    "rust-toolchain.toml": "8ea81d2f0f2b68bec4abdd4419023c303a596abada7da66d1366191219a61c2d",
+    "contracts/lcp-core/Cargo.toml": "d5c6dc5edb37a46ed7baf522577335a2c02eef0fe0868623d9e95f5cc741f7da",
+    "contracts/lcp-core/src/contract.rs": "fea5a587e6b28e36920128eb41ca8ac063a1d78f32655ae5e552bac72063d542",
+    "contracts/lcp-core/src/recovery_accounting.rs": "dbf4985d208c6aeadd5bd946f7d6e232bc3d4347363cd77b5b919464b82d2998",
+    "contracts/lcp-core/src/native_cash.rs": "48d5a841392e9d87e51fc286e4a1b95d1c382c01d0484a5518e7623ef1f4e114",
+    "tests/sandbox-usdc-callbacks/run.mjs": "3ab43a8b66049cf8bdeb7febd7665e4eeed4d8504707c4c75de2a05004224079",
+    "TODO.md": "ea755629ac93725acd5ebabfa312d2e3b1725b18f9b3a115e56fb5c79b5d0b6c",
+    "P2-USDC-RECEIPT-RECOVERY-DESIGN.md": "e9b74ffbca60718437e94537debd32a8ab3fe416332541c7d052c38a7691b304"
+  },
+  "captures": [
+    {
+      "file": "tests/sandbox-usdc-callbacks/storage-registry-sandbox-acceptance-2026-11-16.json",
+      "sha256": "51ae682e1450ffe363db30eed592272fa9771cd0b4dbadde310bc3b07f95126d",
+      "source_commit": "7f7c66eeb5c3fdda78f5b4afc84484bb7ab5d722"
+    },
+    {
+      "file": "tests/sandbox-usdc-callbacks/storage-registry-shape-sandbox-acceptance-2026-11-16.json",
+      "sha256": "c16be0ce1f1cd2aeea8f34033f7f7d8d1ef70f937440c8446760dd888598778a",
+      "source_commit": "55126f386d058af085cb334c91ea876fe1fe14bf"
+    },
+    {
+      "file": "tests/sandbox-usdc-callbacks/storage-registry-funded-pending-sandbox-acceptance-2026-11-16.json",
+      "sha256": "214c5a521b7cd458ee1091ec7660e37c7d6a3e37e0eb798b1e0d0c94332f7f12",
+      "source_commit": "a7a0b2a1192711221cb723378b63f05c088aff6f",
+      "wasm_sha256": "8bf0f73ccdd898f26089a2962dd589f908e69bc7bafeda732efd6b3054fae2db",
+      "near_code_hash": "ARGnKRZTejPgjtLU7dkcvoAZ6NXQfmfEeMeuZCqBJ1DU"
+    }
+  ]
+}
