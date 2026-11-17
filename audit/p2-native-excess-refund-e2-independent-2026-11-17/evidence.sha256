@@ -8,6 +8,5 @@ fa10b64fe88cf9c75ff9cb54ea4e6fe8eb8f9377663d24c0cdde71d856669b0a  audit/p2-nativ
 96c385acc53e5507ce0fed5fd6c7ccf4a2d03dc2082aefc558c849df59fe146f  audit/p2-native-excess-refund-e2-independent-2026-11-17/mock-build.log
 0b17fb887159a19f32a37933477cca2d56b5bbc6dfa96c4205ad5dbf38224354  audit/p2-native-excess-refund-e2-independent-2026-11-17/mutation-repro.log
 451e12f4982189c41b386b5cd4c8ff898dc64b34c2c31601b69e76d96b7eb9cb  audit/p2-native-excess-refund-e2-independent-2026-11-17/mutation-repro.mjs
-e9ab245417313991f9e209968ea49d1b07f26ed79a4748a495619faa9e7ff5e5  audit/p2-native-excess-refund-e2-independent-2026-11-17/owner-recheck.log
-577c3ef3413317a5ab59c02eeb1faf37f9840459ed8695648aa766afcfcc51f4  audit/p2-native-excess-refund-e2-independent-2026-11-17/proposed-capture-manifest.sha256
+30cdbdf8aa75c2a436da605b29199d98fce9f1fd5ddc22e2d3a40a2a3500cf86  audit/p2-native-excess-refund-e2-independent-2026-11-17/owner-recheck.log
 f959e8338ac9304fda0571621f458a2dc01ac383258a6c60b5783d9b6580eac4  audit/p2-native-excess-refund-e2-independent-2026-11-17/tests.log

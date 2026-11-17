@@ -1,27 +1,23 @@
-# Owner re-check of the E2 capture verifier and mutation tests
-# date: 2026-11-17T15:44:00Z
+# Owner re-check of the E2 capture verifier, mutation tests, and source manifest
+# date: 2026-11-17T19:07:01Z
+# commit: 78f4f5c70ebaa770b08a13a55fc1632b19aba9d5  (branch codex/p2-native-refund-e2-review)
 # verifier sha256: 37cf1a7a8c1516b47daea1b53173eadd54a27a054ae63008659faa644abae4f2
 # tests sha256:    f23ce01620332d21a99aee0eadb5e25ea482437d6df3feea7cc1616372ffd8fd
 # capture sha256:  de3e9437c9de64c8851a269cf901cb3bf5057607b965e2416fbe2180a27c13c7
 
-$ node --test tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
-✔ rejects any contract payout during replay, including one yocto (1.59468ms)
-ℹ tests 17
-ℹ suites 0
-ℹ pass 17
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 0
-ℹ todo 0
-ℹ duration_ms 375.370811
+Executed in a clean detached worktree at the commit above (the owner working tree
+held unrelated in-flight Console/TODO edits during this re-check):
 
 $ node tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
-AssertionError [ERR_ASSERTION]: tests/sandbox-usdc-callbacks/README.md does not match its captured digest
+PASS native excess-refund capture: 24 source hashes, closed finalized receipt graphs, pinned artifact, exact transfer actions and replay rejection, exact storage margin, and solvency
+LIMITATION: validates captured Sandbox node records and manifest consistency; it does not validate cryptographic receipt inclusion proofs against block headers.
 
-# Stale rows in the committed capture manifest after the checker remediation.
-# The manifest pins checker inputs as well as evidence, so fixing the checker invalidates
-# its own pinned rows. The capture and all contract sources still match byte-for-byte.
-  FAILED tests/sandbox-usdc-callbacks/README.md
-  FAILED tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
-  FAILED tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
-# 21 of 24 rows verify OK; the 3 stale rows are the verifier, the mutation tests, and README.
+$ node --test tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
+tests 17 / pass 17 / fail 0
+
+# Manifest refresh note (finding F3).
+# The 24-row manifest pins checker inputs (README, verifier, mutation tests) and mutable
+# planning documents (TODO.md) alongside the capture and contract sources. Fixing the checker
+# therefore invalidates its own pinned rows; the refresh changed exactly 3 rows and left the
+# capture and all contract-source rows byte-identical. Any future TODO.md or checker edit
+# requires the same regeneration.
