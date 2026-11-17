@@ -8,6 +8,49 @@ Recurring support, service agreements, and grants often depend on manual follow-
 
 An OutLayer WASM evaluator checks submitted evidence and returns a result to the contract. Its TEE attestation can bind the evaluator code and execution inputs/outputs; it cannot prove that an external evidence source tells the truth or that evaluator logic is correct.
 
+## Protocol flow
+
+```mermaid
+flowchart TD
+    Sponsor["Sponsor"] -->|sets roles, policy, and budget| Core["NEAR LCP contract<br/>source of truth for policy • escrow • operations"]
+
+    Maintainer["Maintainer"] -->|wallet signs| Heartbeat["Signed heartbeat"]
+    OperatorA["Operator A"] -->|signs probe report| Reports["Independent source reports"]
+    OperatorB["Operator B"] -->|signs probe report| Reports
+    Reports --> Inbox["NEAR report inbox<br/>expiry • replay protection"]
+
+    Sponsor --> Request["Authorized evaluation request"]
+    Maintainer --> Request
+    Heartbeat --> Request
+    Inbox --> Request
+    Request -->|evidence and policy-bound input| Core
+    Core -->|dispatches pending evaluation| OutLayer["OutLayer runs the pinned WASM evaluator<br/>service mode applies source quorum"]
+    OutLayer -->|result callback with verdict and hashes| Core
+
+    Core -->|accepted evidence, policy, and finalized NEAR time| Health["Effective health<br/>AwaitingEvidence • Healthy • AtRisk • Breached"]
+    Health -->|fresh compliant evidence| Healthy["Healthy, for now"]
+    Health -->|no evidence, negative result, or freshness ends| AtRisk["AtRisk"]
+    AtRisk -->|grace deadline passes| Breached["Breached"]
+    AtRisk -->|fresh compliant evidence; recovery allowed| Healthy
+    Breached -->|fresh compliant evidence; recovery allowed| Healthy
+
+    Core -->|accepted compliant result| Window["Challenge window"]
+    Window -->|window ends without a challenge| Gate["NEAR checks claim eligibility"]
+    Window -->|challenge opened| Dispute["Claims pause while the arbiter resolves"]
+    Dispute -->|dismissed or timed out under policy| Gate
+    Dispute -->|upheld; evidence invalidated| AtRisk
+    Healthy --> Gate
+    Gate -->|eligible epoch and available budget| Claim["Beneficiary submits claim"]
+    Gate -->|any on-chain condition fails| Blocked["No tranche transfer"]
+    Claim --> Transfer["NEAR or USDC transfer"]
+    Transfer --> Outcome{"Transfer receipt"}
+    Outcome -->|success| Beneficiary["Beneficiary receives tranche"]
+    Outcome -->|success| Reconcile["Contract callback records settlement"]
+    Outcome -->|failure or unresolved| Pending["Not counted as paid<br/>retry or receipt-recovery rules apply"]
+```
+
+The evaluator reports a verdict; it does not release funds. The beneficiary must submit a claim, and the contract checks the active commitment, current epoch, evidence or preserved claim right, challenge state, and available budget. Transaction gas and storage deposits are paid in NEAR, including for USDC-funded commitments.
+
 ## Try the hosted Console
 
 - [Open the testnet Console](https://lcp.gama.works). It is hosted on the project's custom domain and connects to **NEAR testnet**, not mainnet.
