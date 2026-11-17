@@ -2068,17 +2068,18 @@ impl Contract {
         native_cash::assert_solvency();
     }
 
-    /// Seeds a closed commitment with refundable native escrow and operations
-    /// for isolated Sandbox callback testing.
+    /// Seeds a closed commitment with refundable native or NEP-141 escrow and
+    /// operations for isolated Sandbox callback testing.
     #[cfg(feature = "sandbox-callback-fixture")]
-    pub fn sandbox_seed_closed_native_refund_commitment(
+    pub fn sandbox_seed_closed_refund_commitment(
         &mut self,
         commitment_id: U64,
         sponsor: AccountId,
         beneficiary: AccountId,
-        escrow_amount_yocto: U128,
+        escrow_amount_raw: U128,
         operations_funded_yocto: U128,
         operations_spent_yocto: U128,
+        token_account_id: Option<AccountId>,
     ) {
         require!(
             env::chain_id().starts_with("test-chain-"),
@@ -2097,7 +2098,7 @@ impl Contract {
             "fixture commitment ID is already in use"
         );
         require!(
-            escrow_amount_yocto.0 > 0 && operations_funded_yocto.0 > 0,
+            escrow_amount_raw.0 > 0 && operations_funded_yocto.0 > 0,
             "fixture refund amounts must be positive"
         );
         require!(
@@ -2106,6 +2107,18 @@ impl Contract {
         );
 
         let now_ns = env::block_timestamp();
+        let settlement = token_account_id.map(|token_account_id| SettlementState {
+            asset: SettlementAsset::Nep141 {
+                token_account_id,
+                decimals: NEAR_USDC_DECIMALS,
+            },
+            tranche_amount_raw: escrow_amount_raw.0,
+            funded_raw: escrow_amount_raw.0,
+            paid_raw: 0,
+            refunded_raw: 0,
+            pending_raw: 0,
+        });
+        let is_native_near = settlement.is_none();
         let policy = CommitmentPolicy {
             version: 1,
             temporal: TemporalPolicy {
@@ -2136,14 +2149,22 @@ impl Contract {
                 beneficiary: beneficiary.clone(),
                 epoch_ns: 86_400_000_000_000,
                 max_epochs: 1,
-                tranche_yocto: escrow_amount_yocto.0,
+                tranche_yocto: if is_native_near {
+                    escrow_amount_raw.0
+                } else {
+                    0
+                },
             },
         };
         validate_commitment_policy(&policy);
-        let policy_hash = commitment_policy_digest(&policy, None);
+        let policy_hash = commitment_policy_digest(&policy, settlement.as_ref());
         let commitment = Commitment {
             id: commitment_id.0,
-            subject: "Sandbox native refund callback fixture".to_string(),
+            subject: if is_native_near {
+                "Sandbox native refund callback fixture".to_string()
+            } else {
+                "Sandbox NEP-141 refund cash-gate fixture".to_string()
+            },
             creator: sponsor,
             maintainer: "maintainer.sandbox".parse().unwrap(),
             arbiter: "arbiter.sandbox".parse().unwrap(),
@@ -2157,7 +2178,11 @@ impl Contract {
             pending_evaluation_id: None,
             active_challenge_id: None,
             breach_latched: false,
-            escrow_funded_yocto: escrow_amount_yocto.0,
+            escrow_funded_yocto: if is_native_near {
+                escrow_amount_raw.0
+            } else {
+                0
+            },
             escrow_paid_yocto: 0,
             escrow_refunded_yocto: 0,
             escrow_pending_yocto: 0,
@@ -2169,11 +2194,15 @@ impl Contract {
             pending_transfer_count: 0,
         };
 
-        native_cash::adjust(
-            native_cash::NativeLiability::Escrow,
-            true,
-            escrow_amount_yocto.0,
-        );
+        if let Some(settlement) = settlement.as_ref() {
+            write_settlement_state(commitment_id.0, settlement);
+        } else {
+            native_cash::adjust(
+                native_cash::NativeLiability::Escrow,
+                true,
+                escrow_amount_raw.0,
+            );
+        }
         native_cash::adjust(
             native_cash::NativeLiability::Operations,
             true,

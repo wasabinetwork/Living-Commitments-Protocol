@@ -378,6 +378,49 @@ shasum -a 256 tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-accept
 shasum -a 256 -c tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.sha256
 ```
 
+To run the production NEP-141 escrow-refund path in the same recovery-enabled
+fixture build, use `LCP_USDC_REFUND_ONLY=1`:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_USDC_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+The refund case seeds a closed NEP-141 commitment, discovers the exact storage
+plus transfer deposit, then calls production `refund_remaining` from the
+sponsor with zero starting free native-cash margin. It first forces a token
+failure and confirms the callback restores the full refundable balance and
+marks that attempt terminal-failure. A new transfer ID then retries with the
+exact deposit; the mock token enforces the 1 yoctoNEAR `ft_transfer` deposit,
+the sponsor receives the remaining token escrow, and the callback records the
+refund and terminal-success intent. Native solvency remains intact. On
+November 16, 2026, the protocol-88 Sandbox retry settled `2,345,678` raw units
+and retained `0.0039 NEAR` after storage accounting. This validates the local
+mock-token path, not Circle USDC's runtime.
+Capture and source hashes:
+[`nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.json`](nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.json)
+and [checksum manifest](nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256).
+
+Regenerate and verify the refund receipt/source manifest after rerunning or
+changing the acceptance inputs:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
+  > tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
+```
+
 The broader November 16 recovery-lifecycle run passed a read-only contract-VM
 probe of a valid maximum-size certificate envelope: 500-byte intent, 714-byte certificate, five signatures,
 1,202 decoded bytes, and 1,604 Base64 characters. This synthetic probe uses the

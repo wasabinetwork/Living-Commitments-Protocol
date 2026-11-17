@@ -959,6 +959,218 @@ async function main() {
       return results;
     }
 
+    if (process.env.LCP_USDC_REFUND_ONLY === "1") {
+      const commitmentId = "9902";
+      const amountRaw = 2_345_678n;
+      const seedTx = await functionCall(CORE_ID, coreKey, "sandbox_seed_closed_refund_commitment", {
+        commitment_id: commitmentId,
+        sponsor: "sandbox",
+        beneficiary: CASH_RECIPIENT_ID,
+        escrow_amount_raw: amountRaw.toString(),
+        operations_funded_yocto: (ONE_NEAR / 100n).toString(),
+        operations_spent_yocto: "0",
+        token_account_id: TOKEN_ID,
+      }, 120n * TERA);
+      const sponsorTokenBefore = await tokenBalance("sandbox");
+      const coreTokenBefore = await tokenBalance(CORE_ID);
+      const freeMargin = await setNativeFreeMargin(0n, "NEP-141 escrow refund transfer-deposit boundary");
+      const refundAction = (deposit) => actionFunctionCall(
+        "refund_remaining",
+        { commitment_id: commitmentId },
+        200n * TERA,
+        deposit,
+      );
+      const discoveryFailure = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [refundAction(0n)],
+        "discover NEP-141 refund storage and transfer deposit",
+        { expectFailure: true },
+      );
+      const discoveryText = [
+        ...(discoveryFailure.receipts_outcome ?? []).flatMap((receipt) => [
+          ...(receipt.outcome?.logs ?? []),
+          JSON.stringify(receipt.outcome?.status),
+        ]),
+        JSON.stringify(discoveryFailure.status),
+      ].join("\n");
+      const requiredDepositMatch = discoveryText.match(
+        /attach at least (\d+) yoctoNEAR for refund storage and transfer/,
+      );
+      assert.ok(requiredDepositMatch,
+        `NEP-141 refund did not report its required storage and transfer deposit: ${discoveryText}`);
+      const requiredDeposit = BigInt(requiredDepositMatch[1]);
+      assert.ok(requiredDeposit > 1n,
+        "the measured refund deposit must include storage in addition to NEP-141's one yoctoNEAR");
+      const afterDiscovery = await escrow(commitmentId);
+      assert.equal(afterDiscovery.pending_raw, "0",
+        "failed storage discovery must roll back the pending refund");
+      assert.equal(afterDiscovery.refunded_raw, "0",
+        "failed storage discovery must not mark the token escrow refunded");
+      assert.equal(afterDiscovery.free_raw, amountRaw.toString(),
+        "failed storage discovery must preserve the full refundable token balance");
+      assert.equal(await tokenBalance("sandbox"), sponsorTokenBefore,
+        "failed storage discovery must not call the token contract");
+
+      const cashBeforeRefund = await nativeCashSnapshot();
+      assert.equal(nativeFreeMargin(cashBeforeRefund), 0n,
+        "the exact refund must start with no unreserved native cash margin");
+      await functionCall(TOKEN_ID, tokenKey, "set_fail_transfers", { fail: true });
+      const failedRefundTx = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [refundAction(requiredDeposit)],
+        "production NEP-141 escrow refund with token failure",
+      );
+      const failedTransferId = String(returnedJson(failedRefundTx));
+      const failedRefundState = await waitFor("NEP-141 failed refund callback", async () => {
+        const [escrowState, intent] = await Promise.all([
+          escrow(commitmentId),
+          view(CORE_ID, "receipt_recovery_intent", { transfer_id: failedTransferId }),
+        ]);
+        return escrowState?.pending_raw === "0"
+          && escrowState?.refunded_raw === "0"
+          && escrowState?.free_raw === amountRaw.toString()
+          && intent?.terminal_outcome === "failure"
+          ? { done: true, value: { escrowState, intent } }
+          : { done: false, value: {
+            escrowState,
+            terminal_outcome: intent?.terminal_outcome,
+          } };
+      });
+      const failedRefundReceiptTree = await rpc("tx", [failedRefundTx.transaction.hash, "sandbox"]);
+      const failedTokenReceipt = failedRefundReceiptTree.receipts_outcome?.find(
+        ({ outcome }) => outcome.executor_id === TOKEN_ID,
+      );
+      assert.ok(failedTokenReceipt, "production refund must create a token transfer receipt");
+      assert.ok(isFailedExecution(failedTokenReceipt.outcome.status),
+        "mock NEP-141 failure must fail the token receipt");
+      assert.equal(await tokenBalance("sandbox"), sponsorTokenBefore,
+        "failed token refund must not credit the sponsor");
+      assert.equal(await tokenBalance(CORE_ID), coreTokenBefore,
+        "failed token refund must preserve contract token funds");
+      const cashAfterFailedRefund = await nativeCashSnapshot();
+      assert.equal(cashAfterFailedRefund[4], 0n,
+        "the failed NEP-141 action deposit must clear from the scheduled-outflow ledger");
+      assert.ok(nativeFreeMargin(cashAfterFailedRefund) >= 0n,
+        "failed refund reconciliation must preserve native cash solvency");
+      assertConservation(failedRefundState.escrowState);
+
+      await functionCall(TOKEN_ID, tokenKey, "set_fail_transfers", { fail: false });
+      const retryFreeMargin = await setNativeFreeMargin(0n, "NEP-141 escrow refund retry");
+      const retryDiscoveryFailure = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [refundAction(0n)],
+        "discover NEP-141 refund retry storage deposit",
+        { expectFailure: true },
+      );
+      const retryDiscoveryText = [
+        ...(retryDiscoveryFailure.receipts_outcome ?? []).flatMap((receipt) => [
+          ...(receipt.outcome?.logs ?? []),
+          JSON.stringify(receipt.outcome?.status),
+        ]),
+        JSON.stringify(retryDiscoveryFailure.status),
+      ].join("\n");
+      const retryRequiredDepositMatch = retryDiscoveryText.match(
+        /attach at least (\d+) yoctoNEAR for refund storage and transfer/,
+      );
+      assert.ok(retryRequiredDepositMatch,
+        `NEP-141 retry did not report its storage and transfer deposit: ${retryDiscoveryText}`);
+      const retryRequiredDeposit = BigInt(retryRequiredDepositMatch[1]);
+      assert.ok(retryRequiredDeposit > 1n);
+      const cashBeforeRetry = await nativeCashSnapshot();
+      assert.equal(nativeFreeMargin(cashBeforeRetry), 0n,
+        "the exact retry must start with no unreserved native cash margin");
+      const retryRefundTx = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [refundAction(retryRequiredDeposit)],
+        "production NEP-141 escrow refund retry",
+      );
+      const retryTransferId = String(returnedJson(retryRefundTx));
+      const settledRefund = await waitFor("NEP-141 production refund retry callback", async () => {
+        const [escrowState, intent] = await Promise.all([
+          escrow(commitmentId),
+          view(CORE_ID, "receipt_recovery_intent", { transfer_id: retryTransferId }),
+        ]);
+        return escrowState?.pending_raw === "0"
+          && escrowState?.refunded_raw === amountRaw.toString()
+          && escrowState?.free_raw === "0"
+          && intent?.terminal_outcome === "success"
+          ? { done: true, value: { escrowState, intent } }
+          : { done: false, value: {
+            escrowState,
+            terminal_outcome: intent?.terminal_outcome,
+          } };
+      });
+      const refundReceiptTree = await rpc("tx", [retryRefundTx.transaction.hash, "sandbox"]);
+      const tokenReceipt = refundReceiptTree.receipts_outcome?.find(
+        ({ outcome }) => outcome.executor_id === TOKEN_ID,
+      );
+      assert.ok(tokenReceipt, "production refund retry must create a token transfer receipt");
+      assert.ok(tokenReceipt.outcome.status && Object.hasOwn(tokenReceipt.outcome.status, "SuccessValue"),
+        `NEP-141 refund retry receipt must succeed: ${JSON.stringify(tokenReceipt.outcome.status)}`);
+      const sponsorTokenAfter = await tokenBalance("sandbox");
+      const coreTokenAfter = await tokenBalance(CORE_ID);
+      assert.equal(sponsorTokenAfter - sponsorTokenBefore, amountRaw,
+        "configured sponsor must receive exactly the remaining USDC escrow");
+      assert.equal(coreTokenBefore - coreTokenAfter, amountRaw,
+        "the contract must refund exactly the remaining USDC escrow");
+      const cashAfterRefund = await nativeCashSnapshot();
+      assert.equal(cashAfterRefund[4], 0n,
+        "the planned NEP-141 action deposit must clear after action materialization");
+      assert.ok(nativeFreeMargin(cashAfterRefund) >= 0n,
+        "the exact-storage refund must remain solvent after token transfer and callback");
+      assertConservation(settledRefund.escrowState);
+      results.usdc_refund_cash_gate = {
+        commitment_id: commitmentId,
+        transfer_id: retryTransferId,
+        token_account_id: TOKEN_ID,
+        sponsor: "sandbox",
+        amount_raw: amountRaw.toString(),
+        first_attempt_attached_deposit_yocto: requiredDeposit.toString(),
+        retry_attached_deposit_yocto: retryRequiredDeposit.toString(),
+        required_deposit_includes_ft_transfer_yocto: true,
+        ft_transfer_attached_deposit_yocto: "1",
+        starting_free_native_margin_yocto: "0",
+        retry_starting_free_native_margin_yocto: "0",
+        ending_free_native_margin_yocto: nativeFreeMargin(cashAfterRefund).toString(),
+        scheduled_outflow_after_materialization_yocto: cashAfterRefund[4].toString(),
+        discovery_failure_transaction_hash: discoveryFailure.transaction.hash,
+        failed_transfer_id: failedTransferId,
+        failed_refund_transaction_hash: failedRefundTx.transaction.hash,
+        failed_refund_receipts_outcome: failedRefundReceiptTree.receipts_outcome,
+        native_cash_after_failed_refund: cashAfterFailedRefund.map(String),
+        refund_retry_discovery_failure_transaction_hash: retryDiscoveryFailure.transaction.hash,
+        retry_transfer_id: retryTransferId,
+        refund_retry_transaction_hash: retryRefundTx.transaction.hash,
+        seed_transaction_hash: seedTx.transaction.hash,
+        free_margin_fixture: freeMargin,
+        retry_free_margin_fixture: retryFreeMargin,
+        transaction_outcome: refundReceiptTree.transaction_outcome,
+        receipts_outcome: refundReceiptTree.receipts_outcome,
+        failed_escrow_state: failedRefundState.escrowState,
+        failed_recovery_intent: failedRefundState.intent,
+        escrow_state: settledRefund.escrowState,
+        recovery_intent: settledRefund.intent,
+        native_cash_before_failed_refund: cashBeforeRefund.map(String),
+        native_cash_before_retry: cashBeforeRetry.map(String),
+        native_cash_after_refund: cashAfterRefund.map(String),
+        sponsor_token_balance_before: sponsorTokenBefore.toString(),
+        sponsor_token_balance_after: sponsorTokenAfter.toString(),
+        core_token_balance_before: coreTokenBefore.toString(),
+        core_token_balance_after: coreTokenAfter.toString(),
+        isolated_sandbox_only: true,
+      };
+      console.log("PASS failed production NEP-141 refund preserves escrow; retry returns it to the sponsor and reconciles the 1 yoctoNEAR deposit");
+      return results;
+    }
+
     const maximumEnvelope = maximumRecoveryEnvelope(committee);
     const maximumEnvelopeBytes = Buffer.from(maximumEnvelope.envelope, "base64");
     assert.equal(maximumEnvelope.intentBytes.length, 500, "maximum intent must use the configured 500-byte limit");
@@ -2706,6 +2918,7 @@ async function main() {
 
     if (process.env.LCP_RECOVERY_ONLY === "1"
       || process.env.LCP_USDC_CLAIM_ONLY === "1"
+      || process.env.LCP_USDC_REFUND_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_OOG_ONLY === "1") {
@@ -2713,7 +2926,9 @@ async function main() {
       const fixturePath = process.env.LCP_FIXTURE_OUTPUT;
       if (fixturePath) {
         await writeFile(fixturePath, `${JSON.stringify({
-          fixture_schema: process.env.LCP_USDC_CLAIM_ONLY === "1"
+          fixture_schema: process.env.LCP_USDC_REFUND_ONLY === "1"
+            ? "lcp.nep141-refund-cash-gate-sandbox-acceptance.v1"
+            : process.env.LCP_USDC_CLAIM_ONLY === "1"
             ? "lcp.nep141-claim-cash-gate-sandbox-acceptance.v1"
             : process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
             ? "lcp.storage-registry-sandbox-acceptance.v1"
@@ -2730,7 +2945,9 @@ async function main() {
           scenarios: fixtures.recovery_acceptance,
         }, null, 2)}\n`);
       }
-      console.log(process.env.LCP_USDC_CLAIM_ONLY === "1"
+      console.log(process.env.LCP_USDC_REFUND_ONLY === "1"
+        ? "Isolated NEP-141 refund cash-gate acceptance passed; no public network was used."
+        : process.env.LCP_USDC_CLAIM_ONLY === "1"
         ? "Isolated NEP-141 claim cash-gate acceptance passed; no public network was used."
         : process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
         ? "Isolated storage registry cap acceptance passed; no public network was used."
@@ -3588,13 +3805,14 @@ async function main() {
       + NATIVE_STORAGE_MARGIN_BUFFER;
     const operationsFunded = nativeTrancheAmount * 2n;
     const operationsSpent = nativeTrancheAmount;
-    await functionCall(CORE_ID, coreKey, "sandbox_seed_closed_native_refund_commitment", {
+    await functionCall(CORE_ID, coreKey, "sandbox_seed_closed_refund_commitment", {
       commitment_id: nativeRefundCommitmentId,
       sponsor: "sandbox",
       beneficiary: CASH_RECIPIENT_ID,
-      escrow_amount_yocto: nativeRefundAmount.toString(),
+      escrow_amount_raw: nativeRefundAmount.toString(),
       operations_funded_yocto: operationsFunded.toString(),
       operations_spent_yocto: operationsSpent.toString(),
+      token_account_id: null,
     }, 100n * TERA);
 
     await functionCall(CORE_ID, coreKey, "sandbox_set_next_transfer_recipient", {
