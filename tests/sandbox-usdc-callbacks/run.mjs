@@ -22,6 +22,7 @@ const ORDER_A_ID = "order-a.sandbox";
 const ORDER_B_ID = "order-b.sandbox";
 const CASH_RECIPIENT_ID = "cash-recipient.sandbox";
 const RECIPIENT_ID = "recipient.sandbox";
+const SERVICE_OPERATOR_B_ID = "service-operator-b.sandbox";
 const AMOUNT = 1_000_000n;
 const INITIAL_TOKEN_BALANCE = 10_000_000n;
 const ONE_NEAR = 10n ** 24n;
@@ -479,6 +480,7 @@ function assertTransactionSucceeded(result, description) {
 }
 
 async function main() {
+  const serviceInboxMode = process.env.LCP_SERVICE_INBOX_OUTLAYER_DISPATCH_ONLY === "1";
   const rootKey = keyFromNearStrings(DEFAULT_PRIVATE_KEY, DEFAULT_PUBLIC_KEY);
   const coreKey = newKey();
   const tokenKey = newKey();
@@ -487,6 +489,7 @@ async function main() {
   const orderBKey = newKey();
   const cashRecipientKey = newKey();
   const recipientKey = newKey();
+  const serviceOperatorBKey = serviceInboxMode ? newKey() : null;
   const sandbox = await Sandbox.start({ version: "2.14.0" });
   const fixtures = {};
 
@@ -2007,6 +2010,7 @@ async function main() {
     await createSubaccount(ORDER_B_ID, orderBKey);
     await createSubaccount(CASH_RECIPIENT_ID, cashRecipientKey);
     await createSubaccount(RECIPIENT_ID, recipientKey);
+    if (serviceInboxMode) await createSubaccount(SERVICE_OPERATOR_B_ID, serviceOperatorBKey);
 
     fixtures.core_deploy_transaction = await deployAndWait(
       CORE_ID,
@@ -2370,7 +2374,6 @@ async function main() {
       return;
     }
 
-    const serviceInboxMode = process.env.LCP_SERVICE_INBOX_OUTLAYER_DISPATCH_ONLY === "1";
     if (serviceInboxMode || process.env.LCP_SERVICE_OUTLAYER_DISPATCH_ONLY === "1") {
       const fundedCommitmentId = "779";
       const underfundedCommitmentId = "780";
@@ -2408,12 +2411,13 @@ async function main() {
 
       const observedBlock = await rpc("block", { finality: "final" });
       const observedAtNs = BigInt(observedBlock.header.timestamp_nanosec) - 1_000_000_000n;
-      const makeProbeReport = async (commitmentId) => {
+      const makeProbeReport = async (commitmentId, sourceIndex = 0) => {
         const [commitment, policy] = await Promise.all([
           view(CORE_ID, "get_commitment", { commitment_id: commitmentId }),
           view(CORE_ID, "get_service_availability_policy", { commitment_id: commitmentId }),
         ]);
-        const source = policy.sources[0];
+        const source = policy.sources[sourceIndex];
+        assert.ok(source, `service policy has no source at index ${sourceIndex}`);
         if (!serviceInboxMode) {
           assert.equal(source.public_key_hex, serviceOperator.publicKeyBytes.toString("hex"),
             "service policy must pin the generated report signing key");
@@ -2465,13 +2469,23 @@ async function main() {
         }
         return {
           policy,
+          source,
           report,
         };
       };
-      const fundedReportFixture = await makeProbeReport(fundedCommitmentId);
-      const underfundedReportFixture = await makeProbeReport(underfundedCommitmentId);
-      const fundedReport = fundedReportFixture.report;
-      const underfundedReport = underfundedReportFixture.report;
+      const reportsForCommitment = async (commitmentId) => serviceInboxMode
+        ? Promise.all([
+          makeProbeReport(commitmentId, 0),
+          makeProbeReport(commitmentId, 1),
+        ])
+        : [await makeProbeReport(commitmentId, 0)];
+      const fundedReportFixtures = await reportsForCommitment(fundedCommitmentId);
+      const underfundedReportFixtures = await reportsForCommitment(underfundedCommitmentId);
+      const fundedReportFixture = fundedReportFixtures[0];
+      const fundedReports = fundedReportFixtures.map(({ report }) => report);
+      const fundedReport = fundedReports[0];
+      const underfundedReports = underfundedReportFixtures.map(({ report }) => report);
+      const underfundedReport = underfundedReports[0];
       const requestArgs = (commitmentId, report) => ({
         commitment_id: commitmentId,
         ...(serviceInboxMode ? {} : { reports: [report] }),
@@ -2482,31 +2496,43 @@ async function main() {
 
       const margin = await setNativeFreeMargin(0n, "service OutLayer dispatch boundary");
       const reportStorageDeposits = {};
+      const reportSubmissionTransactions = {};
       if (serviceInboxMode) {
-        for (const [commitmentId, report] of [
-          [fundedCommitmentId, fundedReport],
-          [underfundedCommitmentId, underfundedReport],
+        for (const [commitmentId, reportFixtures] of [
+          [fundedCommitmentId, fundedReportFixtures],
+          [underfundedCommitmentId, underfundedReportFixtures],
         ]) {
-          const storageDeposit = BigInt(await view(CORE_ID, "get_service_report_storage_deposit", {
-            commitment_id: commitmentId,
-            report,
-          }));
-          const cashBeforeSubmission = await nativeCashSnapshot();
-          await serviceRootCall(
-            "submit_service_report",
-            { commitment_id: commitmentId, report },
-            `stage transaction-authenticated service report for ${commitmentId}`,
-            storageDeposit,
-          );
-          const cashAfterSubmission = await nativeCashSnapshot();
-          const storageGrowth = cashAfterSubmission[1] - cashBeforeSubmission[1];
-          assert.ok(storageDeposit >= storageGrowth,
-            "service report storage deposit must cover measured inbox storage growth");
-          reportStorageDeposits[commitmentId] = {
-            deposit_yocto: storageDeposit.toString(),
-            storage_growth_yocto: storageGrowth.toString(),
-            unallocated_surplus_yocto: (storageDeposit - storageGrowth).toString(),
-          };
+          reportStorageDeposits[commitmentId] = {};
+          reportSubmissionTransactions[commitmentId] = {};
+          for (const { source, report } of reportFixtures) {
+            const storageDeposit = BigInt(await view(CORE_ID, "get_service_report_storage_deposit", {
+              commitment_id: commitmentId,
+              report,
+            }));
+            const cashBeforeSubmission = await nativeCashSnapshot();
+            const operatorKey = source.operator_id === SERVICE_OPERATOR_B_ID
+              ? serviceOperatorBKey
+              : rootKey;
+            const submission = await sendTransaction(
+              source.operator_id,
+              operatorKey,
+              CORE_ID,
+              [actionFunctionCall("submit_service_report", { commitment_id: commitmentId, report },
+                220n * TERA, storageDeposit)],
+              `stage transaction-authenticated ${source.source_id} report for ${commitmentId}`,
+            );
+            const cashAfterSubmission = await nativeCashSnapshot();
+            const storageGrowth = cashAfterSubmission[1] - cashBeforeSubmission[1];
+            assert.ok(storageDeposit >= storageGrowth,
+              "service report storage deposit must cover measured inbox storage growth");
+            reportStorageDeposits[commitmentId][source.source_id] = {
+              operator_id: source.operator_id,
+              deposit_yocto: storageDeposit.toString(),
+              storage_growth_yocto: storageGrowth.toString(),
+              unallocated_surplus_yocto: (storageDeposit - storageGrowth).toString(),
+            };
+            reportSubmissionTransactions[commitmentId][source.source_id] = submission.transaction.hash;
+          }
         }
       }
       const cashAfterReportStaging = await nativeCashSnapshot();
@@ -2537,7 +2563,7 @@ async function main() {
           commitment_id: underfundedCommitmentId,
           evaluation_id: "1",
         });
-        assert.equal(underfundedInboxAfterRejection.length, 1,
+        assert.equal(underfundedInboxAfterRejection.length, underfundedReports.length,
         "failed underfunded inbox scheduling must roll back report consumption");
       }
 
@@ -2592,7 +2618,7 @@ async function main() {
           commitment_id: fundedCommitmentId,
           evaluation_id: "1",
         });
-        assert.equal(fundedInboxAfterStorageRejection.length, 1,
+        assert.equal(fundedInboxAfterStorageRejection.length, fundedReports.length,
         "failed storage-bond attempts must leave the staged report available");
       }
 
@@ -2643,6 +2669,7 @@ async function main() {
       assert.equal(cashAfterFailure[0] - cashBeforeDispatch[0], storageBond,
         "failed service OutLayer action must return its evaluator deposit while retaining the storage bond");
       let inboxRefundBalance = null;
+      let inboxRefundBalancesByOperator = null;
       let fundedInboxAfterDispatch = null;
       if (serviceInboxMode) {
         fundedInboxAfterDispatch = await view(CORE_ID, "get_service_report_inbox", {
@@ -2651,12 +2678,19 @@ async function main() {
         });
         assert.equal(fundedInboxAfterDispatch.length, 0,
           "successful inbox scheduling must consume the staged report");
-        inboxRefundBalance = await view(CORE_ID, "get_service_report_refund_balance", {
-          account_id: "sandbox",
-        });
-        assert.equal(inboxRefundBalance, reportStorageDeposits[fundedCommitmentId].deposit_yocto,
-          "consumed inbox storage deposit must become the operator's refund credit");
-        assert.equal(cashAfterFailure[3] - cashBeforeDispatch[3], BigInt(inboxRefundBalance),
+        inboxRefundBalancesByOperator = {};
+        let totalInboxRefundBalance = 0n;
+        for (const { source } of fundedReportFixtures) {
+          const balance = await view(CORE_ID, "get_service_report_refund_balance", {
+            account_id: source.operator_id,
+          });
+          assert.equal(balance, reportStorageDeposits[fundedCommitmentId][source.source_id].deposit_yocto,
+            `consumed ${source.source_id} report deposit must become its operator's refund credit`);
+          inboxRefundBalancesByOperator[source.operator_id] = balance;
+          totalInboxRefundBalance += BigInt(balance);
+        }
+        inboxRefundBalance = totalInboxRefundBalance.toString();
+        assert.equal(cashAfterFailure[3] - cashBeforeDispatch[3], totalInboxRefundBalance,
           "inbox report refund credit must be included in the storage-refund liability");
       }
 
@@ -2675,7 +2709,9 @@ async function main() {
           ? null
           : serviceOperator.publicKeyBytes.toString("hex"),
         service_report: fundedReport,
+        service_reports: fundedReports,
         report_storage_deposits: reportStorageDeposits,
+        report_submission_transactions: reportSubmissionTransactions,
         storage_bond_discovery_transaction: discoveryFailure,
         one_yocto_underfunded_transaction: oneShortFailure,
         underfunded_operations_transaction: underfundedBudgetFailure,
@@ -2687,6 +2723,7 @@ async function main() {
         funded_report_inbox_after_storage_rejection: fundedInboxAfterStorageRejection,
         underfunded_report_inbox_after_rejection: underfundedInboxAfterRejection,
         inbox_operator_refund_balance_after_dispatch: inboxRefundBalance,
+        inbox_operator_refund_balances_by_account: inboxRefundBalancesByOperator,
         native_cash_before_dispatch: cashBeforeDispatch.map(String),
         native_cash_after_failure: cashAfterFailure.map(String),
         evaluator_balance_before: evaluatorBalanceBefore.toString(),

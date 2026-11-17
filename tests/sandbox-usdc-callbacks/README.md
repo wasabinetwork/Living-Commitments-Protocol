@@ -117,18 +117,19 @@ docker run --rm --init --platform linux/amd64 \
 ```
 
 This mode fixture-seeds a v2 service policy with transaction-authenticated
-operator provenance, then stages reports through the production
-`submit_service_report` method. An underfunded-operations attempt and a
-one-yocto-short evaluation storage bond both fail without consuming the staged
-report. The exact storage bond dispatches through production
-`request_service_evaluation_from_inbox` and `schedule_service_evaluation` to
-the same no-code evaluator. Successful scheduling consumes the funded inbox
-report and converts its full 0.012 NEAR storage deposit into the operator's
-refund credit; the failed evaluator action returns its 0.01 NEAR execution
-deposit, while operations spend remains charged and the refund liability stays
-accounted. The other report's inbox entry remains staged after its rejected
-request. This verifies the local inbox dispatch and cash-accounting path, not
-hosted OutLayer execution or service verdict validation. See the captured
+operator provenance, then stages a report from each configured operator
+account through the production `submit_service_report` method. An
+underfunded-operations attempt and a one-yocto-short evaluation storage bond
+both fail without consuming either staged report. The exact evaluation storage
+bond dispatches through production `request_service_evaluation_from_inbox` and
+`schedule_service_evaluation` to the same no-code evaluator. Successful
+scheduling consumes both reports and converts their separately measured
+storage deposits (0.012 and 0.01238 NEAR in this fixture) into account-specific
+operator refund credits. The failed evaluator action returns its 0.01 NEAR
+execution deposit, while operations spend remains charged and both refund
+liabilities stay accounted. This verifies the local multi-operator inbox
+dispatch and cash-accounting path, not evaluator quorum/verdict validation or
+hosted OutLayer execution. See the captured
 [inbox-dispatch receipt and state](service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.json)
 and its [checksum manifest](service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.sha256).
 
