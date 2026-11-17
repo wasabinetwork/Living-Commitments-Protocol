@@ -665,11 +665,13 @@ impl Contract {
         feature = "sandbox-callback-fixture",
         feature = "usdc-receipt-recovery"
     ))]
+    #[payable]
     pub fn sandbox_seed_recovery_credit_rows(
         &mut self,
         first_credit_index: U64,
         count: u8,
         payer_account_id: AccountId,
+        admission_excess_yocto: U128,
     ) -> U64 {
         require!(
             env::chain_id().starts_with("test-chain-"),
@@ -684,10 +686,6 @@ impl Contract {
             "fixture storage rows must be seeded by the Sandbox root"
         );
         require!(
-            env::attached_deposit().as_yoctonear() == 0,
-            "do not attach a deposit to the storage registry fixture"
-        );
-        require!(
             count > 0 && usize::from(count) <= crate::recovery_accounting::MAX_REVALUATION_BATCH,
             "fixture storage row batch size is invalid"
         );
@@ -696,6 +694,13 @@ impl Contract {
         let end = first
             .checked_add(u32::from(count))
             .unwrap_or_else(|| env::panic_str("fixture credit index overflow"));
+        let expected_deposit = u128::from(count)
+            .checked_mul(admission_excess_yocto.0)
+            .unwrap_or_else(|| env::panic_str("fixture admission deposit overflow"));
+        require!(
+            env::attached_deposit().as_yoctonear() == expected_deposit,
+            "fixture deposit must equal all seeded admission credits"
+        );
         let mut total_storage_bytes = 0u64;
         for index in first..end {
             let mut preimage = b"LCP/SANDBOX/STORAGE-REGISTRY-CAP/V1\0".to_vec();
@@ -706,7 +711,7 @@ impl Contract {
             let measured = crate::recovery_accounting::preallocate_measured_refund_credit(
                 credit_id,
                 payer_account_id.clone(),
-                0,
+                admission_excess_yocto.0,
                 env::storage_usage(),
             );
             total_storage_bytes = total_storage_bytes

@@ -906,7 +906,12 @@ async function main() {
         const count = Number(remaining < BigInt(seedBatchSize) ? remaining : BigInt(seedBatchSize));
         const transaction = await rootCall(
           "sandbox_seed_recovery_credit_rows",
-          { first_credit_index: String(seededCreditCount), count, payer_account_id: "sandbox" },
+          {
+            first_credit_index: String(seededCreditCount),
+            count,
+            payer_account_id: "sandbox",
+            admission_excess_yocto: "0",
+          },
           `seed ${count} measured storage rows`,
           220n * TERA,
         );
@@ -942,7 +947,12 @@ async function main() {
       const overflowCreditId = fixtureCreditId(seededCreditCount);
       const overCapacity = await rootCall(
         "sandbox_seed_recovery_credit_rows",
-        { first_credit_index: String(seededCreditCount), count: 1, payer_account_id: "sandbox" },
+        {
+          first_credit_index: String(seededCreditCount),
+          count: 1,
+          payer_account_id: "sandbox",
+          admission_excess_yocto: "0",
+        },
         "reject storage bond record 2049",
         220n * TERA,
         0n,
@@ -1042,18 +1052,37 @@ async function main() {
       const gasBurnt = (transaction) => (transaction.receipts_outcome ?? [])
         .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n);
       const recordCount = async () => BigInt(await view(CORE_ID, "sandbox_recovery_storage_record_count", {}));
+      const nativeCashSnapshot = async () => (await view(CORE_ID, "sandbox_native_cash_snapshot", {}))
+        .map((amount) => BigInt(amount));
       const maxLengthPayer = "a".repeat(64);
+      const admissionExcessPerRow = process.env.LCP_STORAGE_REGISTRY_FUNDED_ONLY === "1"
+        ? ONE_NEAR / 100n
+        : 0n;
       const initialRecordCount = await recordCount();
+      const initialCashSnapshot = await nativeCashSnapshot();
       const seedCount = 64;
+      const attachedDeposit = BigInt(seedCount) * admissionExcessPerRow;
       const seed = await rootCall(
         "sandbox_seed_recovery_credit_rows",
-        { first_credit_index: "0", count: seedCount, payer_account_id: maxLengthPayer },
+        {
+          first_credit_index: "0",
+          count: seedCount,
+          payer_account_id: maxLengthPayer,
+          admission_excess_yocto: admissionExcessPerRow.toString(),
+        },
         "seed 64 measured rows for maximum-length NEAR account ID",
         220n * TERA,
+        attachedDeposit,
       );
       const measuredStorageBytes = BigInt(returnedJson(seed));
+      const seededCashSnapshot = await nativeCashSnapshot();
       assert.ok(measuredStorageBytes > 0n,
         "maximum-length payer rows must report positive storage growth");
+      assert.equal(
+        seededCashSnapshot[6] - initialCashSnapshot[6],
+        attachedDeposit,
+        "recovery-credit liability Q must rise by exactly the attached admission deposit",
+      );
       assert.equal(await recordCount(), initialRecordCount + BigInt(seedCount),
         "maximum-length payer rows must each consume one registry record");
       const creditId = (index) => createHash("sha256")
@@ -1067,6 +1096,14 @@ async function main() {
       });
       assert.equal(sampleCredit.payer, maxLengthPayer,
         "the persisted payer field must preserve the maximum-length AccountId");
+      assert.equal(sampleCredit.state, "pending",
+        "fixture-seeded credits must remain pending until their associated operation is terminal");
+      assert.equal(sampleCredit.accrued_yocto, admissionExcessPerRow.toString(),
+        "each credit must preserve its exact attached admission excess");
+      assert.equal(sampleCredit.withdrawal_available, false,
+        "pending credits must not be withdrawable");
+      assert.equal(sampleCredit.cash_solvency_ready, true,
+        "admission deposits must fully back their pending credit liabilities");
       assert.ok(sampleCredit.storage_reserve_ready,
         "the registry must remain ready after maximum-length payer rows are admitted");
 
@@ -1109,6 +1146,17 @@ async function main() {
         "completed revaluation must restore storage-reserve readiness");
       assert.equal(await recordCount(), initialRecordCount + BigInt(seedCount),
         "revaluation must preserve maximum-payer registry entries");
+      assert.equal(readyCredit.state, "pending",
+        "revaluation must preserve the pending credit lifecycle state");
+      assert.equal(readyCredit.accrued_yocto, admissionExcessPerRow.toString(),
+        "revaluation must preserve the full pending credit amount");
+      assert.equal(readyCredit.withdrawal_available, false,
+        "revaluation must not make a pending credit withdrawable");
+      assert.equal(readyCredit.cash_solvency_ready, true,
+        "all funded pending credits must remain backed after revaluation");
+      const revaluedCashSnapshot = await nativeCashSnapshot();
+      assert.equal(revaluedCashSnapshot[6], seededCashSnapshot[6],
+        "storage reserve revaluation must not change the recovery-credit liability Q");
 
       const firstBatchGas = gasBurnt(firstBatch);
       const secondBatchGas = gasBurnt(secondBatch);
@@ -1119,6 +1167,15 @@ async function main() {
         rows_added: seedCount,
         final_record_count: (initialRecordCount + BigInt(seedCount)).toString(),
         measured_credit_storage_bytes: measuredStorageBytes.toString(),
+        admission_excess_yocto_per_row: admissionExcessPerRow.toString(),
+        attached_deposit_yocto: attachedDeposit.toString(),
+        total_pending_credit_liability_yocto: (BigInt(seedCount) * admissionExcessPerRow).toString(),
+        initial_recovery_credit_liability_yocto: initialCashSnapshot[6].toString(),
+        recovery_credit_liability_after_seed_yocto: seededCashSnapshot[6].toString(),
+        recovery_credit_liability_after_revaluation_yocto: revaluedCashSnapshot[6].toString(),
+        sample_credit_state: readyCredit.state,
+        sample_credit_withdrawal_available: readyCredit.withdrawal_available,
+        sample_credit_cash_solvency_ready: readyCredit.cash_solvency_ready,
         seed_transaction_gas_burnt: gasBurnt(seed).toString(),
         revaluation_batch_limit: STORAGE_REVALUATION_BATCH_LIMIT,
         revaluation_batches: [
@@ -2330,6 +2387,8 @@ async function main() {
         await writeFile(fixturePath, `${JSON.stringify({
           fixture_schema: process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
             ? "lcp.storage-registry-sandbox-acceptance.v1"
+            : process.env.LCP_STORAGE_REGISTRY_FUNDED_ONLY === "1"
+              ? "lcp.storage-registry-funded-pending-sandbox-acceptance.v1"
             : process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
               ? "lcp.storage-registry-shape-sandbox-acceptance.v1"
               : "lcp.receipt-recovery-sandbox-acceptance.v1",
@@ -2341,6 +2400,8 @@ async function main() {
       }
       console.log(process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
         ? "Isolated storage registry cap acceptance passed; no public network was used."
+        : process.env.LCP_STORAGE_REGISTRY_FUNDED_ONLY === "1"
+          ? "Isolated funded-pending credit acceptance passed; no public network was used."
         : process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
           ? "Isolated maximum-length payer storage acceptance passed; no public network was used."
           : "All isolated receipt-recovery Sandbox checks passed; no public network was used.");

@@ -458,10 +458,35 @@ returned after both batches completed. These values are observations for this
 row shape and local VM, not a worst-case gas bound or a production limit. See
 the [capture](storage-registry-shape-sandbox-acceptance-2026-11-16.json) and
 [checksum manifest](storage-registry-shape-sandbox-acceptance-2026-11-16.sha256).
-Regenerate that manifest after rerunning or changing the captured inputs:
+That manifest records its source snapshot at commit
+`55126f386d058af085cb334c91ea876fe1fe14bf`; verify it at that revision.
+
+### Funded Pending credits at maximum payer length
+
+The funded variant also checks that admission excess is backed by the exact
+attached deposit and remains non-withdrawable while credits are `Pending`:
 
 ```sh
-shasum -a 256 tests/sandbox-usdc-callbacks/storage-registry-shape-sandbox-acceptance-2026-11-16.json \
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_STORAGE_REGISTRY_SHAPE_ONLY=1 LCP_STORAGE_REGISTRY_FUNDED_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/storage-registry-funded-pending-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+The run attached 0.01 NEAR for each of 64 rows (0.64 NEAR total) using the
+synthetic 64-character payer ID above. The aggregate attached deposit exactly
+matched the 0.64 NEAR pending-credit liability (`Q`). The sample remained
+`Pending`, non-withdrawable, and cash-solvent before and after the reserve
+revaluation; readiness was disabled only while records were being repriced.
+The measured storage growth remained 33,728 bytes, seed gas was 86.986 Tgas,
+and the largest 64-record revaluation batch used 11.786 Tgas. These are local
+fixture measurements, not production limits. See the
+[capture](storage-registry-funded-pending-sandbox-acceptance-2026-11-16.json)
+and [checksum manifest](storage-registry-funded-pending-sandbox-acceptance-2026-11-16.sha256).
+Regenerate the manifest after rerunning or changing the captured inputs:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/storage-registry-funded-pending-sandbox-acceptance-2026-11-16.json \
   tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
   tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
   Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
@@ -473,7 +498,7 @@ shasum -a 256 tests/sandbox-usdc-callbacks/storage-registry-shape-sandbox-accept
   evaluators/service-availability/test/probe.test.mjs \
   contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
   TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
-  > tests/sandbox-usdc-callbacks/storage-registry-shape-sandbox-acceptance-2026-11-16.sha256
+  > tests/sandbox-usdc-callbacks/storage-registry-funded-pending-sandbox-acceptance-2026-11-16.sha256
 ```
 
 To keep the governance timing check fast, `sandbox-callback-fixture` sets the
