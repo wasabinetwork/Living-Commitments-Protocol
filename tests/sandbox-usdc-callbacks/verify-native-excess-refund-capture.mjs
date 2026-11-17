@@ -123,6 +123,11 @@ function assertFinalReceiptGraph(label, finalExecutionStatus, transactionOutcome
   }
   assert.deepEqual([...reachable].sort(), [...outcomeIds].sort(),
     `${label} must not contain disconnected receipt outcomes or bodies`);
+  for (const body of bodies) {
+    const executorId = outcomesById.get(body.receipt_id)?.outcome?.executor_id;
+    assert.equal(body.receiver_id, executorId,
+      `${label} receipt ${body.receipt_id} body receiver must bind to its outcome executor`);
+  }
   return outcomesById;
 }
 
@@ -201,6 +206,9 @@ export function validateNativeExcessRefundCapture(capture) {
   const failedRefundEvent = findEvent(scenario.failure_receipts_outcome, "excess_storage_refund_failed");
   assert.ok(failedRefundEvent, "production callback failure event must be captured");
   assert.equal(failedRefundEvent.receipt.outcome.executor_id, "lcp-core-sandbox.sandbox");
+  assert.equal(assertTerminalStatus(failedRefundEvent.receipt.outcome.status,
+    "excess_storage_refund_failed callback receipt"), "SuccessValue",
+  "the production callback that records the failed refund must itself succeed");
   assert.equal(failedRefundEvent.event.data?.[0]?.account_id, scenario.payer);
   assert.equal(failedRefundEvent.event.data?.[0]?.amount_yocto, amount.toString());
   assert.equal(scenario.failed_credit_balance_yocto, amount.toString());
@@ -226,9 +234,8 @@ export function validateNativeExcessRefundCapture(capture) {
   assert.ok(!underfundedLogs.some((log) => log.includes('"event":"service_report_refund_requested"')),
     "underfunded withdrawal must not request a native transfer");
   assert.deepEqual(nativeTransfers(scenario.underfunded_withdrawal_receipts)
-    .filter(({ predecessor_id, receiver_id }) => predecessor_id === "lcp-core-sandbox.sandbox"
-      && receiver_id === scenario.payer), [],
-  "underfunded withdrawal must not create a contract-to-payer transfer of any amount");
+    .filter(({ predecessor_id }) => predecessor_id === "lcp-core-sandbox.sandbox"), [],
+  "underfunded withdrawal must not create a contract-originated transfer to any recipient");
   const gateMatch = cashGateLog.match(/C=(\d+) S=(\d+).*X=(\d+)/);
   assert.ok(gateMatch, "cash-gate diagnostic must include balance, storage and planned outflow");
   assert.equal(BigInt(gateMatch[1]), cashBeforeWithdrawal[0]);
@@ -273,9 +280,8 @@ export function validateNativeExcessRefundCapture(capture) {
     "payer balance increase plus measured transaction fees must equal the credit paid");
 
   assert.deepEqual(nativeTransfers(scenario.replay_receipts)
-    .filter(({ predecessor_id, receiver_id }) => predecessor_id === "lcp-core-sandbox.sandbox"
-      && receiver_id === scenario.payer), [],
-  "settled withdrawal replay must not create a contract-to-payer transfer of any amount");
+    .filter(({ predecessor_id }) => predecessor_id === "lcp-core-sandbox.sandbox"), [],
+  "settled withdrawal replay must not create a contract-originated transfer to any recipient");
   assert.ok(!logsOf(scenario.replay_receipts_outcome)
     .some((log) => log.includes('"event":"service_report_refund_requested"')),
   "settled withdrawal replay must not request a second payout");

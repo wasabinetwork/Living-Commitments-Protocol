@@ -549,13 +549,18 @@ successful payout-receipt status, contract transfer actions, cash snapshots,
 payer balance and credit reconciliation, replay rejection for any payout amount,
 and source manifest. Mutation checks reject a changed artifact, removed failure
 event, duplicate, missing or altered payout, incomplete or disconnected receipt
-graphs, missing or failed withdrawal status, promise-only payout status, and a
-one-yocto replay payout.
+graphs, missing or failed withdrawal status, promise-only payout status, a
+one-yocto replay payout, a replay or underfunded contract transfer to any
+recipient, a payout receipt body that disagrees with its outcome executor, and a
+failed excess-refund callback receipt.
 To check another capture, pass its repository path and manifest as arguments. The
 checker validates saved Sandbox RPC records; it does not rerun the Sandbox or
 validate cryptographic receipt inclusion proofs against block headers.
 
-Regenerate and verify the capture/source manifest from the repository root:
+Regenerate and verify the capture/source manifest from the repository root. The
+manifest pins the evidence capture together with the contract sources and the
+checker inputs (this README, the verifier, and its mutation tests), so any change
+to those tooling files also requires regenerating it:
 
 ```sh
 shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json \

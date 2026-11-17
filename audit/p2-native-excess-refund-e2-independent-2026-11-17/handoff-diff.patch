@@ -1,0 +1,649 @@
+diff --git a/P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md b/P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md
+index 93e4e92..922c9ff 100644
+--- a/P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md
++++ b/P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md
+@@ -2,26 +2,36 @@
+ 
+ ## Objective
+ 
+-Independently verify that the two low-severity evidence gaps (E1/E2) from
++Independently verify the owner remediation for E2, while retaining the E1 closure
++from the follow-up report. The remaining changes address the artifact mismatch
++and checker mutations reported in
+ [`P2-USDC-NATIVE-EXCESS-REFUND-INDEPENDENT-REVIEW.md`](P2-USDC-NATIVE-EXCESS-REFUND-INDEPENDENT-REVIEW.md)
+-are closed in the refreshed capture and runner. The earlier report accepted the
+-scoped contract behavior; this follow-up reviews evidence completeness and the
+-capture checker, not a broader contract audit.
++and
++[`P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-INDEPENDENT-REVIEW.md`](P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-INDEPENDENT-REVIEW.md).
++The earlier reports accepted the scoped contract behavior; this follow-up reviews
++artifact provenance, evidence completeness, and the capture checker, not a
++broader contract audit.
+ 
+ ## Candidate and artifacts
+ 
+-- Source commit: `785a51bb1338154163211e20f76d510f0a1434f1`.
++- Contract source commit: `950e3cb50fd79f559f5b6ff725fbfa32db70a063`.
+ - Runtime: NEAR Sandbox 2.14.0, protocol 88; use a clean, independently managed
+   runtime and fresh chain.
+-- Core fixture SHA-256: `33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872`.
+-- NEAR code hash: `4URYaJBxtUGhYbafSHMRkVyGcHcY8Zs1uwugpRM1p76Z`.
+-- Capture and 23-row source manifest:
+-  [`November 17 capture`](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json),
+-  [`manifest`](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256).
++- Reproducible build: cargo-near 0.23.0, Rust 1.100.0, pinned image
++  `sha256:265b662a03642196c8a1b97cb8e1bff9156488b584a9e040e9ef1f264e1049f1`,
++  variant `sandbox-recovery`.
++- Core fixture SHA-256: `4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad`.
++- NEAR code hash: `6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212`.
++- Two reproducible build invocations returned the same WASM and code hashes.
++- Capture and 24-row source manifest:
++  [`NEP-330 reproducible November 17 capture`](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json),
++  [`manifest`](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256).
++- The plain clean-build capture (`0f194b…`) and older `33997e…` capture are
++  retained for comparison; neither is the candidate in this handoff.
+ - Runner and checker:
+   [`run.mjs`](tests/sandbox-usdc-callbacks/run.mjs),
+   [`capture verifier`](tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs),
+-  [`seven mutation checks`](tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs).
++  [`13 automated checks (one valid control and twelve mutations)`](tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs).
+ 
+ The [Sandbox guide](tests/sandbox-usdc-callbacks/README.md) contains locked
+ build commands and the isolated Docker invocation. Run the checker and mutation
+@@ -44,8 +54,15 @@ as the reproduction.
+    `0.00026 NEAR` storage growth, payer balance-plus-fees equation, zero final
+    payer credit, and solvent final cash snapshot.
+ 4. Confirm the mutation tests reject a changed artifact, missing failure
+-   callback, duplicate payout, missing payout, altered amount, and incomplete
+-   receipt graph. Report any additional mutation weakness found.
++   callback, duplicate/missing/altered payout, missing child, disconnected
++   outcome/body pair, missing receipt status, failed payout or other successful-
++   withdrawal receipt, promise-only payout receipt, and any replay transfer
++   amount including one yocto.
++5. Independently rebuild commit `950e3cb50fd79f559f5b6ff725fbfa32db70a063`
++   with the pinned `sandbox-recovery` NEP-330 variant. Run the Sandbox using
++   the output path explicitly with `LCP_CORE_WASM_PATH`, set
++   `LCP_EXPECTED_CORE_WASM_SHA256` to the digest above, and confirm the result
++   before deployment. Do not rely on the cached `target/.../lcp_core.wasm`.
+ 
+ ## Scope and report format
+ 
+diff --git a/TODO.md b/TODO.md
+index 3b156f9..4f60b3e 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -69,7 +69,7 @@
+ - [x] **Smaller finding — challenge wording:** clarified that `Upheld` means the arbiter upheld the evaluation; the Console timeline says “Evaluation upheld · evidence retained.” The serialized enum name remains stable.
+ - [x] **Smaller finding — FastNear credential transport:** deployed the Bearer-header implementation to production indexer Worker version `c604b8b1-e440-4f2f-8498-0329f8545370`; credentials are not placed in URLs and redirects are bounded to FastNear HTTPS hosts. Production currently has no `FASTNEAR_API_KEY` secret configured, so that credential path is inactive.
+ - [x] **Smaller finding — excess storage refunds:** `refund_excess` now reconciles transfer success through a private callback and credits failed refunds into the withdrawable storage-refund balance. The Console exposes the balance and withdrawal action for any connected wallet.
+-- [x] **Smaller finding — failed excess-refund callback acceptance:** local contract tests cover success, failure crediting, withdrawal, recredit after failed withdrawal, and successful retry. The feature-gated protocol-88 Sandbox acceptance directs a production `refund_excess` transfer to a missing local account, confirms the `0.01 NEAR` credit is restored, verifies a one-transfer margin fails before payout, withdraws at the measured exact margin, then rejects a replay with no second payout. See the [refreshed capture](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json) and [manifest](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256). The independently reviewed November 16 capture remains preserved. This is local Sandbox evidence; the missing-recipient override is feature-gated and not part of release WASM.
++- [x] **Smaller finding — failed excess-refund callback acceptance:** local contract tests cover success, failure crediting, withdrawal, recredit after failed withdrawal, and successful retry. The feature-gated protocol-88 Sandbox acceptance directs a production `refund_excess` transfer to a missing local account, confirms the `0.01 NEAR` credit is restored, verifies a one-transfer margin fails before payout, withdraws at the measured exact margin, then rejects a replay with no second payout. The pinned NEP-330 reproducible build acceptance is in the [reproducible capture](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json) and [manifest](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256). The older November 17 captures remain historical. This is local Sandbox evidence; the missing-recipient override is feature-gated and not part of release WASM.
+ - [x] **Smaller finding — successful excess-refund acceptance (2026-11-15):** commitment `38`'s three finalized evaluation transactions each recorded successful excess-storage-refund callbacks to the maintainer; see [evaluation 1](https://testnet.nearblocks.io/txns/7M6cCQQofwmvdKFWWvfm8Bdj7ByvPcb9ECuWjGZup4ix), [evaluation 2](https://testnet.nearblocks.io/txns/FHjWwREi7kL2a97JdfkmJSnXH391P2LDigqUXRbfeDyR), and [evaluation 3](https://testnet.nearblocks.io/txns/H3YEqTgaqmdXuP7yxFjjd8UfrJaay7AtKXqZYttyhm8A).
+ 
+ ## P0 public-readiness checklist
+@@ -205,9 +205,10 @@ Ordered to resolve protocol and safety questions before mainnet deployment:
+    - [x] Replay the exact successful callback after credit closure; the Sandbox callback was ignored and did not recreate the credit row or schedule another transfer.
+    - [x] Confirm withdrawal replay after a successful credit settlement is rejected because the row is closed; the transaction emitted only its failed method receipt and no second transfer/callback.
+    - [x] Exercise a valid maximum-size recovery envelope in the feature-gated NEAR VM parser: 500-byte intent, 714-byte certificate, five signatures, and exact 1,202-byte/1,604-character envelope limits. The read-only synthetic probe cannot settle a transfer; the run measured 14.024 Tgas. See the [Sandbox artifact](tests/sandbox-usdc-callbacks/receipt-recovery-sandbox-acceptance-2026-11-16.json).
+-   - [x] Add separate capture-integrity checkers that do not import the Sandbox runner: the protocol-88 verifier checks source hashes, code-hash derivation, receipt encodings, rollback/conservation assertions, and action-order metadata; the native excess-refund verifier pins its artifact, checks finalized root statuses and closed receipt body/outcome graphs, verifies exact transfer actions and cash/balance reconciliation, and rejects post-settlement replay. Mutation checks cover artifact, callback, duplicate/altered payout, and incomplete-graph tampering. These check saved Sandbox RPC records; they do not cryptographically anchor receipt proofs.
+-   - [x] Receive an independently administered reproduction of the native excess-refund Sandbox case; the November 16 [independent report](P2-USDC-NATIVE-EXCESS-REFUND-INDEPENDENT-REVIEW.md) accepted the scoped runtime behavior and identified two evidence/checker gaps (E1/E2). The source logs and receipts are preserved in [review evidence](audit/p2-native-excess-refund-independent-2026-11-16/). The owner remediation and refreshed November 17 capture are recorded in the Sandbox guide. The earlier reviewed capture and report remain historical evidence.
+-   - [ ] Obtain independent follow-up on the refreshed native excess-refund evidence and continue independent reproduction of the remaining protocol-88 fixtures, including operator receipt interpretation, receipt mapping, migration, and gas/storage boundaries before any canary. The focused follow-up handoff is in [the evidence review package](P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md); the original runtime scope is in [the reproduction review package](P2-USDC-NATIVE-EXCESS-REFUND-SANDBOX-REVIEW.md).
++   - [x] Add separate capture-integrity checkers that do not import the Sandbox runner: the protocol-88 verifier checks source hashes, code-hash derivation, receipt encodings, rollback/conservation assertions, and action-order metadata; the native excess-refund verifier pins the NEP-330 reproducible artifact, requires root-reachable receipt body/outcome graphs and an explicit terminal status for every receipt, requires every receipt in a successful withdrawal graph to succeed, binds payout actions to direct successful outcomes, reconciles exact cash/balances, and rejects any replay payout amount. Thirteen automated checks (one positive control and twelve mutations) cover artifact, callbacks, payout actions/statuses, missing or disconnected receipts, failed/empty/promise-only statuses, and one-yocto replay tampering. These check saved Sandbox RPC records; they do not cryptographically anchor receipt proofs.
++   - [x] Receive the initial independent native excess-refund review; the November 16 [report](P2-USDC-NATIVE-EXCESS-REFUND-INDEPENDENT-REVIEW.md) accepted the scoped runtime behavior and identified evidence/checker gaps E1/E2. The November 17 [follow-up report](P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-INDEPENDENT-REVIEW.md) closed E1, found additional E2 mutations, and identified a mismatch between the captured cached artifact and a clean source build. Original logs and receipts remain in [review evidence](audit/p2-native-excess-refund-independent-2026-11-16/).
++   - [x] Apply owner-side E2 remediation locally: require an explicit core-WASM path and expected digest; add a digest-pinned `sandbox-recovery` NEP-330 build variant; repeat its container build twice from contract source commit `950e3cb50fd79f559f5b6ff725fbfa32db70a063` and obtain the same SHA-256 `4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad` / NEAR code hash `6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212`; then pass that exact binary through fresh protocol-88 native-refund and bootstrap Sandbox runs. The older `33997e…` and plain clean-build `0f194b…` outputs remain diagnostic history, not the pinned candidate. The strengthened checker rejects the reported F2 mutations; the review handoff count is corrected to 24 source hashes. See the [reproducible capture](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json), [bootstrap guard capture](tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json), and [Sandbox instructions](tests/sandbox-usdc-callbacks/README.md).
++   - [ ] Obtain independent follow-up acceptance of the E2 remediations and continue independent reproduction of remaining protocol-88 fixtures, including operator receipt interpretation, receipt mapping, migration, and gas/storage boundaries before any canary. The refreshed [evidence review package](P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md) pins the candidate; the original runtime scope is in [the reproduction review package](P2-USDC-NATIVE-EXCESS-REFUND-SANDBOX-REVIEW.md).
+    - [x] Record the implementation/deployment boundary: owner authorized local, preview, and isolated testnet development on 2026-11-15; no production-domain contract upgrade before 2026-11-19. The testnet path is a fresh child instance such as `dev.livingcommitmentsprotocol.testnet`, with no state or liability migration from the existing contract. See [the recovery design](P2-USDC-RECEIPT-RECOVERY-DESIGN.md#state-storage-migration-and-atomic-settlement).
+    - [x] Resolve legacy cash-ledger bootstrap: do not migrate the current testnet contract's incomplete liability inventory. Initialize the recovery ledger from zero on a dedicated fresh child account; keep all predecessor balances, commitments, pending transfers, and refund obligations on the existing instance.
+    - [ ] Complete native cash-ledger and receipt-recovery acceptance before a canary:
+@@ -215,11 +216,11 @@ Ordered to resolve protocol and safety questions before mainnet deployment:
+      2. [x] Implement aggregate accounting for native escrow, operations, legacy refund credits, recovery credits, and reserved storage backing. Fixed-size persisted/preallocated payer-credit rows, payer-record ownership, terminal sealing/release, Q updates, exact attempt/callback reconciliation, settled-row tombstones, bounded reserve registry, top-up/revaluation, fail-closed cash-gate readiness, native cash flows, recovery-bound USDC claim/refund admission, callback/certificate settlement, credit withdrawal, and committee storage accounting are wired locally. Focused 2026-11-16 protocol-88 Sandbox runs reached the provisional 2,048-record cap, rejected record 2,049 without residue, rejected a 65-record revaluation batch, and completed 32 batches of 64; the 2,045 short-payer rows used 961,150 bytes. A 64-character valid AccountId run measured 527 bytes per credit row (33,728 bytes total); a funded variant added 64 such rows with 0.01 NEAR per credit, matching the exact 0.64 NEAR attached deposit to the aggregate `Q` liability. All remained `Pending`, non-withdrawable, cash-solvent, and reserve-ready again after revaluation. A focused OOG run submitted a max-payer 64-record revaluation with 10 Tgas using 64 funded pending rows (0.01 NEAR each, 0.64 NEAR total); protocol 88 returned `Exceeded the prepaid gas.`, left the sample credit, aggregate `Q`, and 67-record registry unchanged; zero-length and out-of-sequence batches also failed without state changes, then accepted a retry from cursor 0 that advanced to record 64; a second batch completed the 67-record registry. `Q` stayed at 0.64 NEAR throughout, and reserve readiness returned only after completion. See the [capacity capture](tests/sandbox-usdc-callbacks/storage-registry-sandbox-acceptance-2026-11-16.json), [maximum-payer capture](tests/sandbox-usdc-callbacks/storage-registry-shape-sandbox-acceptance-2026-11-16.json), [funded-pending capture](tests/sandbox-usdc-callbacks/storage-registry-funded-pending-sandbox-acceptance-2026-11-16.json), and [OOG rollback capture](tests/sandbox-usdc-callbacks/storage-registry-oog-sandbox-acceptance-2026-11-16.json), with their adjacent manifests. These fixture measurements do not establish worst-case gas or permanent production limits. Still open: independent tombstone review; other record states and payer distributions; complete the full matrix; characterize delayed callbacks; reproduce the exact artifacts independently.
+        - [x] Build the default release artifact without Sandbox fixture features and inspect its Wasm exports: required production entry points are present, and no `sandbox_*` method is exported. See [the feature-exclusion capture](tests/sandbox-usdc-callbacks/release-feature-exclusion-2026-11-16.json). This confirms feature separation, not reproducible-build identity.
+      3. [x] Persist attempt IDs for storage-credit withdrawals and `refund_excess`; exact single-result callbacks settle only the matching attempt. Failure retains the liability as a credit; missing/ambiguous results retain the attempt and liability. Local tests cover retry, success, failure, replay, and a missing result.
+-     4. [ ] Finish full cash-gate acceptance across tranche/escrow payouts, unused-operations refunds, storage-credit withdrawals, excess refunds, and OutLayer deposits. NEP-141 tranche claims pass in protocol-88 Sandbox: production `claim_tranche` succeeded from zero starting free margin with exact measured storage plus 1 yoctoNEAR; the mock token enforced that deposit, the beneficiary received one tranche, and the callback settled with native solvency intact. See [claim capture](tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.json) and [manifest](tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.sha256). Production `refund_remaining` also passed failed-transfer recovery and retry: a failed token receipt restored escrow; retry returned all NEP-141 escrow to the sponsor and accrued the `0.01 NEAR` excess; finalization released the storage bond, and exact-margin withdrawal paid the full `0.01742 NEAR` credit. See [refund capture](tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.json) and [manifest](tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256). The native excess-refund path now passes exact cash-margin and replay checks; see [refreshed capture](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json) and [manifest](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256). Focused protocol-88 Sandbox runs also call production `request_evaluation`, legacy signed-report `request_service_evaluation`, and transaction-authenticated `request_service_evaluation_from_inbox`. Exact storage bonds dispatch to a no-code evaluator; failed OutLayer actions return the 0.01 NEAR execution deposit while operations spend remains charged. The two-operator inbox capture confirms underfunded operations and one-yocto-short storage attempts keep both reports staged, while successful scheduling consumes both reports and creates their exact account-specific refund credits. Captures: [heartbeat dispatch](tests/sandbox-usdc-callbacks/outlayer-dispatch-sandbox-acceptance-2026-11-16.json), [legacy service dispatch](tests/sandbox-usdc-callbacks/service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json), and [service inbox dispatch](tests/sandbox-usdc-callbacks/service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.json). Hosted OutLayer behavior, action/gas boundaries, and remaining cash-gate coverage are still open.
++     4. [ ] Finish full cash-gate acceptance across tranche/escrow payouts, unused-operations refunds, storage-credit withdrawals, excess refunds, and OutLayer deposits. NEP-141 tranche claims pass in protocol-88 Sandbox: production `claim_tranche` succeeded from zero starting free margin with exact measured storage plus 1 yoctoNEAR; the mock token enforced that deposit, the beneficiary received one tranche, and the callback settled with native solvency intact. See [claim capture](tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.json) and [manifest](tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.sha256). Production `refund_remaining` also passed failed-transfer recovery and retry: a failed token receipt restored escrow; retry returned all NEP-141 escrow to the sponsor and accrued the `0.01 NEAR` excess; finalization released the storage bond, and exact-margin withdrawal paid the full `0.01742 NEAR` credit. See [refund capture](tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.json) and [manifest](tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256). The native excess-refund path now passes exact cash-margin and replay checks using the pinned reproducible capture at [native refund](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json); the related [bootstrap guard](tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json) also rejects migration after activity. Focused protocol-88 Sandbox runs also call production `request_evaluation`, legacy signed-report `request_service_evaluation`, and transaction-authenticated `request_service_evaluation_from_inbox`. Exact storage bonds dispatch to a no-code evaluator; failed OutLayer actions return the 0.01 NEAR execution deposit while operations spend remains charged. The two-operator inbox capture confirms underfunded operations and one-yocto-short storage attempts keep both reports staged, while successful scheduling consumes both reports and creates their exact account-specific refund credits. Captures: [heartbeat dispatch](tests/sandbox-usdc-callbacks/outlayer-dispatch-sandbox-acceptance-2026-11-16.json), [legacy service dispatch](tests/sandbox-usdc-callbacks/service-outlayer-dispatch-sandbox-acceptance-2026-11-16.json), and [service inbox dispatch](tests/sandbox-usdc-callbacks/service-inbox-outlayer-dispatch-sandbox-acceptance-2026-11-16.json). Hosted OutLayer behavior, action/gas boundaries, and remaining cash-gate coverage are still open.
+      5. [ ] Finish pending-callback liquidity acceptance:
+         - [x] Measure the protocol-88 one-yocto boundary: the exact `C = S + N + X` case passes, one yocto below it fails, and the recipient receives exactly one yocto only on success.
+         - [x] Validate an isolated-instance top-up path using a plain NEAR `Transfer` to the child contract account; it raises account balance by at least the transfer amount without a contract call or escrow, USDC, or operations-ledger credit. The Sandbox observation also included a delayed gas refund, so the fixture records the actual delta.
+-        - [x] Exercise production native `claim_tranche`, `refund_remaining`, `refund_unused_operations`, and `withdraw_storage_refund` entry points in protocol-88 Sandbox. Missing recipients failed; claim retry paid once, escrow retry refunded once, unused operations were restored then refunded once, and storage credit was restored then withdrawn once. The attached excess storage-deposit callback settled; a separate payer-credit capture forced excess-refund failure and retried withdrawal after measuring persisted attempt storage. The refreshed [excess-refund cash-gate fixture](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json) additionally captures finalized receipt graphs and a rejected withdrawal replay. Local Sandbox evidence only.
++        - [x] Exercise production native `claim_tranche`, `refund_remaining`, `refund_unused_operations`, and `withdraw_storage_refund` entry points in protocol-88 Sandbox. Missing recipients failed; claim retry paid once, escrow retry refunded once, unused operations were restored then refunded once, and storage credit was restored then withdrawn once. The attached excess storage-deposit callback settled; a separate payer-credit capture forced excess-refund failure and retried withdrawal after measuring persisted attempt storage. The [pinned reproducible excess-refund cash-gate fixture](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json) captures finalized receipt graphs and a rejected withdrawal replay. Local Sandbox evidence only.
+         - [x] Measure a lower and a conservative upper liquidity bound: a 0.01 NEAR free margin rejected the 0.01 NEAR escrow refund before requesting payout; a 0.005 NEAR margin rejected the 0.005 NEAR storage-credit withdrawal. Both kept their state and cash snapshots unchanged. Failure/retry paths passed with 1.07 NEAR free margin for refunds that attach 1 NEAR and 0.06 NEAR for the 0.005 NEAR credit. These are tested buffers, not the exact minimum.
+         - [x] Exercise a missing native settlement callback in protocol-88 Sandbox: the 0.005 NEAR refund transfer succeeded, its deliberately underfunded 1 Tgas callback ran out of gas, the available credit stayed at zero, and the liability remained reserved. At the 0.06 NEAR pre-withdrawal margin, 0.05482 NEAR free cash remained after transfer and added storage cost. Receipt evidence is in `native_storage_credit_callback_oog`; local only.
+         - [x] Exercise delayed callback scheduling on protocol-88 Sandbox through the production payer-withdrawal path: after the transfer in block 406, eight fixture receipts in blocks 407–414 each confirmed the credit stayed `Withdrawing`, `C = S + N + Q + F + X`, zero free cash, and no storage shortfall; the production callback settled in block 415. The one-yocto-short withdrawal still failed before payout. This is an exact boundary for this fixture, not real-network latency or a production funding recommendation.
+diff --git a/tests/sandbox-usdc-callbacks/README.md b/tests/sandbox-usdc-callbacks/README.md
+index 945ff36..9373efa 100644
+--- a/tests/sandbox-usdc-callbacks/README.md
++++ b/tests/sandbox-usdc-callbacks/README.md
+@@ -345,7 +345,7 @@ focused activity-guard case:
+ docker run --rm --init --platform linux/amd64 \
+   -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+   -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+-  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json node run.mjs'
++  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core/lcp_core.wasm LCP_EXPECTED_CORE_WASM_SHA256=4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json node run.mjs'
+ ```
+ 
+ The fixture deploys a second fresh core, calls `new`, creates a real draft
+@@ -356,7 +356,7 @@ commitment counter guard; challenge and transfer counters have separate
+ feature-gated unit tests because those actions require a commitment first.
+ It does not contact testnet or alter a deployed contract.
+ 
+-The [captured transaction and receipt evidence](bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json)
++The [captured transaction and receipt evidence](bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json)
+ stores both finalized transaction graphs, including the receipt body fetched by
+ receipt ID when `EXPERIMENTAL_tx_status` omitted it. Verify the capture and its
+ source manifest, then run the capture mutation checks:
+@@ -369,7 +369,7 @@ node --test tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.t
+ Regenerate and verify its source manifest after changing any captured input:
+ 
+ ```sh
+-shasum -a 256 tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json \
++shasum -a 256 tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json \
+   tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+   tests/sandbox-usdc-callbacks/verify-bootstrap-activity-guard-capture.mjs \
+   tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.test.mjs \
+@@ -381,10 +381,16 @@ shasum -a 256 tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acce
+   contracts/lcp-core/src/receipt_recovery.rs contracts/sandbox-mock-ft/Cargo.toml \
+   contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+   P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
+-  > tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.sha256
+-shasum -a 256 -c tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.sha256
++  > tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.sha256
++shasum -a 256 -c tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.sha256
+ ```
+ 
++The earlier `bootstrap-activity-guard-sandbox-acceptance-2026-11-17-clean-build.json`
++is retained as a diagnostic capture from the plain Rust build. The verifier and
++mutation tests use the pinned reproducible artifact capture above. The native
++plain-build comparison remains available as a [diagnostic capture](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-clean-build.json)
++with its [manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-clean-build.sha256).
++
+ To run only the production NEP-141 tranche-claim cash-gate case, add
+ `LCP_USDC_CLAIM_ONLY=1` while keeping `LCP_RECOVERY_ONLY=1`:
+ 
+@@ -479,13 +485,13 @@ shasum -a 256 -c tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-ac
+ 
+ To exercise a failed native excess-storage-refund callback and recover through
+ the production legacy payer-credit withdrawal, set
+-`LCP_NATIVE_EXCESS_REFUND_ONLY=1` in the same recovery-enabled build:
++`LCP_NATIVE_EXCESS_REFUND_ONLY=1` and select the pinned reproducible core:
+ 
+ ```sh
+ docker run --rm --init --platform linux/amd64 \
+   -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+   -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+-  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json node run.mjs'
++  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core/lcp_core.wasm LCP_EXPECTED_CORE_WASM_SHA256=4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json node run.mjs'
+ ```
+ 
+ The feature-gated fixture sends an attached `0.01 NEAR` deposit through the
+@@ -503,16 +509,28 @@ every raw receipt body and execution outcome; the verifier requires a closed
+ child graph. Recent nearcore versions do not wait for gas-refund receipts by
+ default, so this explicit finality setting prevents partial receipt captures
+ ([nearcore changelog](https://github.com/near/nearcore/blob/master/CHANGELOG.md)).
+-The original independently reviewed November 16 capture remains
+-unchanged. The refreshed protocol-88 run is captured on November 17 (UTC
+-timestamp) in
+-[`native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json)
+-with its [source checksum manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256).
++The first November 17 capture is retained as historical evidence; it records
++WASM hash `33997ebb…781872`. The independent follow-up and an owner clean build
++both produced `0f194b53…714963` (NEAR code hash
++`21wVBHeifP1dEmASeZgxurf554cwyPVyvfDK6QecDQjt`). These plain builds did not
++embed NEP-330 source metadata. The pinned `sandbox-recovery` NEP-330 build from
++contract source commit `950e3cb50fd79f559f5b6ff725fbfa32db70a063` produced
++`4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad` (NEAR
++code hash `6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212`) on two independent
++build invocations. NEP-330 embeds the source revision and build environment,
++so this exact output is tied to that commit and pinned container digest. The
++plain-build captures remain diagnostic and are not used as the current
++acceptance candidate.
++The runner accepts `LCP_CORE_WASM_PATH` and
++`LCP_EXPECTED_CORE_WASM_SHA256`; it rejects a digest mismatch before deploying.
++The fresh protocol-88 run using the pinned reproducible binary is captured in
++[`native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json)
++with its [source checksum manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256).
+ The E1/E2 independent follow-up scope and reproduction checklist are in the
+ [review handoff](../../P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md).
+-The original capture and manifest are preserved for the independently reviewed
+-source revision `519e59bad5115d2cad9d6564c898d548d94b2648`; verify that
+-historical manifest at that revision rather than against the refreshed files.
++The original November 16 capture and manifest remain unchanged; verify that
++historical manifest at its pinned source revision rather than against refreshed
++files.
+ The missing-recipient method and override exist only in the
+ `sandbox-callback-fixture` build; this is local Sandbox evidence, not a testnet
+ transfer or a production deployment.
+@@ -524,12 +542,15 @@ node tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
+ node --test tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
+ ```
+ 
+-The checker pins the independently reproduced fixture WASM hash and code hash,
+-exact storage growth, transaction roots, final execution status, complete
+-receipt outcome/body graphs, callback events, contract transfer actions,
+-cash snapshots, payer balance and credit reconciliation, replay rejection, and
+-source manifest. Mutation checks reject a changed artifact, removed failure
+-event, duplicate, missing or altered payout, and an incomplete receipt graph.
++The checker pins the NEP-330 reproducible fixture WASM hash and code hash, exact storage
++growth, transaction roots, final execution status, root-reachable receipt
++outcome/body graphs with a recognized status for every receipt, callback events,
++successful payout-receipt status, contract transfer actions, cash snapshots,
++payer balance and credit reconciliation, replay rejection for any payout amount,
++and source manifest. Mutation checks reject a changed artifact, removed failure
++event, duplicate, missing or altered payout, incomplete or disconnected receipt
++graphs, missing or failed withdrawal status, promise-only payout status, and a
++one-yocto replay payout.
+ To check another capture, pass its repository path and manifest as arguments. The
+ checker validates saved Sandbox RPC records; it does not rerun the Sandbox or
+ validate cryptographic receipt inclusion proofs against block headers.
+@@ -537,7 +558,7 @@ validate cryptographic receipt inclusion proofs against block headers.
+ Regenerate and verify the capture/source manifest from the repository root:
+ 
+ ```sh
+-shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json \
++shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json \
+   tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+   tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs \
+   tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs \
+@@ -550,10 +571,59 @@ shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbo
+   contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md \
+   P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+   P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
+-  > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256
+-shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256
++  > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256
++shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256
++```
++
++For a fresh, source-built fixture, pass the build output directly and pin its
++digest instead of relying on the default `target` path:
++
++```sh
++CARGO_TARGET_DIR=/tmp/lcp-near-sandbox-cache/recovery-target cargo near build \
++  non-reproducible-wasm --locked --no-abi \
++  --manifest-path contracts/lcp-core/Cargo.toml \
++  --features 'sandbox-callback-fixture usdc-receipt-recovery' \
++  --out-dir /tmp/lcp-near-sandbox-cache/recovery-core
++shasum -a 256 /tmp/lcp-near-sandbox-cache/recovery-core/lcp_core.wasm
++```
++
++The committed recovery variant uses the digest-pinned SourceScan image for a
++NEP-330 build. Build from the exact clean contract source commit; NEP-330
++includes that commit in the WASM, so a different commit produces a different
++digest even when the Rust sources are unchanged:
++
++```sh
++git worktree add --detach /tmp/lcp-p2-repro-source 950e3cb50fd79f559f5b6ff725fbfa32db70a063
++cd /tmp/lcp-p2-repro-source
++cargo near build reproducible-wasm --manifest-path contracts/lcp-core/Cargo.toml \
++  --variant sandbox-recovery --out-dir /tmp/lcp-near-sandbox-cache/reproducible-core
++shasum -a 256 /tmp/lcp-near-sandbox-cache/reproducible-core/lcp_core.wasm
+ ```
+ 
++The pinned image is `sourcescan/cargo-near:0.23.0-rust-1.100.0` at
++`sha256:265b662a03642196c8a1b97cb8e1bff9156488b584a9e040e9ef1f264e1049f1`.
++Two builds from the commit above yielded the same hash and NEAR code hash. A
++`non-reproducible-wasm` build remains useful for quick iteration, but is not the
++artifact pinned by the acceptance captures.
++
++Set `LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core/lcp_core.wasm` and
++`LCP_EXPECTED_CORE_WASM_SHA256=4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad`
++in the isolated Docker runner environment when generating the reproducible capture:
++
++```sh
++mkdir -p /tmp/lcp-near-sandbox-cache/bin /tmp/lcp-near-sandbox-cache/tmp
++docker run --rm --init --platform linux/amd64 \
++  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
++  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
++  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core/lcp_core.wasm LCP_EXPECTED_CORE_WASM_SHA256=4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json node run.mjs'
++```
++
++The owner captures from the plain `0f194b…` clean build are retained at the
++[`native clean-build capture`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-clean-build.json),
++[`bootstrap clean-build capture`](bootstrap-activity-guard-sandbox-acceptance-2026-11-17-clean-build.json),
++and their checksum manifests. The original `33997e…` capture and manifest are
++historical; neither is the pinned reproducible candidate.
++
+ The broader November 16 recovery-lifecycle run passed a read-only contract-VM
+ probe of a valid maximum-size certificate envelope: 500-byte intent, 714-byte certificate, five signatures,
+ 1,202 decoded bytes, and 1,604 Base64 characters. This synthetic probe uses the
+diff --git a/tests/sandbox-usdc-callbacks/run.mjs b/tests/sandbox-usdc-callbacks/run.mjs
+index b551cec..d207943 100644
+--- a/tests/sandbox-usdc-callbacks/run.mjs
++++ b/tests/sandbox-usdc-callbacks/run.mjs
+@@ -3342,16 +3342,25 @@ async function main() {
+       version: nodeStatus.version,
+     };
+ 
+-    const coreWasm = await readFile(join(wasmDir, "lcp_core.wasm"));
++    const coreWasmPath = process.env.LCP_CORE_WASM_PATH ?? join(wasmDir, "lcp_core.wasm");
++    const coreWasm = await readFile(coreWasmPath);
+     const tokenWasm = await readFile(join(wasmDir, "sandbox_mock_ft.wasm"));
+     const tokenVariantBWasm = await readFile(join(wasmDir, "sandbox_mock_ft_variant_b.wasm"));
++    const coreWasmSha256 = createHash("sha256").update(coreWasm).digest("hex");
++    if (process.env.LCP_EXPECTED_CORE_WASM_SHA256) {
++      assert.match(process.env.LCP_EXPECTED_CORE_WASM_SHA256, /^[a-f0-9]{64}$/,
++        "LCP_EXPECTED_CORE_WASM_SHA256 must be 64 lowercase hex characters");
++      assert.equal(coreWasmSha256, process.env.LCP_EXPECTED_CORE_WASM_SHA256,
++        "selected core WASM does not match LCP_EXPECTED_CORE_WASM_SHA256");
++    }
+     const codeHashV1 = base58Encode(createHash("sha256").update(tokenWasm).digest());
+     const codeHashV2 = base58Encode(createHash("sha256").update(tokenVariantBWasm).digest());
+     const codeHashCore = base58Encode(createHash("sha256").update(coreWasm).digest());
+     fixtures.artifacts = {
+       lcp_core_fixture: {
+-        wasm_sha256: createHash("sha256").update(coreWasm).digest("hex"),
++        wasm_sha256: coreWasmSha256,
+         near_code_hash: codeHashCore,
++        input_mode: process.env.LCP_CORE_WASM_PATH ? "explicit-path" : "default-target-path",
+       },
+       mock_ft_variant_a: {
+         wasm_sha256: createHash("sha256").update(tokenWasm).digest("hex"),
+diff --git a/tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs b/tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
+index d4131fd..97ce404 100644
+--- a/tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
++++ b/tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
+@@ -4,7 +4,7 @@ import test from "node:test";
+ import { fileURLToPath } from "node:url";
+ import { validateNativeExcessRefundCapture } from "../verify-native-excess-refund-capture.mjs";
+ 
+-const here = new URL("../native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json", import.meta.url);
++const here = new URL("../native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json", import.meta.url);
+ const canonical = JSON.parse(await readFile(fileURLToPath(here), "utf8"));
+ const clone = () => structuredClone(canonical);
+ 
+@@ -15,7 +15,7 @@ test("accepts the complete native excess-refund capture", () => {
+ test("rejects an unpinned core artifact digest", () => {
+   const changed = clone();
+   changed.wasm_artifacts.lcp_core_fixture.wasm_sha256 = "00".repeat(32);
+-  assert.throws(() => validateNativeExcessRefundCapture(changed), /independently reproduced core WASM/);
++  assert.throws(() => validateNativeExcessRefundCapture(changed), /pinned NEP-330 reproducible core WASM/);
+ });
+ 
+ test("rejects a missing refund-failure callback event", () => {
+@@ -71,3 +71,87 @@ test("rejects an incomplete child receipt graph", () => {
+     .filter(({ receipt_id }) => receipt_id !== childId);
+   assert.throws(() => validateNativeExcessRefundCapture(changed), /every referenced child outcome/);
+ });
++
++test("rejects a disconnected matched receipt outcome and body", () => {
++  const changed = clone();
++  const scenario = changed.scenarios.native_excess_refund_cash_gate;
++  const receiptId = "disconnected-matched-receipt";
++  scenario.withdrawal_receipts_outcome.push({
++    id: receiptId,
++    outcome: { executor_id: scenario.payer, status: { SuccessValue: "" }, receipt_ids: [], logs: [] },
++  });
++  scenario.withdrawal_receipts.push({
++    receipt_id: receiptId,
++    predecessor_id: "lcp-core-sandbox.sandbox",
++    receiver_id: scenario.payer,
++    receipt: { Action: { actions: [] } },
++  });
++  assert.throws(() => validateNativeExcessRefundCapture(changed), /disconnected receipt outcomes or bodies/);
++});
++
++test("rejects a payout action whose receipt outcome failed", () => {
++  const changed = clone();
++  const scenario = changed.scenarios.native_excess_refund_cash_gate;
++  const payout = scenario.withdrawal_receipts.find((receipt) => receipt.predecessor_id === "lcp-core-sandbox.sandbox"
++    && receipt.receiver_id === scenario.payer
++    && receipt.receipt?.Action?.actions?.some((action) => action.Transfer));
++  assert.ok(payout, "capture must contain the payer transfer body");
++  const outcome = scenario.withdrawal_receipts_outcome.find(({ id }) => id === payout.receipt_id);
++  assert.ok(outcome, "payer transfer must have a matching execution outcome");
++  outcome.outcome.status = { Failure: { ActionError: {} } };
++  assert.throws(() => validateNativeExcessRefundCapture(changed), /must not fail/);
++});
++
++test("rejects a payout receipt that only returns a child receipt ID", () => {
++  const changed = clone();
++  const scenario = changed.scenarios.native_excess_refund_cash_gate;
++  const payout = scenario.withdrawal_receipts.find((receipt) => receipt.predecessor_id === "lcp-core-sandbox.sandbox"
++    && receipt.receiver_id === scenario.payer
++    && receipt.receipt?.Action?.actions?.some((action) => action.Transfer));
++  assert.ok(payout, "capture must contain the payer transfer body");
++  const outcome = scenario.withdrawal_receipts_outcome.find(({ id }) => id === payout.receipt_id);
++  assert.ok(outcome, "payer transfer must have a matching execution outcome");
++  outcome.outcome.status = { SuccessReceiptId: "unrelated-child" };
++  assert.throws(() => validateNativeExcessRefundCapture(changed), /direct successful transfer result/);
++});
++
++test("rejects a withdrawal receipt without an execution status", () => {
++  const changed = clone();
++  const scenario = changed.scenarios.native_excess_refund_cash_gate;
++  const outcome = scenario.withdrawal_receipts_outcome[0];
++  outcome.outcome.status = {};
++  assert.throws(() => validateNativeExcessRefundCapture(changed), /exactly one execution status/);
++});
++
++test("rejects a failed non-payout receipt in an otherwise successful withdrawal", () => {
++  const changed = clone();
++  const scenario = changed.scenarios.native_excess_refund_cash_gate;
++  const payout = scenario.withdrawal_receipts.find((receipt) => receipt.predecessor_id === "lcp-core-sandbox.sandbox"
++    && receipt.receiver_id === scenario.payer
++    && receipt.receipt?.Action?.actions?.some((action) => action.Transfer));
++  assert.ok(payout, "capture must contain the payer transfer body");
++  const outcome = scenario.withdrawal_receipts_outcome.find(({ id }) => id !== payout.receipt_id);
++  assert.ok(outcome, "capture must contain a separate withdrawal receipt");
++  outcome.outcome.status = { Failure: { ActionError: {} } };
++  assert.throws(() => validateNativeExcessRefundCapture(changed), /successful withdrawal receipt .* must not fail/);
++});
++
++test("rejects any contract payout during replay, including one yocto", () => {
++  const changed = clone();
++  const scenario = changed.scenarios.native_excess_refund_cash_gate;
++  const parent = scenario.replay_receipts_outcome.find(({ outcome }) => outcome.receipt_ids?.length);
++  assert.ok(parent, "replay graph must have a receipt that can reference a child");
++  const receiptId = "one-yocto-replay-payout";
++  parent.outcome.receipt_ids.push(receiptId);
++  scenario.replay_receipts_outcome.push({
++    id: receiptId,
++    outcome: { executor_id: scenario.payer, status: { SuccessValue: "" }, receipt_ids: [], logs: [] },
++  });
++  scenario.replay_receipts.push({
++    receipt_id: receiptId,
++    predecessor_id: "lcp-core-sandbox.sandbox",
++    receiver_id: scenario.payer,
++    receipt: { Action: { actions: [{ Transfer: { deposit: "1" } }] } },
++  });
++  assert.throws(() => validateNativeExcessRefundCapture(changed), /transfer of any amount/);
++});
+diff --git a/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs b/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
+index 69be4e0..871854f 100644
+--- a/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
++++ b/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
+@@ -6,12 +6,13 @@ import { fileURLToPath } from "node:url";
+ 
+ const here = dirname(fileURLToPath(import.meta.url));
+ const repoRoot = resolve(here, "../..");
+-const stem = "native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17";
++const stem = "native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible";
+ const defaultCapturePath = join(here, `${stem}.json`);
+ const base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+-const EXPECTED_CORE_WASM_SHA256 = "33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872";
+-const EXPECTED_CORE_CODE_HASH = "4URYaJBxtUGhYbafSHMRkVyGcHcY8Zs1uwugpRM1p76Z";
++const EXPECTED_CORE_WASM_SHA256 = "4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad";
++const EXPECTED_CORE_CODE_HASH = "6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212";
+ const EXPECTED_WITHDRAWAL_STORAGE_GROWTH = 260_000_000_000_000_000_000n;
++const TERMINAL_EXECUTION_STATUSES = new Set(["SuccessValue", "SuccessReceiptId", "Failure"]);
+ 
+ function base58Encode(bytes) {
+   let value = BigInt(`0x${bytes.toString("hex") || "0"}`);
+@@ -68,6 +69,27 @@ function nativeTransfers(receipts) {
+   });
+ }
+ 
++function assertTerminalStatus(status, label) {
++  assert.ok(status && typeof status === "object" && !Array.isArray(status),
++    `${label} must include an execution status`);
++  const keys = Object.keys(status);
++  assert.equal(keys.length, 1, `${label} must have exactly one execution status`);
++  assert.ok(TERMINAL_EXECUTION_STATUSES.has(keys[0]),
++    `${label} must have a recognized terminal execution status`);
++  return keys[0];
++}
++
++function assertFinalResultStatus(status, label, expectedSuccess) {
++  const statusName = assertTerminalStatus(status, label);
++  assert.equal(statusName !== "Failure", expectedSuccess,
++    `${label} must ${expectedSuccess ? "succeed" : "fail"}`);
++}
++
++function assertReceiptSucceeded(outcome, label) {
++  const statusName = assertTerminalStatus(outcome?.outcome?.status, label);
++  assert.equal(statusName, "SuccessValue", `${label} must be a direct successful transfer result`);
++}
++
+ function assertFinalReceiptGraph(label, finalExecutionStatus, transactionOutcome, outcomes, bodies) {
+   assert.equal(finalExecutionStatus, "FINAL", `${label} must use finalized transaction status`);
+   assert.ok(Array.isArray(transactionOutcome?.outcome?.receipt_ids),
+@@ -76,20 +98,32 @@ function assertFinalReceiptGraph(label, finalExecutionStatus, transactionOutcome
+   assert.ok(Array.isArray(bodies), `${label} must capture raw receipt bodies`);
+   const outcomeIds = new Set(outcomes.map(({ id }) => id));
+   assert.equal(outcomeIds.size, outcomes.length, `${label} must have unique receipt outcome IDs`);
++  const outcomesById = new Map(outcomes.map((row) => [row.id, row]));
+   const bodyIds = new Set(bodies.map(({ receipt_id }) => receipt_id));
+   assert.equal(bodyIds.size, bodies.length, `${label} must have unique raw receipt bodies`);
+-  const referencedIds = [
+-    ...transactionOutcome.outcome.receipt_ids,
+-    ...outcomes.flatMap(({ outcome }) => outcome?.receipt_ids ?? []),
+-  ];
+-  assert.deepEqual([...new Set(referencedIds)].filter((id) => !outcomeIds.has(id)), [],
+-    `${label} must include every referenced child outcome`);
+   assert.deepEqual([...outcomeIds].filter((id) => !bodyIds.has(id)), [],
+     `${label} must include each receipt body`);
+   assert.deepEqual([...bodyIds].filter((id) => !outcomeIds.has(id)), [],
+     `${label} must not contain a receipt body without an outcome`);
+-  assert.ok(outcomes.every(({ outcome }) => !Object.hasOwn(outcome?.status ?? {}, "Unknown")),
+-    `${label} must not leave a receipt outcome unknown at FINAL`);
++
++  const roots = transactionOutcome.outcome.receipt_ids;
++  assert.equal(new Set(roots).size, roots.length, `${label} root receipt IDs must be unique`);
++  const reachable = new Set();
++  const pending = [...roots];
++  while (pending.length > 0) {
++    const receiptId = pending.pop();
++    if (reachable.has(receiptId)) continue;
++    const row = outcomesById.get(receiptId);
++    assert.ok(row, `${label} must include every referenced child outcome`);
++    reachable.add(receiptId);
++    assertTerminalStatus(row.outcome?.status, `${label} receipt ${receiptId}`);
++    assert.ok(Array.isArray(row.outcome?.receipt_ids),
++      `${label} receipt ${receiptId} must list child receipt IDs`);
++    pending.push(...row.outcome.receipt_ids);
++  }
++  assert.deepEqual([...reachable].sort(), [...outcomeIds].sort(),
++    `${label} must not contain disconnected receipt outcomes or bodies`);
++  return outcomesById;
+ }
+ 
+ export function validateNativeExcessRefundCapture(capture) {
+@@ -100,9 +134,9 @@ export function validateNativeExcessRefundCapture(capture) {
+ 
+   const coreArtifact = capture.wasm_artifacts.lcp_core_fixture;
+   assert.equal(coreArtifact.wasm_sha256, EXPECTED_CORE_WASM_SHA256,
+-    "fixture must use the independently reproduced core WASM artifact");
++    "fixture must use the pinned NEP-330 reproducible core WASM artifact");
+   assert.equal(coreArtifact.near_code_hash, EXPECTED_CORE_CODE_HASH,
+-    "fixture must use the independently reproduced NEAR code hash");
++    "fixture must use the pinned NEP-330 reproducible NEAR code hash");
+   const wasmDigest = Buffer.from(coreArtifact.wasm_sha256, "hex");
+   assert.equal(wasmDigest.length, 32, "WASM digest must be a SHA-256 digest");
+   assert.equal(base58Encode(wasmDigest), coreArtifact.near_code_hash,
+@@ -118,8 +152,14 @@ export function validateNativeExcessRefundCapture(capture) {
+   assertFinalReceiptGraph("underfunded withdrawal", scenario.underfunded_withdrawal_final_execution_status,
+     scenario.underfunded_withdrawal_transaction_outcome,
+     scenario.underfunded_withdrawal_receipts_outcome, scenario.underfunded_withdrawal_receipts);
+-  assertFinalReceiptGraph("successful withdrawal", scenario.withdrawal_final_execution_status,
++  const successfulWithdrawalOutcomes = assertFinalReceiptGraph("successful withdrawal",
++    scenario.withdrawal_final_execution_status,
+     scenario.withdrawal_transaction_outcome, scenario.withdrawal_receipts_outcome, scenario.withdrawal_receipts);
++  for (const [receiptId, row] of successfulWithdrawalOutcomes) {
++    assert.notEqual(assertTerminalStatus(row.outcome?.status,
++      `successful withdrawal receipt ${receiptId}`), "Failure",
++    `successful withdrawal receipt ${receiptId} must not fail`);
++  }
+   assertFinalReceiptGraph("replayed withdrawal", scenario.replay_final_execution_status,
+     scenario.replay_transaction_outcome, scenario.replay_receipts_outcome, scenario.replay_receipts);
+ 
+@@ -133,18 +173,18 @@ export function validateNativeExcessRefundCapture(capture) {
+     assert.equal(transactionOutcome.id, transactionHash, `${label} root must match captured transaction hash`);
+   }
+ 
+-  assert.ok(!Object.hasOwn(scenario.failure_transaction_outcome.outcome.status ?? {}, "Failure"),
+-    "the excess-refund request itself must succeed while its transfer fails downstream");
+-  assert.ok(!Object.hasOwn(scenario.failure_status ?? {}, "Failure"),
+-    "the finalized failed-refund transaction result must succeed after callback reconciliation");
+-  assert.ok(Object.hasOwn(scenario.underfunded_withdrawal_status ?? {}, "Failure"),
+-    "cash-gated withdrawal must fail at the contract root");
+-  assert.ok(!Object.hasOwn(scenario.withdrawal_transaction_outcome.outcome.status ?? {}, "Failure"),
+-    "successful withdrawal must succeed at the contract root");
+-  assert.ok(!Object.hasOwn(scenario.withdrawal_status ?? {}, "Failure"),
+-    "the finalized withdrawal transaction result must succeed");
+-  assert.ok(Object.hasOwn(scenario.replay_status ?? {}, "Failure"),
+-    "withdrawal replay after settlement must fail at the contract root");
++  assertFinalResultStatus(scenario.failure_transaction_outcome.outcome.status,
++    "failed excess-refund request root", true);
++  assertFinalResultStatus(scenario.failure_status,
++    "failed excess-refund finalized transaction", true);
++  assertFinalResultStatus(scenario.underfunded_withdrawal_status,
++    "cash-gated withdrawal", false);
++  assertFinalResultStatus(scenario.withdrawal_transaction_outcome.outcome.status,
++    "successful withdrawal root", true);
++  assertFinalResultStatus(scenario.withdrawal_status,
++    "successful withdrawal finalized transaction", true);
++  assertFinalResultStatus(scenario.replay_status,
++    "withdrawal replay after settlement", false);
+ 
+   const missingAccountReceipt = scenario.failure_receipts_outcome.find(
+     ({ outcome }) => outcome.executor_id === "missing-excess-refund.sandbox",
+@@ -155,6 +195,9 @@ export function validateNativeExcessRefundCapture(capture) {
+     "missing-excess-refund.sandbox",
+     "the native transfer must fail because the fixture recipient does not exist",
+   );
++  assert.equal(assertTerminalStatus(missingAccountReceipt.outcome.status,
++    "forced missing-account refund transfer"), "Failure",
++  "the attempted excess-refund transfer must have a finalized failure outcome");
+   const failedRefundEvent = findEvent(scenario.failure_receipts_outcome, "excess_storage_refund_failed");
+   assert.ok(failedRefundEvent, "production callback failure event must be captured");
+   assert.equal(failedRefundEvent.receipt.outcome.executor_id, "lcp-core-sandbox.sandbox");
+@@ -182,10 +225,10 @@ export function validateNativeExcessRefundCapture(capture) {
+   assert.ok(cashGateLog, "one-transfer margin rejection must capture the cash-gate diagnostic");
+   assert.ok(!underfundedLogs.some((log) => log.includes('"event":"service_report_refund_requested"')),
+     "underfunded withdrawal must not request a native transfer");
+-  assert.ok(!nativeTransfers(scenario.underfunded_withdrawal_receipts)
+-    .some(({ predecessor_id, receiver_id, amount_yocto }) => predecessor_id === "lcp-core-sandbox.sandbox"
+-      && receiver_id === scenario.payer && amount_yocto === amount.toString()),
+-  "underfunded withdrawal must not create the payer payout action");
++  assert.deepEqual(nativeTransfers(scenario.underfunded_withdrawal_receipts)
++    .filter(({ predecessor_id, receiver_id }) => predecessor_id === "lcp-core-sandbox.sandbox"
++      && receiver_id === scenario.payer), [],
++  "underfunded withdrawal must not create a contract-to-payer transfer of any amount");
+   const gateMatch = cashGateLog.match(/C=(\d+) S=(\d+).*X=(\d+)/);
+   assert.ok(gateMatch, "cash-gate diagnostic must include balance, storage and planned outflow");
+   assert.equal(BigInt(gateMatch[1]), cashBeforeWithdrawal[0]);
+@@ -209,6 +252,10 @@ export function validateNativeExcessRefundCapture(capture) {
+       predecessor_id === "lcp-core-sandbox.sandbox" && receiver_id === scenario.payer);
+   assert.deepEqual(payoutTransfers.map(({ amount_yocto }) => amount_yocto), [amount.toString()],
+     "successful withdrawal must contain exactly one payer transfer for the credit amount");
++  for (const payout of payoutTransfers) {
++    assertReceiptSucceeded(successfulWithdrawalOutcomes.get(payout.receipt_id),
++      `successful withdrawal payout receipt ${payout.receipt_id}`);
++  }
+   assert.equal(scenario.final_payer_credit_yocto, "0", "successful callback must close the payer credit");
+   const fees = BigInt(scenario.withdrawal_fees_yocto);
+   const receiptFees = scenario.withdrawal_receipts_outcome.reduce(
+@@ -225,10 +272,10 @@ export function validateNativeExcessRefundCapture(capture) {
+   assert.equal(after + fees, before + amount,
+     "payer balance increase plus measured transaction fees must equal the credit paid");
+ 
+-  assert.ok(!nativeTransfers(scenario.replay_receipts).some(({ predecessor_id, receiver_id, amount_yocto }) =>
+-    predecessor_id === "lcp-core-sandbox.sandbox"
+-      && receiver_id === scenario.payer && amount_yocto === amount.toString()),
+-  "settled withdrawal replay must not create a duplicate payer transfer");
++  assert.deepEqual(nativeTransfers(scenario.replay_receipts)
++    .filter(({ predecessor_id, receiver_id }) => predecessor_id === "lcp-core-sandbox.sandbox"
++      && receiver_id === scenario.payer), [],
++  "settled withdrawal replay must not create a contract-to-payer transfer of any amount");
+   assert.ok(!logsOf(scenario.replay_receipts_outcome)
+     .some((log) => log.includes('"event":"service_report_refund_requested"')),
+   "settled withdrawal replay must not request a second payout");

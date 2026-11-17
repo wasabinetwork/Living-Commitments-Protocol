@@ -136,6 +136,67 @@ test("rejects a failed non-payout receipt in an otherwise successful withdrawal"
   assert.throws(() => validateNativeExcessRefundCapture(changed), /successful withdrawal receipt .* must not fail/);
 });
 
+function appendContractTransfer(changed, graph, { receiver, amount }) {
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const parent = scenario[`${graph}_receipts_outcome`]
+    .find(({ outcome }) => outcome.receipt_ids?.length);
+  assert.ok(parent, `${graph} graph must have a receipt that can reference a child`);
+  const receiptId = `synthetic-${graph}-transfer-${receiver}`;
+  parent.outcome.receipt_ids.push(receiptId);
+  scenario[`${graph}_receipts_outcome`].push({
+    id: receiptId,
+    outcome: { executor_id: receiver, status: { SuccessValue: "" }, receipt_ids: [], logs: [] },
+  });
+  scenario[`${graph}_receipts`].push({
+    receipt_id: receiptId,
+    predecessor_id: "lcp-core-sandbox.sandbox",
+    receiver_id: receiver,
+    receipt: { Action: { actions: [{ Transfer: { deposit: amount } }] } },
+  });
+}
+
+test("rejects a replay transfer to a recipient other than the payer", () => {
+  const changed = clone();
+  const { amount_yocto: amount } = changed.scenarios.native_excess_refund_cash_gate;
+  appendContractTransfer(changed, "replay", { receiver: "unrelated-account.sandbox", amount });
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /contract-originated transfer to any recipient/);
+});
+
+test("rejects an underfunded withdrawal transfer to a recipient other than the payer", () => {
+  const changed = clone();
+  const { amount_yocto: amount } = changed.scenarios.native_excess_refund_cash_gate;
+  appendContractTransfer(changed, "underfunded_withdrawal",
+    { receiver: "unrelated-account.sandbox", amount });
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /contract-originated transfer to any recipient/);
+});
+
+test("rejects a payout receipt body that does not bind to its outcome executor", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const payout = scenario.withdrawal_receipts.find((receipt) => receipt.predecessor_id === "lcp-core-sandbox.sandbox"
+    && receipt.receiver_id === scenario.payer
+    && receipt.receipt?.Action?.actions?.some((action) => action.Transfer));
+  assert.ok(payout, "capture must contain the payer transfer body");
+  const outcome = scenario.withdrawal_receipts_outcome.find(({ id }) => id === payout.receipt_id);
+  assert.ok(outcome, "payer transfer must have a matching execution outcome");
+  outcome.outcome.executor_id = "unrelated-account.sandbox";
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /body receiver must bind to its outcome executor/);
+});
+
+test("rejects a failed excess-refund callback receipt status", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const callback = scenario.failure_receipts_outcome.find(({ outcome }) =>
+    (outcome.logs ?? []).some((log) => log.includes('"event":"excess_storage_refund_failed"')));
+  assert.ok(callback, "capture must contain the failed refund callback receipt");
+  callback.outcome.status = { Failure: { ActionError: {} } };
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /must itself succeed/);
+});
+
 test("rejects any contract payout during replay, including one yocto", () => {
   const changed = clone();
   const scenario = changed.scenarios.native_excess_refund_cash_gate;
@@ -153,5 +214,6 @@ test("rejects any contract payout during replay, including one yocto", () => {
     receiver_id: scenario.payer,
     receipt: { Action: { actions: [{ Transfer: { deposit: "1" } }] } },
   });
-  assert.throws(() => validateNativeExcessRefundCapture(changed), /transfer of any amount/);
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /contract-originated transfer to any recipient/);
 });

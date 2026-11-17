@@ -1,0 +1,27 @@
+# Owner re-check of the E2 capture verifier and mutation tests
+# date: 2026-11-17T15:44:00Z
+# verifier sha256: 37cf1a7a8c1516b47daea1b53173eadd54a27a054ae63008659faa644abae4f2
+# tests sha256:    f23ce01620332d21a99aee0eadb5e25ea482437d6df3feea7cc1616372ffd8fd
+# capture sha256:  de3e9437c9de64c8851a269cf901cb3bf5057607b965e2416fbe2180a27c13c7
+
+$ node --test tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
+✔ rejects any contract payout during replay, including one yocto (1.59468ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 375.370811
+
+$ node tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
+AssertionError [ERR_ASSERTION]: tests/sandbox-usdc-callbacks/README.md does not match its captured digest
+
+# Stale rows in the committed capture manifest after the checker remediation.
+# The manifest pins checker inputs as well as evidence, so fixing the checker invalidates
+# its own pinned rows. The capture and all contract sources still match byte-for-byte.
+  FAILED tests/sandbox-usdc-callbacks/README.md
+  FAILED tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
+  FAILED tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
+# 21 of 24 rows verify OK; the 3 stale rows are the verifier, the mutation tests, and README.

@@ -1,0 +1,2 @@
+PASS native excess-refund capture: 24 source hashes, closed finalized receipt graphs, pinned artifact, exact transfer actions and replay rejection, exact storage margin, and solvency
+LIMITATION: validates captured Sandbox node records and manifest consistency; it does not validate cryptographic receipt inclusion proofs against block headers.

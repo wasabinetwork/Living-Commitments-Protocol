@@ -1,0 +1,63 @@
+{
+  "generated_at": "2026-11-17T15:43:56.610Z",
+  "role": "owner-side reconstruction, not an independent review",
+  "capture": {
+    "path": "tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json",
+    "sha256": "de3e9437c9de64c8851a269cf901cb3bf5057607b965e2416fbe2180a27c13c7"
+  },
+  "verifier": {
+    "path": "tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs",
+    "sha256": "37cf1a7a8c1516b47daea1b53173eadd54a27a054ae63008659faa644abae4f2"
+  },
+  "baseline": {
+    "committed_verifier": "ACCEPTED",
+    "strengthened_check": "ACCEPTED",
+    "strengthened_reasons": []
+  },
+  "mutations": [
+    {
+      "mutation": "replay-other-recipient",
+      "note": "LCP-originated replay transfer to an account other than the payer",
+      "committed_verifier": "REJECTED",
+      "committed_verifier_reason": "settled withdrawal replay must not create a contract-originated transfer to any recipient",
+      "strengthened_check": "REJECTED",
+      "strengthened_reasons": [
+        "replay: contract-originated transfer SyntheticreplayTransferattackeraccountsandbox1111 to non-payer attacker-account.sandbox of 10000000000000000000000 yocto"
+      ],
+      "classification": "mutation already rejected by committed verifier"
+    },
+    {
+      "mutation": "payout-executor-mismatch",
+      "note": "payout receipt body and execution outcome disagree about the executor identity",
+      "committed_verifier": "REJECTED",
+      "committed_verifier_reason": "successful withdrawal receipt 2S3iZW4TtdLx83NbNAsWHkZJMW5Jbs2LsaygANKyHTdG body receiver must bind to its outcome executor",
+      "strengthened_check": "REJECTED",
+      "strengthened_reasons": [
+        "withdrawal: receipt 2S3iZW4TtdLx83NbNAsWHkZJMW5Jbs2LsaygANKyHTdG body receiver recipient.sandbox does not bind to outcome executor attacker-account.sandbox"
+      ],
+      "classification": "mutation already rejected by committed verifier"
+    },
+    {
+      "mutation": "failure-callback-failed",
+      "note": "the failed-refund callback receipt itself has a failed execution status",
+      "committed_verifier": "REJECTED",
+      "committed_verifier_reason": "the production callback that records the failed refund must itself succeed",
+      "strengthened_check": "REJECTED",
+      "strengthened_reasons": [
+        "failed refund: excess_storage_refund_failed callback receipt did not succeed"
+      ],
+      "classification": "mutation already rejected by committed verifier"
+    },
+    {
+      "mutation": "underfunded-other-recipient",
+      "note": "additional case in the same class: underfunded withdrawal pays an unrelated account",
+      "committed_verifier": "REJECTED",
+      "committed_verifier_reason": "underfunded withdrawal must not create a contract-originated transfer to any recipient",
+      "strengthened_check": "REJECTED",
+      "strengthened_reasons": [
+        "underfunded withdrawal: contract-originated transfer Syntheticunderfunded_withdrawalTransferattackeraccountsandbox1111 to non-payer attacker-account.sandbox of 10000000000000000000000 yocto"
+      ],
+      "classification": "mutation already rejected by committed verifier"
+    }
+  ]
+}
