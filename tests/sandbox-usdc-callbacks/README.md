@@ -564,7 +564,10 @@ Regenerate and verify the capture/source manifest from the repository root. It
 pins only the evidence capture and the contract/build inputs used by the Sandbox
 fixture. Verifier, tests, runner, package metadata, and README hashes live in a
 separate tooling manifest so edits to mutable tooling and docs do not invalidate
-the capture/source manifest:
+the capture/source manifest. Root planning and review documents, including
+`TODO.md` and `P2-USDC-*`, are intentionally excluded from both manifests; the
+Git commit identifies their revision, while these manifests pin the capture
+inputs and executable verification tooling:
 
 ```sh
 shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json \
