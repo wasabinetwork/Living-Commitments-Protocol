@@ -25,6 +25,7 @@ pub use models::{
 pub use receipt_recovery::ReceiptRecoveryIntentViewV1;
 #[cfg(feature = "usdc-receipt-recovery")]
 pub use recovery_accounting::ReceiptRecoveryCreditViewV1;
+pub use recovery_accounting::RecoveryStorageReserveViewV1;
 pub use recovery_accounting::RevaluationBatchResult;
 #[cfg(feature = "usdc-receipt-recovery")]
 pub use recovery_config::{

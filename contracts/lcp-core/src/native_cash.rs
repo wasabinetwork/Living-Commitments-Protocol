@@ -146,19 +146,14 @@ impl NativeCashLedgerV1 {
 
 pub(crate) fn initialize_fresh() {
     if env::storage_read(STORAGE_KEY).is_some() {
-        // The SDK mock environment can call the initializer more than once
-        // while keeping raw storage between synthetic instances in one test.
-        // A deployed NEAR initializer is compiled without `cfg(test)` and
-        // always rejects this state instead of erasing liabilities.
-        #[cfg(test)]
-        {
-            write(&NativeCashLedgerV1::empty());
-            return;
-        }
-        #[cfg(not(test))]
         env::panic_str("native cash ledger already initialized");
     }
     write(&NativeCashLedgerV1::empty());
+}
+
+#[cfg(test)]
+pub(crate) fn clear_initializer_for_test() {
+    env::storage_remove(STORAGE_KEY);
 }
 
 pub(crate) fn load() -> NativeCashLedgerV1 {
@@ -426,5 +421,16 @@ mod tests {
         adjust(NativeLiability::Escrow, true, 1);
 
         assert_solvency();
+    }
+
+    #[test]
+    #[should_panic(expected = "native cash ledger already initialized")]
+    fn fresh_native_cash_ledger_rejects_reinitialization() {
+        testing_env!(VMContextBuilder::new()
+            .current_account_id(accounts(0))
+            .account_balance(NearToken::from_yoctonear(10_u128.pow(30)))
+            .build());
+        initialize_fresh();
+        initialize_fresh();
     }
 }

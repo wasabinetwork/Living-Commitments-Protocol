@@ -135,14 +135,16 @@ pub struct ReceiptRecoveryConfigViewV1 {
 /// initialized by whoever reaches it first, as with ordinary NEAR contracts.
 pub(crate) fn initialize_bootstrap_authority(initializer: &AccountId) {
     if env::storage_read(BOOTSTRAP_AUTHORITY_KEY).is_some() {
-        #[cfg(test)]
-        env::storage_remove(BOOTSTRAP_AUTHORITY_KEY);
-        #[cfg(not(test))]
         env::panic_str("receipt recovery bootstrap authority already initialized");
     }
     let bytes = borsh::to_vec(initializer)
         .unwrap_or_else(|_| env::panic_str("failed to serialize recovery bootstrap authority"));
     env::storage_write(BOOTSTRAP_AUTHORITY_KEY, &bytes);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_initializer_for_test() {
+    env::storage_remove(BOOTSTRAP_AUTHORITY_KEY);
 }
 
 /// Consumes the one-time initializer authority and writes the initial config,
@@ -1206,4 +1208,23 @@ fn used_key_storage_key(index: u32) -> Vec<u8> {
     key.extend_from_slice(USED_KEY_PREFIX);
     key.extend_from_slice(&index.to_le_bytes());
     key
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use near_sdk::{
+        test_utils::{accounts, VMContextBuilder},
+        testing_env,
+    };
+
+    #[test]
+    #[should_panic(expected = "receipt recovery bootstrap authority already initialized")]
+    fn bootstrap_authority_rejects_reinitialization() {
+        testing_env!(VMContextBuilder::new()
+            .current_account_id(accounts(0))
+            .build());
+        initialize_bootstrap_authority(&accounts(0));
+        initialize_bootstrap_authority(&accounts(1));
+    }
 }

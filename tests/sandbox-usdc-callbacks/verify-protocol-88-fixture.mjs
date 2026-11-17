@@ -11,10 +11,10 @@ assert.ok(verifierArgs.length === 0 || verifierArgs.length === 2,
   "usage: node verify-protocol-88-fixture.mjs [<repo-relative-capture> <repo-relative-source-manifest>]");
 const fixturePath = verifierArgs.length === 2
   ? resolve(repoRoot, verifierArgs[0])
-  : join(here, "protocol-88-receipt-fixture.json");
+  : join(here, "recovery-acceptance-2026-11-17-18ed543/protocol-88.json");
 const manifestPath = verifierArgs.length === 2
   ? resolve(repoRoot, verifierArgs[1])
-  : join(here, "protocol-88-receipt-fixture.sha256");
+  : join(here, "p2-usdc-recovery-local-acceptance-2026-11-17.sha256");
 const base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function decodeBase58(text, label) {

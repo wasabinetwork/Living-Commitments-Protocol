@@ -633,6 +633,12 @@ impl Contract {
         crate::recovery_accounting::top_up_storage_reserve(env::attached_deposit().as_yoctonear());
     }
 
+    /// Reports reserve backing, byte-cost freshness, and bounded revaluation
+    /// progress without probing a cash-moving method.
+    pub fn recovery_storage_reserve_view(&self) -> crate::RecoveryStorageReserveViewV1 {
+        crate::recovery_accounting::storage_reserve_view()
+    }
+
     /// Starts storage-bond revaluation after a NEAR storage byte-cost change.
     /// Cash-sensitive actions remain paused until bounded batches complete.
     pub fn begin_recovery_storage_revaluation(&mut self) -> bool {
@@ -6990,6 +6996,11 @@ fn callback_promise_succeeded() -> Option<bool> {
         return None;
     }
 
+    // The native/token transfer path treats an oversized successful payload as
+    // success because the value movement has already completed and retrying
+    // could pay twice. Persisted recovery-credit withdrawals use a stricter
+    // zero-payload rule below: unexpected payloads leave their liability in
+    // flight rather than being interpreted as a failed transfer.
     match env::promise_result_checked(0, 0) {
         Ok(_) | Err(PromiseError::TooLong(_)) => Some(true),
         Err(PromiseError::Failed) => Some(false),
@@ -8111,7 +8122,7 @@ mod tests {
     )]
     fn recovery_bootstrap_rejects_prior_commitment_activity() {
         testing_env!(context(accounts(0), 0));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         contract.next_commitment_id = 1;
 
         contract.bootstrap_receipt_recovery(empty_recovery_bootstrap_args());
@@ -8124,7 +8135,7 @@ mod tests {
     )]
     fn recovery_bootstrap_rejects_prior_challenge_activity() {
         testing_env!(context(accounts(0), 0));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         contract.next_challenge_id = 1;
 
         contract.bootstrap_receipt_recovery(empty_recovery_bootstrap_args());
@@ -8137,7 +8148,7 @@ mod tests {
     )]
     fn recovery_bootstrap_rejects_prior_transfer_activity() {
         testing_env!(context(accounts(0), 0));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         contract.next_transfer_id = 1;
 
         contract.bootstrap_receipt_recovery(empty_recovery_bootstrap_args());
@@ -8161,9 +8172,28 @@ mod tests {
             .build()
     }
 
+    /// Resets only fresh-instance sentinel keys between synthetic contract
+    /// deployments. Production initializers remain strict and never erase an
+    /// existing ledger or bootstrap authority.
+    fn new_contract() -> Contract {
+        native_cash::clear_initializer_for_test();
+        crate::recovery_accounting::clear_initializer_for_test();
+        #[cfg(feature = "usdc-receipt-recovery")]
+        crate::recovery_config::clear_initializer_for_test();
+        Contract::new()
+    }
+
+    #[test]
+    #[should_panic(expected = "native cash ledger already initialized")]
+    fn contract_constructor_rejects_reinitialization() {
+        testing_env!(context(accounts(0), 0));
+        Contract::new();
+        Contract::new();
+    }
+
     fn contract_with_pending_tranche() -> (Contract, AccountId) {
         testing_env!(context(accounts(0), 0));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let sponsor = accounts(1);
         let maintainer = accounts(2);
         let beneficiary = accounts(3);
@@ -8427,7 +8457,7 @@ mod tests {
 
     fn create_usdc_service_commitment() -> (Contract, U64) {
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let id = contract.create_service_availability_commitment_on_chain(
             usdc_service_commitment_args(),
             "testnet",
@@ -8573,7 +8603,7 @@ mod tests {
         }
 
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let id = contract.create_service_availability_commitment(args);
         let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
         commitment.lifecycle = Lifecycle::Active;
@@ -8606,7 +8636,7 @@ mod tests {
         }
 
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let id = contract.create_service_availability_commitment(args);
         let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
         commitment.lifecycle = Lifecycle::Active;
@@ -8721,7 +8751,7 @@ mod tests {
 
     fn active_service_commitment() -> (Contract, U64) {
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let id = contract.create_service_availability_commitment(service_commitment_args());
         let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
         commitment.lifecycle = Lifecycle::Active;
@@ -8997,7 +9027,7 @@ mod tests {
     #[test]
     fn service_availability_commitment_keeps_v3_policy_in_a_sidecar() {
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let args = service_commitment_args();
         let expected_source_policy = args.service_availability.clone();
         let id = contract.create_service_availability_commitment(args);
@@ -9067,7 +9097,7 @@ mod tests {
     #[should_panic(expected = "use the verified Circle USDC contract")]
     fn usdc_service_commitment_rejects_a_different_testnet_token_account() {
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let mut args = usdc_service_commitment_args();
         args.policy.budget.settlement_asset = Some(SettlementAssetArgs::Nep141 {
             token_account_id: "other-token.testnet".parse().unwrap(),
@@ -9592,7 +9622,7 @@ mod tests {
 
         let attached = 5 * 10_u128.pow(22); // 0.05 NEAR
         testing_env!(context("wasabinetwork.testnet".parse().unwrap(), attached));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let id = contract.create_service_availability_commitment(args);
         let commitment = contract.commitments.get(&id.0).unwrap();
 
@@ -9609,7 +9639,7 @@ mod tests {
             "wasabinetwork.testnet".parse().unwrap(),
             10_u128.pow(22)
         ));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         contract.create_service_availability_commitment(args);
     }
 
@@ -9992,7 +10022,7 @@ mod tests {
     #[test]
     fn service_evaluation_request_pins_reports_and_reserves_callback_summary() {
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let id = contract.create_service_availability_commitment(service_commitment_args());
         let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
         commitment.lifecycle = Lifecycle::Active;
@@ -10928,7 +10958,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn successful_excess_storage_refund_does_not_create_a_withdrawable_credit() {
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let account_id = accounts(1);
         let amount = 123_u128;
         let attempt_id = native_cash::begin_refund_attempt(
@@ -10952,7 +10982,7 @@ mod tests {
     #[test]
     fn missing_storage_refund_callback_result_keeps_attempt_pending() {
         testing_env!(context(accounts(0), 0));
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let attempt_id = native_cash::begin_refund_attempt(
             accounts(1),
             77,
@@ -10970,7 +11000,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn failed_excess_storage_refund_can_be_retried_from_credited_balance() {
-        let mut contract = Contract::new();
+        let mut contract = new_contract();
         let account_id = accounts(1);
         let amount = 123_u128;
         let first_attempt_id = native_cash::begin_refund_attempt(

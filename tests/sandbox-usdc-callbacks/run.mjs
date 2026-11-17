@@ -1733,6 +1733,13 @@ async function main() {
         .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n);
       const recordCount = async () => BigInt(await view(CORE_ID, "sandbox_recovery_storage_record_count", {}));
       const initialRecordCount = await recordCount();
+      const initialReserveView = await view(CORE_ID, "recovery_storage_reserve_view", {});
+      assert.equal(initialReserveView.status, "ready",
+        "the public reserve view must report a ready reserve after bootstrap");
+      assert.equal(initialReserveView.ready, true,
+        "the public reserve view must expose readiness directly");
+      assert.equal(BigInt(initialReserveView.record_count), initialRecordCount,
+        "the public reserve view must report the fixture registry count");
       assert.ok(initialRecordCount < BigInt(STORAGE_BOND_REGISTRY_LIMIT),
         "bootstrap must leave capacity for the registry-limit acceptance");
       let seededCreditCount = 0;
@@ -1771,6 +1778,18 @@ async function main() {
 
       assert.equal(currentCount, BigInt(STORAGE_BOND_REGISTRY_LIMIT),
         "Sandbox must reach the configured storage-bond record limit");
+      const capacityReserveView = await view(CORE_ID, "recovery_storage_reserve_view", {});
+      assert.equal(capacityReserveView.status, "ready",
+        "the public reserve view must remain ready at registry capacity");
+      assert.equal(capacityReserveView.ready, true,
+        "the public reserve view must expose readiness at registry capacity");
+      assert.equal(BigInt(capacityReserveView.record_count), currentCount,
+        "the public reserve view must report every record at capacity");
+      assert.equal(capacityReserveView.revaluation_active, false,
+        "a ready reserve must not report active revaluation");
+      assert.equal(capacityReserveView.stored_byte_cost_yocto,
+        capacityReserveView.observed_byte_cost_yocto,
+        "the ready reserve must expose the current storage byte cost");
       const fixtureCreditId = (index) => createHash("sha256")
         .update(Buffer.concat([
           Buffer.from("LCP/SANDBOX/STORAGE-REGISTRY-CAP/V1\0", "utf8"),
@@ -1809,10 +1828,30 @@ async function main() {
 
       await rootCall("sandbox_mark_recovery_storage_price_stale", {},
         "mark storage reserve stale for bounded registry revaluation");
+      const staleReserveView = await view(CORE_ID, "recovery_storage_reserve_view", {});
+      assert.equal(staleReserveView.status, "stale",
+        "the public reserve view must identify a stale stored byte cost");
+      assert.equal(staleReserveView.ready, false,
+        "a stale reserve must not report cash readiness");
+      assert.equal(staleReserveView.stored_byte_cost_yocto,
+        (BigInt(staleReserveView.observed_byte_cost_yocto) - 1n).toString(),
+        "the stale reserve view must expose the stored/current byte-cost difference");
       const started = await rootCall("begin_recovery_storage_revaluation", {},
         "begin storage reserve revaluation after stale-price fixture");
       assert.equal(returnedJson(started), true,
         "stale storage reserve must enter the revaluation state");
+      const revaluationStartView = await view(CORE_ID, "recovery_storage_reserve_view", {});
+      assert.equal(revaluationStartView.status, "revaluating",
+        "the public reserve view must identify the paused revaluation state");
+      assert.equal(revaluationStartView.ready, false,
+        "the public reserve view must block cash readiness during revaluation");
+      assert.equal(revaluationStartView.revaluation_active, true,
+        "the public reserve view must expose active revaluation");
+      assert.equal(revaluationStartView.next_record_index, 0,
+        "the public reserve view must expose the first pending record");
+      assert.equal(revaluationStartView.revaluation_target_byte_cost_yocto,
+        revaluationStartView.observed_byte_cost_yocto,
+        "the revaluation target must match the currently observed byte cost");
       const staleCredit = await view(CORE_ID, "receipt_recovery_credit", {
         credit_id_hex: sampleCreditId,
       });
@@ -1845,14 +1884,31 @@ async function main() {
         const expectedStatus = endIndex === STORAGE_BOND_REGISTRY_LIMIT ? "complete" : "in_progress";
         assert.equal(result.status, expectedStatus,
           `64-record revaluation ending at ${endIndex} must have the expected status`);
+        const reserveProgress = await view(CORE_ID, "recovery_storage_reserve_view", {});
+        assert.equal(reserveProgress.record_count, STORAGE_BOND_REGISTRY_LIMIT,
+          "revaluation must preserve the public registry count");
+        assert.equal(reserveProgress.status, expectedStatus === "complete" ? "ready" : "revaluating",
+          "the public reserve status must track each bounded revaluation batch");
+        assert.equal(reserveProgress.ready, expectedStatus === "complete",
+          "cash readiness must return only after the final batch");
+        assert.equal(reserveProgress.revaluation_active, expectedStatus !== "complete",
+          "the public view must clear revaluation only on completion");
         if (expectedStatus === "in_progress") {
           assert.equal(Number(result.next_record_index), endIndex,
             "revaluation progress must advance by exactly 64 records");
+          assert.equal(reserveProgress.next_record_index, endIndex,
+            "the public reserve view must expose the next 64-record cursor");
+        } else {
+          assert.equal(reserveProgress.next_record_index, null,
+            "the completed reserve must not expose a stale cursor");
         }
         const batchGas = gasBurnt(transaction);
         revaluationBatches.push({
           start_index: startIndex,
           end_index: endIndex,
+          returned_status: result.status,
+          returned_next_record_index: result.next_record_index ?? null,
+          reserve_view: reserveProgress,
           gas_burnt: batchGas.toString(),
         });
         if (batchGas > maxRevaluationGas) maxRevaluationGas = batchGas;
@@ -1865,12 +1921,25 @@ async function main() {
         "completed max-sized batches must restore storage-reserve readiness");
       assert.equal(await recordCount(), BigInt(STORAGE_BOND_REGISTRY_LIMIT),
         "revaluation must preserve all registry entries");
+      const repeatedCompletion = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: STORAGE_BOND_REGISTRY_LIMIT, limit: STORAGE_REVALUATION_BATCH_LIMIT },
+        "confirm an already-complete reserve revaluation",
+        220n * TERA,
+      );
+      assert.equal(returnedJson(repeatedCompletion).status, "complete",
+        "checking the completed cursor must be idempotent rather than panic on an empty range");
+      assert.deepEqual(await view(CORE_ID, "recovery_storage_reserve_view", {}), capacityReserveView,
+        "an idempotent completion check must not change the public reserve view");
+      const reserveViewAfterRevaluation = await view(CORE_ID, "recovery_storage_reserve_view", {});
 
       return {
         registry_limit: STORAGE_BOND_REGISTRY_LIMIT,
         initial_record_count: initialRecordCount.toString(),
+        initial_reserve_view: initialReserveView,
         measured_credit_rows_added: seededCreditCount,
         final_record_count: currentCount.toString(),
+        reserve_view_at_capacity: capacityReserveView,
         measured_credit_storage_bytes: measuredStorageBytes.toString(),
         seed_batch_size: seedBatchSize,
         seed_batch_count: seedBatchGas.length,
@@ -1878,11 +1947,16 @@ async function main() {
         overflow_transaction_hash: overCapacity.transaction.hash,
         overflow_admission_rolled_back: true,
         overflow_credit_row_absent: true,
+        stale_reserve_view: staleReserveView,
         revaluation_batch_limit: STORAGE_REVALUATION_BATCH_LIMIT,
         oversized_batch_rejected: true,
         revaluation_batch_count: revaluationBatches.length,
         maximum_revaluation_batch_gas_burnt: maxRevaluationGas.toString(),
         revaluation_batches: revaluationBatches,
+        reserve_view_at_revaluation_start: revaluationStartView,
+        reserve_view_after_revaluation: reserveViewAfterRevaluation,
+        repeated_completion_transaction_hash: repeatedCompletion.transaction.hash,
+        repeated_completion_was_idempotent: true,
         storage_reserve_ready_before_revaluation: true,
         storage_reserve_blocked_during_revaluation: true,
         storage_reserve_ready_after_revaluation: true,

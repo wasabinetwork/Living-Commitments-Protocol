@@ -8,7 +8,9 @@
 
 use near_sdk::{
     borsh::{BorshDeserialize, BorshSerialize},
-    env, AccountId,
+    env,
+    json_types::U128,
+    AccountId,
 };
 
 use crate::native_cash::{self, NativeLiability};
@@ -366,6 +368,27 @@ pub(crate) struct StorageReserveMetricsV1 {
     pub(crate) free_treasury_reserve_yocto: u128,
 }
 
+/// Read-only operational status for the non-withdrawable recovery storage
+/// reserve and its bounded byte-cost revaluation.
+#[derive(Clone, Debug, PartialEq, Eq, near_sdk::serde::Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct RecoveryStorageReserveViewV1 {
+    pub status: String,
+    pub version: u8,
+    pub stored_byte_cost_yocto: U128,
+    pub observed_byte_cost_yocto: U128,
+    pub treasury_capital_yocto: U128,
+    pub total_storage_gap_yocto: U128,
+    pub non_withdrawable_backing_yocto: U128,
+    pub free_treasury_reserve_yocto: U128,
+    pub shortfall_yocto: U128,
+    pub record_count: u32,
+    pub revaluation_active: bool,
+    pub revaluation_target_byte_cost_yocto: Option<U128>,
+    pub next_record_index: Option<u32>,
+    pub ready: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StorageBondReleaseV1 {
     Treasury,
@@ -659,19 +682,16 @@ impl StorageReserveV1 {
 /// Initializes the reserve sidecar only for a fresh contract instance.
 pub(crate) fn initialize_fresh() {
     if env::storage_read(STORAGE_RESERVE_KEY).is_some() {
-        #[cfg(test)]
-        {
-            save_reserve(&StorageReserveV1::empty(
-                env::storage_byte_cost().as_yoctonear(),
-            ));
-            return;
-        }
-        #[cfg(not(test))]
         env::panic_str("recovery storage reserve already initialized");
     }
     save_reserve(&StorageReserveV1::empty(
         env::storage_byte_cost().as_yoctonear(),
     ));
+}
+
+#[cfg(test)]
+pub(crate) fn clear_initializer_for_test() {
+    env::storage_remove(STORAGE_RESERVE_KEY);
 }
 
 /// Stops native cash flows if the reserve sidecar is absent, stale, underfunded,
@@ -1032,6 +1052,11 @@ pub(crate) fn resolve_persisted_refund_withdrawal(
     let succeeded = match env::promise_result_checked(0, 0) {
         Ok(_) => true,
         Err(near_sdk::PromiseError::Failed) => false,
+        // The native transfer contract expects no result bytes. An unexpected
+        // payload is ambiguous for this exact attempt, so preserve its
+        // Withdrawing liability and forbid a retry instead of risking a second
+        // payment. The generic callback helper intentionally treats successful
+        // oversized payloads as paid because those transfers are irreversible.
         Err(near_sdk::PromiseError::TooLong(_)) => return PersistedCreditResolutionV1::Ignored,
         Err(_) => return PersistedCreditResolutionV1::Ignored,
     };
@@ -1216,10 +1241,42 @@ pub(crate) fn remove_measured_record(
 
 /// Returns bounded storage metrics for admission planning. Callers must still
 /// use the checked registration path and run the native cash gate afterward.
-pub(crate) fn storage_reserve_metrics() -> StorageReserveMetricsV1 {
-    load_reserve()
+pub(crate) fn storage_reserve_view() -> RecoveryStorageReserveViewV1 {
+    let reserve = load_reserve();
+    let observed_byte_cost = env::storage_byte_cost().as_yoctonear();
+    let metrics = reserve
         .metrics()
-        .unwrap_or_else(|message| env::panic_str(message))
+        .unwrap_or_else(|message| env::panic_str(message));
+    let ready = reserve.is_ready(observed_byte_cost);
+    let status = if reserve.revaluation.is_some() {
+        "revaluating"
+    } else if reserve.storage_byte_cost_yocto != observed_byte_cost {
+        "stale"
+    } else if metrics.shortfall_yocto != 0 {
+        "shortfall"
+    } else {
+        "ready"
+    };
+    RecoveryStorageReserveViewV1 {
+        status: status.to_string(),
+        version: reserve.version,
+        stored_byte_cost_yocto: U128(reserve.storage_byte_cost_yocto),
+        observed_byte_cost_yocto: U128(observed_byte_cost),
+        treasury_capital_yocto: U128(reserve.treasury_capital_yocto),
+        total_storage_gap_yocto: U128(reserve.total_storage_gap_yocto),
+        non_withdrawable_backing_yocto: U128(metrics.non_withdrawable_backing_yocto),
+        free_treasury_reserve_yocto: U128(metrics.free_treasury_reserve_yocto),
+        shortfall_yocto: U128(metrics.shortfall_yocto),
+        record_count: reserve.record_count,
+        revaluation_active: reserve.revaluation.is_some(),
+        revaluation_target_byte_cost_yocto: reserve
+            .revaluation
+            .map(|progress| U128(progress.target_byte_cost_yocto)),
+        next_record_index: reserve
+            .revaluation
+            .map(|progress| progress.next_record_index),
+        ready,
+    }
 }
 
 pub(crate) fn storage_bond_record_count() -> u32 {
@@ -1304,12 +1361,19 @@ pub(crate) fn revalue_storage_batch(start_index: u32, limit: u8) -> RevaluationB
     if limit == 0 || limit > MAX_REVALUATION_BATCH {
         env::panic_str("storage reserve revaluation batch size is invalid");
     }
+    let observed_byte_cost = env::storage_byte_cost().as_yoctonear();
+    if reserve.revaluation.is_none() && reserve.is_ready(observed_byte_cost) {
+        if start_index <= reserve.record_count {
+            return RevaluationBatchResult::Complete;
+        }
+        env::panic_str("storage reserve revaluation cursor exceeds record count");
+    }
     let end_index = start_index
         .checked_add(u32::try_from(limit).unwrap_or_else(|_| env::panic_str("batch size overflow")))
         .unwrap_or_else(|| env::panic_str("storage reserve record index overflow"))
         .min(reserve.record_count);
     if start_index >= end_index {
-        env::panic_str("storage reserve revaluation range is empty");
+        env::panic_str("storage reserve revaluation range is empty before completion");
     }
 
     let mut records = Vec::with_capacity((end_index - start_index) as usize);
@@ -1325,11 +1389,7 @@ pub(crate) fn revalue_storage_batch(start_index: u32, limit: u8) -> RevaluationB
     }
 
     let result = reserve
-        .revalue_batch(
-            env::storage_byte_cost().as_yoctonear(),
-            start_index,
-            &records,
-        )
+        .revalue_batch(observed_byte_cost, start_index, &records)
         .unwrap_or_else(|message| env::panic_str(message));
     save_reserve(&reserve);
     sync_native_cash_reserve(&reserve);
@@ -1506,6 +1566,85 @@ mod tests {
             .build());
         native_cash::initialize_fresh();
         initialize_fresh();
+    }
+
+    #[test]
+    #[should_panic(expected = "recovery storage reserve already initialized")]
+    fn fresh_storage_reserve_rejects_reinitialization() {
+        initialize_storage_state();
+        initialize_fresh();
+    }
+
+    #[test]
+    fn storage_reserve_view_reports_revaluation_progress_and_completion() {
+        initialize_storage_state();
+        let before = env::storage_usage();
+        env::storage_write(b"fixture:reserve-view-record", &[8; 64]);
+        register_measured_record([19; 32], 10_u128.pow(26), before);
+
+        let current_byte_cost = env::storage_byte_cost().as_yoctonear();
+        let mut reserve = load_reserve();
+        reserve.storage_byte_cost_yocto = current_byte_cost.saturating_sub(1);
+        save_reserve(&reserve);
+        assert_eq!(storage_reserve_view().status, "stale");
+
+        assert!(begin_storage_revaluation());
+        let progress = storage_reserve_view();
+        assert_eq!(progress.status, "revaluating");
+        assert_eq!(progress.record_count, 1);
+        assert_eq!(progress.next_record_index, Some(0));
+        assert_eq!(
+            progress.revaluation_target_byte_cost_yocto,
+            Some(U128(current_byte_cost))
+        );
+        assert!(!progress.ready);
+
+        assert_eq!(
+            revalue_storage_batch(0, 64),
+            RevaluationBatchResult::Complete
+        );
+        let ready = storage_reserve_view();
+        assert_eq!(ready.status, "ready");
+        assert_eq!(ready.next_record_index, None);
+        assert!(ready.ready);
+
+        // A repeated maintenance call is an idempotent completion check.
+        assert_eq!(
+            revalue_storage_batch(ready.record_count, 64),
+            RevaluationBatchResult::Complete
+        );
+    }
+
+    #[test]
+    fn storage_reserve_view_reports_shortfall_without_panicking() {
+        initialize_storage_state();
+        let mut reserve = load_reserve();
+        reserve.total_storage_gap_yocto = 1;
+        reserve.treasury_capital_yocto = 0;
+        save_reserve(&reserve);
+
+        let view = storage_reserve_view();
+        assert_eq!(view.status, "shortfall");
+        assert_eq!(view.shortfall_yocto, U128(1));
+        assert!(!view.ready);
+    }
+
+    #[test]
+    fn empty_storage_revaluation_reports_complete_when_reserve_is_ready() {
+        initialize_storage_state();
+        let observed_byte_cost = env::storage_byte_cost().as_yoctonear();
+        let mut reserve = load_reserve();
+        reserve.storage_byte_cost_yocto = observed_byte_cost.saturating_sub(1);
+        save_reserve(&reserve);
+
+        // Empty registries can update their stored price immediately, without
+        // entering a paused revaluation that has no records to process.
+        assert!(!begin_storage_revaluation());
+        assert_eq!(storage_reserve_view().status, "ready");
+        assert_eq!(
+            revalue_storage_batch(0, 64),
+            RevaluationBatchResult::Complete
+        );
     }
 
     #[test]

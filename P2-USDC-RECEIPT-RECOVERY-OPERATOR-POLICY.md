@@ -12,6 +12,35 @@ Operators validate the finalized block/receipt ancestry on their locally validat
 
 For the exact single-action `ft_transfer`, a canonical finalized `Failure` certifies `Failure` because NEAR rolls back state changes from the failed receipt under the pinned [receipt execution semantics](https://github.com/near/nearcore/blob/2.14.0/docs/RuntimeSpec/Receipts.md). This classification is independent of code identity: no token state written by that receipt commits. It does not authorize treating a failed callback or child receipt as failure of the original token action. This rollback rule must be covered by the protocol-88 pre-execution and post-execution failure fixtures before implementation approval.
 
+## Quorum risk and pooled escrow
+
+The 4-of-5 committee attests to receipt interpretation; the contract does not verify receipt inclusion or execution proofs. If four signers incorrectly certify `Failure` for a transfer that actually succeeded, LCP releases that transfer's pending amount in its internal accounting. All commitments share the same USDC token account. A later `refund_remaining` can pay from the shared token balance and consume funds backing other commitments. This cross-commitment under-backing is a material residual risk of the v1 oracle model; it is not prevented by the contract's per-commitment accounting invariant. Do not describe the escrow as physically segregated. Operators must abstain (`Unknown`) whenever canonicality, ancestry, execution identity, or outcome is uncertain. No timeout or single-party override repairs this risk.
+
+## Frozen token configuration
+
+After bootstrap, the current contract has no configuration update for the token account, active code hash, or approved historical hash set. Committee rotation changes signer keys only. If the token contract code changes to a hash outside the bootstrap set, operators must abstain for successful transfers; pending intents on that instance may remain unresolved indefinitely. Before a canary, either keep the token code unchanged for the full recovery lifetime or obtain a separately reviewed configuration-upgrade/migration design. Do not treat key rotation, an RPC observation, or the token's current code hash as approval to rewrite an intent's execution-time hash.
+
+## Recovery storage operations
+
+On the recovery-enabled candidate, call the read-only `recovery_storage_reserve_view` before planning a cash-moving operation or continuing byte-cost revaluation. It reports the stored and current byte cost, record count, deficit, backing, `ready` status, and the active revaluation target/cursor. `revaluating`, `stale`, or `shortfall` means cash-sensitive methods must remain paused. Continue with the cursor returned by `revalue_recovery_storage_batch`; after a byte-cost change restart from zero when instructed. The method now returns `complete` for an already-ready reserve, so checking completion does not require an empty batch.
+
+Until maximum-bound measurements are independently confirmed, use these conservative prepaid-gas minima for local isolated operations. These are operational recommendations derived from the measured fixtures, not worst-case guarantees, and are not enforced by the contract:
+
+| Method | Minimum prepaid gas |
+| --- | ---: |
+| `bootstrap_receipt_recovery` | 20 Tgas |
+| `recover_nep141_transfer` | 40 Tgas |
+| `finalize_receipt_recovery_intent` and `finalize_receipt_recovery_credit` | 30 Tgas |
+| `revalue_recovery_storage_batch` with 64 records | 25 Tgas |
+
+An under-gassed callback or maintenance call must remain fail-closed and retryable as designed; these floors are not a substitute for the 2,048-record maximum-capacity measurement or deployment-specific transaction review.
+
+The current 2,048-record registry cap is a provisional implementation limit. At the observed maximum-payer row size of 527 bytes, filling it would account for about 1,079,296 bytes of record storage, or approximately 0.0108 NEAR at the present `10^19 yoctoNEAR/byte` storage price. This is a planning estimate from the measured row shape, not a reserve funding guarantee; configuration, indexes, other state, runtime price changes, and the fresh capacity run must also be included before any canary.
+
+## Callback payload policy
+
+The generic transfer callback treats `Ok(_)` and `TooLong(_)` from a zero-byte-bounded result read as successful value movement. A completed transfer must not be retried merely because its response payload is unexpectedly large. Persisted storage-credit withdrawals use the stricter native-transfer contract: a successful result is expected to have no payload, and `TooLong(_)` leaves the credit in `Withdrawing` as unknown, preventing a second payment. The two policies are deliberate; the stricter path favors avoiding double payment over automatic liveness when the callback response is malformed.
+
 ## NEAR runtime balance observation for solvency checks
 
 The recovery design pins its accounting observation to nearcore 2.14.0, commit `bc4e9e8cfb03d9e82f027883055624e18576993e`. At contract execution, `current_account_balance` starts with the execution context's account balance plus the receipt's attached deposit; the host `account_balance` function reads that current value. The Rust SDK `Promise` is a lazy builder: creating the value queues actions locally, and dropping it calls the NEAR host APIs. The host deducts an attached transfer or function-call deposit when the corresponding action is materialized. The candidate therefore runs its solvency preflight after state/storage updates but before materializing the first relevant action, and explicitly includes every planned outflow in `X`. For a method that materializes actions in stages, the first check must reserve all later outflows too, or a later check must use the post-materialization balance and only the remaining `X`. The payable liability remains counted until an exact successful private callback; this backs the unresolved transfer and leaves an OOG or missing callback non-retryable.

@@ -8,10 +8,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const defaultCapturePath = resolve(
   here,
-  "bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json",
+  "recovery-acceptance-2026-11-17-18ed543/bootstrap-guard.json",
 );
-const EXPECTED_CORE_WASM_SHA256 = "4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad";
-const EXPECTED_CORE_CODE_HASH = "6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212";
+const defaultManifestPath = resolve(
+  here,
+  "p2-usdc-recovery-local-acceptance-2026-11-17.sha256",
+);
+const EXPECTED_CORE_WASM_SHA256 = "0cd6a24c9ef345a0e8d46d4fffea4361fa72951095fef535809cecb9027d57c1";
+const EXPECTED_CORE_CODE_HASH = "s7iWoJczoZuewPKuDd4PYALr3Zw5HjDBrD1yVQBUkRE";
 const BOOTSTRAP_GUARD_ERROR =
   "receipt recovery must be bootstrapped before commitments or transfers are created";
 
@@ -146,8 +150,12 @@ export async function verifyBootstrapActivityGuardManifest(capturePath, manifest
 }
 
 async function main() {
-  const capturePath = resolve(process.argv[2] ?? defaultCapturePath);
-  const manifestPath = resolve(process.argv[3] ?? capturePath.replace(/\.json$/, ".sha256"));
+  const captureArgument = process.argv[2];
+  const capturePath = resolve(captureArgument ?? defaultCapturePath);
+  const inferredManifestPath = captureArgument
+    ? capturePath.replace(/\.json$/, ".sha256")
+    : defaultManifestPath;
+  const manifestPath = resolve(process.argv[3] ?? inferredManifestPath);
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
   validateBootstrapActivityGuardCapture(capture);
   const checked = await verifyBootstrapActivityGuardManifest(capturePath, manifestPath);
