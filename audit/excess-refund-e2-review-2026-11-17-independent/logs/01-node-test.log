@@ -1,0 +1,29 @@
+✔ accepts the complete native excess-refund capture (5.498159ms)
+✔ rejects an unpinned core artifact digest (2.786135ms)
+✔ rejects a missing refund-failure callback event (1.331981ms)
+✔ rejects a duplicate successful payout action (2.139541ms)
+✔ rejects a missing successful payout action (1.641947ms)
+✔ rejects an altered payout amount (1.659853ms)
+✔ rejects an incomplete child receipt graph (1.775875ms)
+✔ rejects a disconnected matched receipt outcome and body (1.147435ms)
+✔ rejects a payout action whose receipt outcome failed (1.317742ms)
+✔ rejects a payout receipt that only returns a child receipt ID (1.540259ms)
+✔ rejects a withdrawal receipt without an execution status (1.195236ms)
+✔ rejects a failed non-payout receipt in an otherwise successful withdrawal (1.411403ms)
+✔ rejects a replay transfer to a recipient other than the payer (1.64321ms)
+✔ rejects an underfunded withdrawal transfer to a recipient other than the payer (1.396009ms)
+✔ rejects a payout receipt body that does not bind to its outcome executor (1.703152ms)
+✔ rejects a failed excess-refund callback receipt status (1.088066ms)
+✔ rejects any contract payout during replay, including one yocto (1.297552ms)
+✔ rejects an extra contract transfer to a third party during successful withdrawal (1.154527ms)
+✔ rejects an extra contract transfer during failed excess-refund settlement (1.1564ms)
+✔ rejects duplicate settlement events in a successful withdrawal graph (1.214344ms)
+✔ rejects a settlement event in the replay graph even without a transfer (1.206144ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 289.054966

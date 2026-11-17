@@ -1,0 +1,15 @@
+AssertionError [ERR_ASSERTION]: audit/excess-refund-e2-review-2026-11-17-independent/scratch/tampered.json does not match its captured digest
++ actual - expected
+
++ '27e78b7ce07783c156697820273617f4be7e481949b58beb9b353b104897539f'
+- 'de3e9437c9de64c8851a269cf901cb3bf5057607b965e2416fbe2180a27c13c7'
+
+    at verifyManifest (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:330:12)
+    at async main (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:345:23) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: '27e78b7ce07783c156697820273617f4be7e481949b58beb9b353b104897539f',
+  expected: 'de3e9437c9de64c8851a269cf901cb3bf5057607b965e2416fbe2180a27c13c7',
+  operator: 'strictEqual',
+  diff: 'simple'
+}

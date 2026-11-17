@@ -1,0 +1,17 @@
+TAMPERED capture file: exit=1
+   AssertionError [ERR_ASSERTION]: source manifest must pin the selected capture file
+    at verifyManifest (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:336:10)
+    at async main (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:345:23) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: false,
+  expected: true,
+  operator: '==',
+  diff: 'simple'
+}
+TOOLING manifest as source: exit=1
+   AssertionError [ERR_ASSERTION]: source manifest must pin the selected capture file
+ESCAPING path row: exit=1
+   AssertionError [ERR_ASSERTION]: manifest path escapes the repository: ../outside.js
+MALFORMED row: exit=1
+   AssertionError [ERR_ASSERTION]: malformed checksum row: not-a-checksum  some/path

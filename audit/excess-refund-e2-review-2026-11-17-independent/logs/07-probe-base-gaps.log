@@ -1,0 +1,4 @@
+F4 extra third-party transfer in withdrawal graph: ACCEPTED by base checker (gap open)
+F5 extra third-party transfer in failed-refund graph: ACCEPTED by base checker (gap open)
+F6 duplicate settlement event in successful withdrawal: ACCEPTED by base checker (gap open)
+F7 settlement event in replay graph without transfer: ACCEPTED by base checker (gap open)

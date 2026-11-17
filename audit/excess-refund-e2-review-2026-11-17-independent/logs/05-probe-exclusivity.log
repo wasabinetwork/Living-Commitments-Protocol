@@ -1,0 +1,89 @@
+POSITIVE CONTROL: ACCEPTED
+REJECTED  F4 extra third-party transfer in successful withdrawal
+    message: successful withdrawal must contain exactly one payer transfer and no other contract-originated transfers
++ actual - expected
+
+  [
+    {
+      amount_yocto: '10000000000000000000000',
+      receiver_id: 'recipient.sandbox'
+    },
++   {
++     amount_yocto: '1',
++     receiver_id: 'attacker-probe.sandbox'
++   }
+  ]
+
+    at:      at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:269:10)
+REJECTED  F5 extra third-party transfer in failed-refund graph
+    message: failed refund must contain exactly one contract-originated transfer to the forced missing account
++ actual - expected
+
+  [
+    {
+      amount_yocto: '10000000000000000000000',
+      receiver_id: 'missing-excess-refund.sandbox'
+    },
++   {
++     amount_yocto: '1',
++     receiver_id: 'attacker-probe.sandbox'
++   }
+  ]
+
+    at:      at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:223:10)
+REJECTED  F6 duplicate settlement event in successful withdrawal
+    message: successful withdrawal must contain exactly one settlement event
+
+2 !== 1
+
+    at:      at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:260:10)
+REJECTED  F7 settlement event in replay graph without transfer
+    message: settled withdrawal replay must not emit a second settlement event
+
+1 !== 0
+
+    at:      at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:298:10)
+REJECTED  E1 second payer transfer on a separate receipt
+    message: successful withdrawal must contain exactly one payer transfer and no other contract-originated transfers
++ actual - expected
+
+  [
+    {
+      amount_yocto: '10000000000000000000000',
+      receiver_id: 'recipient.sandbox'
+    },
++   {
++     amount_yocto: '10000000000000000000000',
++     receiver_id: 'recipient.sandbox'
++   }
+  ]
+
+    at:      at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:269:10)
+REJECTED  E2 third-party transfer alongside intact payer transfer
+    message: successful withdrawal must contain exactly one payer transfer and no other contract-originated transfers
++ actual - expected
+
+  [
+    {
+      amount_yocto: '10000000000000000000000',
+      receiver_id: 'recipient.sandbox'
+    },
++   {
++     amount_yocto: '1',
++     receiver_id: 'attacker-probe.sandbox'
++   }
+  ]
+
+    at:      at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:269:10)
+REJECTED  E3 duplicate settlement event on the payer transfer receipt
+    message: successful withdrawal must contain exactly one settlement event
+
+2 !== 1
+
+    at:      at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:260:10)
+REJECTED  E4 settlement event on a non-contract replay receipt
+    message: settled withdrawal replay must not emit a second settlement event
+
+1 !== 0
+
+    at:      at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:298:10)

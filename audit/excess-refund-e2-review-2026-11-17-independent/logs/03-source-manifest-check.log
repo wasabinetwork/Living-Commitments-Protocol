@@ -1,0 +1,14 @@
+tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json: OK
+Cargo.toml: OK
+Cargo.lock: OK
+rust-toolchain.toml: OK
+contracts/lcp-core/Cargo.toml: OK
+contracts/lcp-core/src/contract.rs: OK
+contracts/lcp-core/src/lib.rs: OK
+contracts/lcp-core/src/models.rs: OK
+contracts/lcp-core/src/native_cash.rs: OK
+contracts/lcp-core/src/recovery_accounting.rs: OK
+contracts/lcp-core/src/recovery_config.rs: OK
+contracts/lcp-core/src/receipt_recovery.rs: OK
+contracts/sandbox-mock-ft/Cargo.toml: OK
+contracts/sandbox-mock-ft/src/lib.rs: OK

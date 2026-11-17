@@ -1,0 +1,181 @@
+{
+  "reviewer": "owner-adjacent independent pass (same assistant that authored the remediation; see limitations)",
+  "generated_at": "2026-11-17T19:29:16.463Z",
+  "capture": {
+    "path": "tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json",
+    "sha256": "de3e9437c9de64c8851a269cf901cb3bf5057607b965e2416fbe2180a27c13c7"
+  },
+  "manifest": {
+    "rows": 24,
+    "verified": 24,
+    "stale": []
+  },
+  "graphSummary": {
+    "failure": {
+      "outcomes": 7,
+      "bodies": 7,
+      "roots": 1,
+      "contractTransfers": 1,
+      "events": [
+        "excess_storage_refund_failed"
+      ],
+      "finalStatus": "FINAL",
+      "txStatus": "SuccessReceiptId"
+    },
+    "underfunded": {
+      "outcomes": 2,
+      "bodies": 2,
+      "roots": 1,
+      "contractTransfers": 0,
+      "events": [],
+      "finalStatus": "FINAL",
+      "txStatus": "SuccessReceiptId"
+    },
+    "withdrawal": {
+      "outcomes": 6,
+      "bodies": 6,
+      "roots": 1,
+      "contractTransfers": 1,
+      "events": [
+        "service_report_refund_requested",
+        "service_report_refund_sent"
+      ],
+      "finalStatus": "FINAL",
+      "txStatus": "SuccessReceiptId"
+    },
+    "replay": {
+      "outcomes": 2,
+      "bodies": 2,
+      "roots": 1,
+      "contractTransfers": 0,
+      "events": [],
+      "finalStatus": "FINAL",
+      "txStatus": "SuccessReceiptId"
+    }
+  },
+  "checks": [
+    {
+      "name": "manifest pins the selected capture",
+      "result": "PASS"
+    },
+    {
+      "name": "manifest rows all verify",
+      "result": "PASS"
+    },
+    {
+      "name": "wasm digest is the pinned candidate",
+      "result": "PASS"
+    },
+    {
+      "name": "code hash is base58(sha256(wasm)) of the pinned candidate",
+      "result": "PASS"
+    },
+    {
+      "name": "failure: receipt graph is closed, unique, and terminal",
+      "result": "PASS"
+    },
+    {
+      "name": "failure: body receiver binds to outcome executor",
+      "result": "PASS"
+    },
+    {
+      "name": "underfunded: receipt graph is closed, unique, and terminal",
+      "result": "PASS"
+    },
+    {
+      "name": "underfunded: body receiver binds to outcome executor",
+      "result": "PASS"
+    },
+    {
+      "name": "withdrawal: receipt graph is closed, unique, and terminal",
+      "result": "PASS"
+    },
+    {
+      "name": "withdrawal: body receiver binds to outcome executor",
+      "result": "PASS"
+    },
+    {
+      "name": "replay: receipt graph is closed, unique, and terminal",
+      "result": "PASS"
+    },
+    {
+      "name": "replay: body receiver binds to outcome executor",
+      "result": "PASS"
+    },
+    {
+      "name": "failed refund attempts exactly one contract transfer",
+      "result": "PASS"
+    },
+    {
+      "name": "failed refund transfer outcome is a missing-account failure",
+      "result": "PASS"
+    },
+    {
+      "name": "failed refund callback succeeded and recorded the payer credit",
+      "result": "PASS"
+    },
+    {
+      "name": "failed refund keeps the credit liability and clears the scheduled outflow",
+      "result": "PASS"
+    },
+    {
+      "name": "underfunded withdrawal makes no contract transfer at all",
+      "result": "PASS"
+    },
+    {
+      "name": "underfunded withdrawal preserves the cash snapshot and rejects at the margin",
+      "result": "PASS"
+    },
+    {
+      "name": "successful withdrawal pays the credit exactly once to the payer",
+      "result": "PASS"
+    },
+    {
+      "name": "successful withdrawal every receipt succeeded",
+      "result": "PASS"
+    },
+    {
+      "name": "successful withdrawal settles the credit once and reconciles balance and fees",
+      "result": "PASS"
+    },
+    {
+      "name": "replay makes no contract transfer and does not settle twice",
+      "result": "PASS"
+    },
+    {
+      "name": "final cash covers liabilities plus storage",
+      "result": "PASS"
+    }
+  ],
+  "failures": [],
+  "mutants": [
+    {
+      "name": "replay-other-recipient (listed lead)",
+      "verdict": "REJECTED: settled withdrawal replay must not create a contract-originated transfer to any recipient"
+    },
+    {
+      "name": "payout-executor-mismatch (listed lead)",
+      "verdict": "REJECTED: successful withdrawal receipt 2S3iZW4TtdLx83NbNAsWHkZJMW5Jbs2LsaygANKyHTdG body receiver must bind to its outcome executor"
+    },
+    {
+      "name": "failure-callback-failed (listed lead)",
+      "verdict": "REJECTED: the production callback that records the failed refund must itself succeed"
+    },
+    {
+      "name": "extra contract transfer in withdrawal graph (new)",
+      "verdict": "ACCEPTED"
+    },
+    {
+      "name": "extra contract transfer in failed-refund graph (new)",
+      "verdict": "ACCEPTED"
+    },
+    {
+      "name": "duplicate settlement event in withdrawal graph (new)",
+      "verdict": "ACCEPTED"
+    },
+    {
+      "name": "second settlement event without transfer in replay (new)",
+      "verdict": "ACCEPTED"
+    }
+  ]
+}
