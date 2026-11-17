@@ -337,6 +337,54 @@ docker run --rm --init --platform linux/amd64 \
   'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/receipt-recovery-sandbox-acceptance-2026-11-16.json node run.mjs'
 ```
 
+To verify that the production `create_commitment` entry point blocks recovery
+bootstrap on a fresh instance after a commitment has been recorded, run the
+focused activity-guard case:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json node run.mjs'
+```
+
+The fixture deploys a second fresh core, calls `new`, creates a real draft
+through `create_commitment`, then submits recovery bootstrap. The bootstrap
+transaction must fail, the commitment must remain queryable, and recovery
+configuration must remain absent. This is local Sandbox evidence for the
+commitment counter guard; challenge and transfer counters have separate
+feature-gated unit tests because those actions require a commitment first.
+It does not contact testnet or alter a deployed contract.
+
+The [captured transaction and receipt evidence](bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json)
+stores both finalized transaction graphs, including the receipt body fetched by
+receipt ID when `EXPERIMENTAL_tx_status` omitted it. Verify the capture and its
+source manifest, then run the capture mutation checks:
+
+```sh
+node tests/sandbox-usdc-callbacks/verify-bootstrap-activity-guard-capture.mjs
+node --test tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.test.mjs
+```
+
+Regenerate and verify its source manifest after changing any captured input:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/verify-bootstrap-activity-guard-capture.mjs \
+  tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.test.mjs \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs contracts/sandbox-mock-ft/Cargo.toml \
+  contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+  P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
+  > tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.sha256
+```
+
 To run only the production NEP-141 tranche-claim cash-gate case, add
 `LCP_USDC_CLAIM_ONLY=1` while keeping `LCP_RECOVERY_ONLY=1`:
 

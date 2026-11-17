@@ -16,6 +16,7 @@ const sandboxCache = process.env.LCP_SANDBOX_BINARY_DIR;
 if (sandboxCache) process.env.DIR_TO_DOWNLOAD_BINARY = sandboxCache;
 
 const CORE_ID = "lcp-core-sandbox.sandbox";
+const BOOTSTRAP_GUARD_ID = "bootstrap-guard.sandbox";
 const TOKEN_ID = "mock-usdc.sandbox";
 const NO_CODE_TOKEN_ID = "no-code-token.sandbox";
 const ORDER_A_ID = "order-a.sandbox";
@@ -485,6 +486,7 @@ async function main() {
   const serviceInboxMode = process.env.LCP_SERVICE_INBOX_OUTLAYER_DISPATCH_ONLY === "1";
   const rootKey = keyFromNearStrings(DEFAULT_PRIVATE_KEY, DEFAULT_PUBLIC_KEY);
   const coreKey = newKey();
+  const bootstrapGuardKey = newKey();
   const tokenKey = newKey();
   const noCodeTokenKey = newKey();
   const orderAKey = newKey();
@@ -538,9 +540,22 @@ async function main() {
     const missingIds = [...new Set(referencedIds)].filter((id) => !outcomeIds.has(id));
     assert.deepEqual(missingIds, [],
       `${description} receipt graph must include every referenced child outcome`);
-    const bodyIds = new Set(result.receipts.map(({ receipt_id }) => receipt_id));
-    assert.equal(bodyIds.size, result.receipts.length,
+    const rawReceipts = [...result.receipts];
+    const bodyIds = new Set(rawReceipts.map(({ receipt_id }) => receipt_id));
+    assert.equal(bodyIds.size, rawReceipts.length,
       `${description} must not contain duplicate raw receipt bodies`);
+    const supplementalReceiptIds = [];
+    for (const receiptId of outcomeIds) {
+      if (bodyIds.has(receiptId)) continue;
+      const receipt = await rpc("EXPERIMENTAL_receipt", { receipt_id: receiptId });
+      assert.equal(receipt.receipt_id, receiptId,
+        `${description} receipt lookup returned a different receipt ID`);
+      rawReceipts.push(receipt);
+      bodyIds.add(receiptId);
+      supplementalReceiptIds.push(receiptId);
+    }
+    result.receipts = rawReceipts;
+    result.supplemental_receipt_ids = supplementalReceiptIds;
     assert.deepEqual(
       [...outcomeIds].filter((id) => !bodyIds.has(id)),
       [],
@@ -687,7 +702,7 @@ async function main() {
       });
       return result.hash;
     } catch (error) {
-      if (String(error).includes("NO_CONTRACT_CODE")) return null;
+      if (/NO_CONTRACT_CODE|UNKNOWN_ACCOUNT|does not exist while viewing/.test(String(error))) return null;
       throw error;
     }
   }
@@ -817,7 +832,7 @@ async function main() {
     return cleared;
   }
 
-  async function runRecoveryAcceptance(nodeStatus, tokenWasm, tokenCodeHash) {
+  async function runRecoveryAcceptance(nodeStatus, tokenWasm, tokenCodeHash, coreWasm, coreCodeHash) {
     const results = {};
     const committee = Array.from({ length: 5 }, newKey)
       .sort((left, right) => Buffer.compare(left.publicKeyBytes, right.publicKeyBytes));
@@ -870,6 +885,132 @@ async function main() {
     assert.equal(config.used_key_count, 5);
     results.bootstrap_configuration = config;
     console.log("PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys");
+
+    if (process.env.LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY === "1") {
+      await createSubaccount(BOOTSTRAP_GUARD_ID, bootstrapGuardKey);
+      await deployAndWait(
+        BOOTSTRAP_GUARD_ID,
+        bootstrapGuardKey,
+        coreWasm,
+        coreCodeHash,
+        "deploy fresh bootstrap-guard core",
+      );
+      await functionCall(BOOTSTRAP_GUARD_ID, bootstrapGuardKey, "new", {});
+      const bootstrapGuardArgs = {
+        subject: "Bootstrap after commitment activity",
+        maintainer: "maintainer.sandbox",
+        arbiter: "arbiter.sandbox",
+        policy: {
+          temporal: {
+            initial_window_ns: "60000000000",
+            evidence_ttl_ns: "3600000000000",
+            grace_ns: "60000000000",
+            max_source_lag_ns: "60000000000",
+            challenge_window_ns: "1",
+            resolution_timeout_ns: "1000000000",
+            recovery_allowed: true,
+          },
+          evidence: { maintainer_public_key_hex: "03".repeat(32) },
+          evaluator: {
+            outlayer_account: "outlayer.testnet",
+            wasm_url: "https://artifacts.lcp.gama.works/evaluators/heartbeat.wasm",
+            wasm_sha256_hex: "04".repeat(32),
+            build_target: "wasm32-wasip2",
+            max_instructions: "1000000",
+            max_memory_mb: 64,
+            max_execution_seconds: "30",
+            request_timeout_ns: "30000000000",
+            execution_deposit_yocto: "1",
+          },
+          budget: {
+            sponsor: BOOTSTRAP_GUARD_ID,
+            beneficiary: RECIPIENT_ID,
+            epoch_ns: "86400000000000",
+            max_epochs: 1,
+            tranche_yocto: "10000000000000000000000",
+          },
+        },
+      };
+      const underfundedCommitmentTx = await functionCall(
+        BOOTSTRAP_GUARD_ID,
+        bootstrapGuardKey,
+        "create_commitment",
+        { args: bootstrapGuardArgs },
+        220n * TERA,
+        0n,
+        { expectFailure: true },
+      );
+      const underfundingFailure = [
+        underfundedCommitmentTx.status,
+        ...(underfundedCommitmentTx.receipts_outcome ?? []).map(({ outcome }) => outcome?.status),
+      ].map((status) => JSON.stringify(status)).join(" ");
+      const requiredStorageMatch = /attach at least (\d+) yoctoNEAR for storage/.exec(underfundingFailure);
+      assert.ok(requiredStorageMatch,
+        "underfunded draft creation should report its exact storage bond");
+      const commitmentStorageBond = BigInt(requiredStorageMatch[1]);
+      const commitmentTx = await functionCall(
+        BOOTSTRAP_GUARD_ID,
+        bootstrapGuardKey,
+        "create_commitment",
+        { args: bootstrapGuardArgs },
+        220n * TERA,
+        commitmentStorageBond,
+      );
+      const commitmentFinal = await finalTransactionStatus(
+        commitmentTx.transaction.hash,
+        BOOTSTRAP_GUARD_ID,
+        "create commitment before recovery bootstrap",
+      );
+      const commitmentId = returnedJson(commitmentFinal);
+      assert.equal(String(commitmentId), "1",
+        "the fresh core should record its first real commitment before bootstrap");
+      const createdCommitment = await view(BOOTSTRAP_GUARD_ID, "get_commitment", {
+        commitment_id: String(commitmentId),
+      });
+      assert.equal(createdCommitment.subject, bootstrapGuardArgs.subject);
+
+      const rejectedBootstrapTx = await functionCall(
+        BOOTSTRAP_GUARD_ID,
+        bootstrapGuardKey,
+        "bootstrap_receipt_recovery",
+        { args: bootstrapArgs },
+        220n * TERA,
+        0n,
+        { expectFailure: true },
+      );
+      const rejectedBootstrapFinal = await finalTransactionStatus(
+        rejectedBootstrapTx.transaction.hash,
+        BOOTSTRAP_GUARD_ID,
+        "reject recovery bootstrap after commitment activity",
+      );
+      assert.ok(hasFailedExecution(rejectedBootstrapFinal),
+        "recovery bootstrap after a real commitment must fail in Sandbox");
+      const configurationAfterRejectedBootstrap = await view(
+        BOOTSTRAP_GUARD_ID,
+        "receipt_recovery_configuration",
+        {},
+      );
+      assert.equal(configurationAfterRejectedBootstrap, null,
+        "rejected bootstrap must leave recovery unconfigured");
+      const commitmentAfterRejectedBootstrap = await view(BOOTSTRAP_GUARD_ID, "get_commitment", {
+        commitment_id: String(commitmentId),
+      });
+      assert.equal(commitmentAfterRejectedBootstrap.subject, bootstrapGuardArgs.subject,
+        "rejected bootstrap must preserve the pre-existing commitment");
+      results.bootstrap_after_commitment_activity = {
+        account_id: BOOTSTRAP_GUARD_ID,
+        deployed_code_hash: coreCodeHash,
+        commitment_transaction: commitmentFinal,
+        commitment_id: String(commitmentId),
+        storage_bond_yocto: commitmentStorageBond.toString(),
+        rejected_bootstrap_transaction: rejectedBootstrapFinal,
+        configuration_after_rejected_bootstrap: configurationAfterRejectedBootstrap,
+        commitment_after_rejected_bootstrap: commitmentAfterRejectedBootstrap,
+        isolated_sandbox_only: true,
+      };
+      console.log("PASS a real commitment prevents recovery bootstrap and remains intact in isolated Sandbox");
+      return results;
+    }
 
     if (process.env.LCP_USDC_CLAIM_ONLY === "1") {
       const commitmentId = "9901";
@@ -3274,17 +3415,22 @@ async function main() {
     console.log("PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call");
 
     if (process.env.LCP_RECOVERY_ONLY === "1"
+      || process.env.LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY === "1"
       || process.env.LCP_USDC_CLAIM_ONLY === "1"
       || process.env.LCP_USDC_REFUND_ONLY === "1"
       || process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_OOG_ONLY === "1") {
-      fixtures.recovery_acceptance = await runRecoveryAcceptance(nodeStatus, tokenWasm, codeHashV1);
+      fixtures.recovery_acceptance = await runRecoveryAcceptance(
+        nodeStatus, tokenWasm, codeHashV1, coreWasm, codeHashCore,
+      );
       const fixturePath = process.env.LCP_FIXTURE_OUTPUT;
       if (fixturePath) {
         await writeFile(fixturePath, `${JSON.stringify({
-          fixture_schema: process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1"
+          fixture_schema: process.env.LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY === "1"
+            ? "lcp.bootstrap-activity-guard-sandbox-acceptance.v1"
+            : process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1"
             ? "lcp.native-excess-refund-cash-gate-sandbox-acceptance.v1"
             : process.env.LCP_USDC_REFUND_ONLY === "1"
             ? "lcp.nep141-refund-cash-gate-sandbox-acceptance.v1"
@@ -3305,7 +3451,9 @@ async function main() {
           scenarios: fixtures.recovery_acceptance,
         }, null, 2)}\n`);
       }
-      console.log(process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1"
+      console.log(process.env.LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY === "1"
+        ? "Isolated bootstrap-after-commitment guard acceptance passed; no public network was used."
+        : process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1"
         ? "Isolated native excess-refund callback cash-gate acceptance passed; no public network was used."
         : process.env.LCP_USDC_REFUND_ONLY === "1"
         ? "Isolated NEP-141 refund cash-gate acceptance passed; no public network was used."
