@@ -1649,14 +1649,16 @@ impl Contract {
         ]
     }
 
-    /// Seeds a claimable native tranche for exercising the production claim
-    /// and callback path in local Sandbox only.
+    /// Seeds a claimable tranche for exercising the production claim and
+    /// callback paths in local Sandbox only. Supplying a token account seeds a
+    /// NEP-141 settlement sidecar instead of a native NEAR escrow liability.
     #[cfg(feature = "sandbox-callback-fixture")]
-    pub fn sandbox_seed_native_claimable_commitment(
+    pub fn sandbox_seed_claimable_commitment(
         &mut self,
         commitment_id: U64,
         beneficiary: AccountId,
-        amount_yocto: U128,
+        amount_raw: U128,
+        token_account_id: Option<AccountId>,
     ) {
         require!(
             env::chain_id().starts_with("test-chain-"),
@@ -1670,10 +1672,7 @@ impl Contract {
             commitment_id.0 > 0,
             "fixture commitment ID must be positive"
         );
-        require!(
-            amount_yocto.0 > 0,
-            "fixture tranche amount must be positive"
-        );
+        require!(amount_raw.0 > 0, "fixture tranche amount must be positive");
         require!(
             self.commitments.get(&commitment_id.0).is_none(),
             "fixture commitment ID is already in use"
@@ -1682,6 +1681,18 @@ impl Contract {
         let now_ns = env::block_timestamp();
         let observed_at_ns = now_ns.saturating_sub(10);
         let sponsor: AccountId = "sandbox".parse().unwrap();
+        let settlement = token_account_id.map(|token_account_id| SettlementState {
+            asset: SettlementAsset::Nep141 {
+                token_account_id,
+                decimals: NEAR_USDC_DECIMALS,
+            },
+            tranche_amount_raw: amount_raw.0,
+            funded_raw: amount_raw.0,
+            paid_raw: 0,
+            refunded_raw: 0,
+            pending_raw: 0,
+        });
+        let is_native_near = settlement.is_none();
         let policy = CommitmentPolicy {
             version: 1,
             temporal: TemporalPolicy {
@@ -1712,15 +1723,19 @@ impl Contract {
                 beneficiary: beneficiary.clone(),
                 epoch_ns: 86_400_000_000_000,
                 max_epochs: 1,
-                tranche_yocto: amount_yocto.0,
+                tranche_yocto: if is_native_near { amount_raw.0 } else { 0 },
             },
         };
         validate_commitment_policy(&policy);
         let evidence_hash = [7; 32];
-        let policy_hash = commitment_policy_digest(&policy, None);
+        let policy_hash = commitment_policy_digest(&policy, settlement.as_ref());
         let commitment = Commitment {
             id: commitment_id.0,
-            subject: "Sandbox native cash callback fixture".to_string(),
+            subject: if is_native_near {
+                "Sandbox native cash callback fixture".to_string()
+            } else {
+                "Sandbox NEP-141 claim cash-gate fixture".to_string()
+            },
             creator: sponsor,
             maintainer: "maintainer.sandbox".parse().unwrap(),
             arbiter: "arbiter.sandbox".parse().unwrap(),
@@ -1739,7 +1754,7 @@ impl Contract {
             pending_evaluation_id: None,
             active_challenge_id: None,
             breach_latched: false,
-            escrow_funded_yocto: amount_yocto.0,
+            escrow_funded_yocto: if is_native_near { amount_raw.0 } else { 0 },
             escrow_paid_yocto: 0,
             escrow_refunded_yocto: 0,
             escrow_pending_yocto: 0,
@@ -1765,7 +1780,11 @@ impl Contract {
             output_hash: Some([6; 32]),
         };
 
-        native_cash::adjust(native_cash::NativeLiability::Escrow, true, amount_yocto.0);
+        if let Some(settlement) = settlement.as_ref() {
+            write_settlement_state(commitment_id.0, settlement);
+        } else {
+            native_cash::adjust(native_cash::NativeLiability::Escrow, true, amount_raw.0);
+        }
         self.commitments.insert(commitment_id.0, commitment);
         self.evaluation_records
             .insert((commitment_id.0, 1), evaluation);

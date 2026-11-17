@@ -828,6 +828,137 @@ async function main() {
     results.bootstrap_configuration = config;
     console.log("PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys");
 
+    if (process.env.LCP_USDC_CLAIM_ONLY === "1") {
+      const commitmentId = "9901";
+      const amountRaw = 1_234_567n;
+      const seedTx = await functionCall(CORE_ID, coreKey, "sandbox_seed_claimable_commitment", {
+        commitment_id: commitmentId,
+        beneficiary: CASH_RECIPIENT_ID,
+        amount_raw: amountRaw.toString(),
+        token_account_id: TOKEN_ID,
+      }, 120n * TERA);
+      const recipientTokenBefore = await tokenBalance(CASH_RECIPIENT_ID);
+      const coreTokenBefore = await tokenBalance(CORE_ID);
+      const freeMargin = await setNativeFreeMargin(0n, "NEP-141 claim transfer-deposit boundary");
+      const claimAction = (deposit) => actionFunctionCall(
+        "claim_tranche",
+        { commitment_id: commitmentId },
+        200n * TERA,
+        deposit,
+      );
+      const discoveryFailure = await sendTransaction(
+        CASH_RECIPIENT_ID,
+        cashRecipientKey,
+        CORE_ID,
+        [claimAction(0n)],
+        "discover NEP-141 claim storage and transfer deposit",
+        { expectFailure: true },
+      );
+      const discoveryText = [
+        ...(discoveryFailure.receipts_outcome ?? []).flatMap((receipt) => [
+          ...(receipt.outcome?.logs ?? []),
+          JSON.stringify(receipt.outcome?.status),
+        ]),
+        JSON.stringify(discoveryFailure.status),
+      ].join("\n");
+      const requiredDepositMatch = discoveryText.match(
+        /attach at least (\d+) yoctoNEAR for tranche storage and transfer/,
+      );
+      assert.ok(requiredDepositMatch,
+        `NEP-141 claim did not report its required storage and transfer deposit: ${discoveryText}`);
+      const requiredDeposit = BigInt(requiredDepositMatch[1]);
+      assert.ok(requiredDeposit > 1n,
+        "the measured claim deposit must include storage in addition to NEP-141's one yoctoNEAR");
+      assert.equal(await tranche(commitmentId), null,
+        "failed storage discovery must roll back the staged tranche");
+      assert.equal(await tokenBalance(CASH_RECIPIENT_ID), recipientTokenBefore,
+        "failed storage discovery must not call the token contract");
+
+      const cashBeforeClaim = await nativeCashSnapshot();
+      assert.equal(nativeFreeMargin(cashBeforeClaim), 0n,
+        "the exact claim must start with no unreserved native cash margin");
+      const claimTx = await sendTransaction(
+        CASH_RECIPIENT_ID,
+        cashRecipientKey,
+        CORE_ID,
+        [claimAction(requiredDeposit)],
+        "production NEP-141 tranche claim",
+      );
+      const transferId = String(returnedJson(claimTx));
+      const settledClaim = await waitFor("NEP-141 production claim callback", async () => {
+        const [claimTranche, escrowState, intent] = await Promise.all([
+          tranche(commitmentId),
+          escrow(commitmentId),
+          view(CORE_ID, "receipt_recovery_intent", { transfer_id: transferId }),
+        ]);
+        return claimTranche?.status === "Paid"
+          && escrowState?.pending_raw === "0"
+          && escrowState?.paid_raw === amountRaw.toString()
+          && intent?.terminal_outcome === "success"
+          ? { done: true, value: { claimTranche, escrowState, intent } }
+          : { done: false, value: {
+            tranche_status: claimTranche?.status,
+            escrowState,
+            terminal_outcome: intent?.terminal_outcome,
+          } };
+      });
+      const claimReceiptTree = await rpc("tx", [claimTx.transaction.hash, CASH_RECIPIENT_ID]);
+      const tokenReceipt = claimReceiptTree.receipts_outcome?.find(
+        ({ outcome }) => outcome.executor_id === TOKEN_ID,
+      );
+      assert.ok(tokenReceipt, "production claim must create a token transfer receipt");
+      assert.ok(
+        tokenReceipt.outcome.status && Object.hasOwn(tokenReceipt.outcome.status, "SuccessValue"),
+        `NEP-141 transfer receipt must succeed: ${JSON.stringify(tokenReceipt.outcome.status)}`,
+      );
+      const recipientTokenAfter = await tokenBalance(CASH_RECIPIENT_ID);
+      const coreTokenAfter = await tokenBalance(CORE_ID);
+      assert.equal(recipientTokenAfter - recipientTokenBefore, amountRaw,
+        "beneficiary must receive exactly one USDC tranche");
+      assert.equal(coreTokenBefore - coreTokenAfter, amountRaw,
+        "the contract must spend exactly one USDC tranche");
+      // The mock NEP-141 method rejects unless env::attached_deposit() is
+      // exactly one yoctoNEAR, so a successful token receipt is this runtime
+      // assertion without relying on account-balance rounding/settlement.
+      const cashAfterClaim = await nativeCashSnapshot();
+      assert.equal(cashAfterClaim[4], 0n,
+        "the planned NEP-141 action deposit must clear after action materialization");
+      assert.ok(nativeFreeMargin(cashAfterClaim) >= 0n,
+        "the exact-storage claim must remain solvent after the token action and callback");
+      assertConservation(settledClaim.escrowState);
+      results.usdc_claim_cash_gate = {
+        commitment_id: commitmentId,
+        transfer_id: transferId,
+        token_account_id: TOKEN_ID,
+        beneficiary: CASH_RECIPIENT_ID,
+        amount_raw: amountRaw.toString(),
+        required_attached_deposit_yocto: requiredDeposit.toString(),
+        required_deposit_includes_ft_transfer_yocto: true,
+        ft_transfer_attached_deposit_yocto: "1",
+        starting_free_native_margin_yocto: "0",
+        ending_free_native_margin_yocto: nativeFreeMargin(cashAfterClaim).toString(),
+        scheduled_outflow_after_materialization_yocto: cashAfterClaim[4].toString(),
+        discovery_failure_transaction_hash: discoveryFailure.transaction.hash,
+        claim_transaction_hash: claimTx.transaction.hash,
+        seed_transaction_hash: seedTx.transaction.hash,
+        free_margin_fixture: freeMargin,
+        transaction_outcome: claimReceiptTree.transaction_outcome,
+        receipts_outcome: claimReceiptTree.receipts_outcome,
+        claim_state: settledClaim.claimTranche,
+        escrow_state: settledClaim.escrowState,
+        recovery_intent: settledClaim.intent,
+        native_cash_before_claim: cashBeforeClaim.map(String),
+        native_cash_after_claim: cashAfterClaim.map(String),
+        recipient_token_balance_before: recipientTokenBefore.toString(),
+        recipient_token_balance_after: recipientTokenAfter.toString(),
+        core_token_balance_before: coreTokenBefore.toString(),
+        core_token_balance_after: coreTokenAfter.toString(),
+        isolated_sandbox_only: true,
+      };
+      console.log("PASS production NEP-141 claim sends its 1 yoctoNEAR action deposit with zero starting free margin");
+      return results;
+    }
+
     const maximumEnvelope = maximumRecoveryEnvelope(committee);
     const maximumEnvelopeBytes = Buffer.from(maximumEnvelope.envelope, "base64");
     assert.equal(maximumEnvelope.intentBytes.length, 500, "maximum intent must use the configured 500-byte limit");
@@ -2574,6 +2705,7 @@ async function main() {
     console.log("PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call");
 
     if (process.env.LCP_RECOVERY_ONLY === "1"
+      || process.env.LCP_USDC_CLAIM_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_OOG_ONLY === "1") {
@@ -2581,7 +2713,9 @@ async function main() {
       const fixturePath = process.env.LCP_FIXTURE_OUTPUT;
       if (fixturePath) {
         await writeFile(fixturePath, `${JSON.stringify({
-          fixture_schema: process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
+          fixture_schema: process.env.LCP_USDC_CLAIM_ONLY === "1"
+            ? "lcp.nep141-claim-cash-gate-sandbox-acceptance.v1"
+            : process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
             ? "lcp.storage-registry-sandbox-acceptance.v1"
             : process.env.LCP_STORAGE_REGISTRY_FUNDED_ONLY === "1"
               ? "lcp.storage-registry-funded-pending-sandbox-acceptance.v1"
@@ -2596,7 +2730,9 @@ async function main() {
           scenarios: fixtures.recovery_acceptance,
         }, null, 2)}\n`);
       }
-      console.log(process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
+      console.log(process.env.LCP_USDC_CLAIM_ONLY === "1"
+        ? "Isolated NEP-141 claim cash-gate acceptance passed; no public network was used."
+        : process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
         ? "Isolated storage registry cap acceptance passed; no public network was used."
         : process.env.LCP_STORAGE_REGISTRY_FUNDED_ONLY === "1"
           ? "Isolated funded-pending credit acceptance passed; no public network was used."
@@ -3293,10 +3429,11 @@ async function main() {
 
     const nativeCommitmentId = "90";
     const nativeTrancheAmount = 10n ** 22n;
-    await functionCall(CORE_ID, coreKey, "sandbox_seed_native_claimable_commitment", {
+    await functionCall(CORE_ID, coreKey, "sandbox_seed_claimable_commitment", {
       commitment_id: nativeCommitmentId,
       beneficiary: CASH_RECIPIENT_ID,
-      amount_yocto: nativeTrancheAmount.toString(),
+      amount_raw: nativeTrancheAmount.toString(),
+      token_account_id: null,
     }, 100n * TERA);
     await functionCall(CORE_ID, coreKey, "sandbox_set_next_transfer_recipient", {
       commitment_id: nativeCommitmentId,

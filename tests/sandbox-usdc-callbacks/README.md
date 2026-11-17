@@ -337,8 +337,49 @@ docker run --rm --init --platform linux/amd64 \
   'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/receipt-recovery-sandbox-acceptance-2026-11-16.json node run.mjs'
 ```
 
-This run passed a read-only contract-VM probe of a valid maximum-size
-certificate envelope: 500-byte intent, 714-byte certificate, five signatures,
+To run only the production NEP-141 tranche-claim cash-gate case, add
+`LCP_USDC_CLAIM_ONLY=1` while keeping `LCP_RECOVERY_ONLY=1`:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_USDC_CLAIM_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+The isolated case seeds a claimable NEP-141 tranche, discovers the exact
+measured storage plus transfer deposit, then calls production `claim_tranche`
+with no free native-cash margin. It confirms the mock token receives the
+required 1 yoctoNEAR for `ft_transfer`, the beneficiary receives one tranche,
+the callback settles the intent, and the native cash ledger remains solvent.
+This validates local action accounting; it does not measure a real USDC
+contract's gas or storage behavior. The November 16, 2026 run passed at
+Sandbox protocol 88: the claim settled `1,234,567` raw token units, the token
+callback recorded success, and the contract retained `0.00436 NEAR` after
+storage accounting. The receipt capture and source hashes are in
+[`nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.json`](nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.json)
+and its [checksum manifest](nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.sha256).
+
+Regenerate and verify the receipt/source manifest after rerunning or changing
+the acceptance inputs:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
+  > tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/nep141-claim-cash-gate-sandbox-acceptance-2026-11-16.sha256
+```
+
+The broader November 16 recovery-lifecycle run passed a read-only contract-VM
+probe of a valid maximum-size certificate envelope: 500-byte intent, 714-byte certificate, five signatures,
 1,202 decoded bytes, and 1,604 Base64 characters. This synthetic probe uses the
 configured committee and real parser/signature verifier, but it is not a
 pending transfer and cannot settle escrow. The same run passed callback-first
