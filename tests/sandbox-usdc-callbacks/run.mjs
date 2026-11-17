@@ -1199,6 +1199,155 @@ async function main() {
         no_public_network_used: true,
       };
     };
+    const runStorageRevaluationOogAcceptance = async () => {
+      const gasBurnt = (transaction) => (transaction.receipts_outcome ?? [])
+        .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n);
+      const recordCount = async () => BigInt(await view(CORE_ID, "sandbox_recovery_storage_record_count", {}));
+      const nativeCashSnapshot = async () => (await view(CORE_ID, "sandbox_native_cash_snapshot", {}))
+        .map((amount) => BigInt(amount));
+      const maxLengthPayer = "a".repeat(64);
+      const admissionExcessPerRow = ONE_NEAR / 100n;
+      const creditId = (index) => createHash("sha256")
+        .update(Buffer.concat([
+          Buffer.from("LCP/SANDBOX/STORAGE-REGISTRY-CAP/V1\0", "utf8"),
+          u32(index),
+        ]))
+        .digest("hex");
+      const initialRecordCount = await recordCount();
+      const initialCashSnapshot = await nativeCashSnapshot();
+      const seedCount = STORAGE_REVALUATION_BATCH_LIMIT;
+      const attachedDeposit = BigInt(seedCount) * admissionExcessPerRow;
+      const seed = await rootCall(
+        "sandbox_seed_recovery_credit_rows",
+        {
+          first_credit_index: "0",
+          count: seedCount,
+          payer_account_id: maxLengthPayer,
+          admission_excess_yocto: admissionExcessPerRow.toString(),
+        },
+        "seed maximum-length payer rows for revaluation OOG acceptance",
+        220n * TERA,
+        attachedDeposit,
+      );
+      const measuredStorageBytes = BigInt(returnedJson(seed));
+      assert.ok(measuredStorageBytes > 0n);
+      const expectedRecordCount = initialRecordCount + BigInt(seedCount);
+      const seededCashSnapshot = await nativeCashSnapshot();
+      assert.equal(seededCashSnapshot[6] - initialCashSnapshot[6], attachedDeposit,
+        "funded Pending rows must add their exact aggregate credit liability Q");
+      assert.equal(await recordCount(), expectedRecordCount,
+        "the OOG fixture must begin with all measured registry rows present");
+      const sampleCreditId = creditId(seedCount - 1);
+      const beforeCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      });
+      assert.equal(beforeCredit.state, "pending");
+      assert.equal(beforeCredit.accrued_yocto, admissionExcessPerRow.toString());
+      assert.equal(beforeCredit.withdrawal_available, false);
+      assert.equal(beforeCredit.cash_solvency_ready, true);
+      assert.equal(beforeCredit.storage_reserve_ready, true);
+
+      await rootCall("sandbox_mark_recovery_storage_price_stale", {},
+        "mark storage reserve price stale before OOG acceptance");
+      const began = await rootCall("begin_recovery_storage_revaluation", {},
+        "begin storage reserve revaluation before OOG acceptance");
+      assert.equal(returnedJson(began), true);
+      const duringRevaluation = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      });
+      assert.equal(duringRevaluation.storage_reserve_ready, false,
+        "cash-sensitive actions must fail closed while revaluation is pending");
+
+      const lowGasTgas = 10n;
+      const outOfGas = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: 0, limit: STORAGE_REVALUATION_BATCH_LIMIT },
+        "run a maximum-length 64-record revaluation batch with insufficient gas",
+        lowGasTgas * TERA,
+        0n,
+        true,
+      );
+      const failedReceipt = JSON.stringify({
+        transaction_status: outOfGas.status,
+        receipts: (outOfGas.receipts_outcome ?? []).map((receipt) => ({
+          status: receipt.outcome?.status,
+          logs: receipt.outcome?.logs,
+        })),
+      });
+      assert.match(failedReceipt, /Exceeded the prepaid gas|out of gas/i,
+        "the low-gas batch must fail from runtime gas exhaustion");
+      const afterOogCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      });
+      const cashAfterOog = await nativeCashSnapshot();
+      assert.deepEqual(afterOogCredit, duringRevaluation,
+        "an out-of-gas batch must leave credit and reserve-readiness state unchanged");
+      assert.equal(cashAfterOog[6], seededCashSnapshot[6],
+        "an out-of-gas batch must leave recovery-credit liability Q unchanged");
+      assert.equal(await recordCount(), expectedRecordCount,
+        "an out-of-gas batch must preserve every registry record");
+
+      const retry = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: 0, limit: STORAGE_REVALUATION_BATCH_LIMIT },
+        "retry the same batch from its original cursor after OOG rollback",
+        220n * TERA,
+      );
+      const retryResult = returnedJson(retry);
+      assert.deepEqual(retryResult, {
+        status: "in_progress",
+        next_record_index: STORAGE_REVALUATION_BATCH_LIMIT,
+      }, "retry from record zero must prove the failed batch cursor did not advance");
+      const finish = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: STORAGE_REVALUATION_BATCH_LIMIT, limit: STORAGE_REVALUATION_BATCH_LIMIT },
+        "finish the registry revaluation after successful retry",
+        220n * TERA,
+      );
+      assert.deepEqual(returnedJson(finish), { status: "complete" },
+        "the next batch must complete revaluation for the fixture registry");
+      const afterRetryCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      });
+      const cashAfterRetry = await nativeCashSnapshot();
+      assert.equal(afterRetryCredit.storage_reserve_ready, true,
+        "reserve readiness must return only after the retried batches complete");
+      assert.equal(afterRetryCredit.state, beforeCredit.state,
+        "successful revaluation must preserve the credit lifecycle state");
+      assert.equal(afterRetryCredit.accrued_yocto, beforeCredit.accrued_yocto,
+        "successful revaluation must preserve the credit amount");
+      assert.equal(cashAfterRetry[6], seededCashSnapshot[6],
+        "reserve revaluation must preserve recovery-credit liability Q");
+      assert.equal(await recordCount(), expectedRecordCount,
+        "successful retry must not add or remove registry rows");
+
+      return {
+        initial_record_count: initialRecordCount.toString(),
+        rows_seeded: seedCount,
+        final_record_count: expectedRecordCount.toString(),
+        maximum_payer_id_length: maxLengthPayer.length,
+        measured_credit_storage_bytes: measuredStorageBytes.toString(),
+        admission_excess_yocto_per_row: admissionExcessPerRow.toString(),
+        attached_deposit_yocto: attachedDeposit.toString(),
+        initial_recovery_credit_liability_yocto: initialCashSnapshot[6].toString(),
+        recovery_credit_liability_after_seed_yocto: seededCashSnapshot[6].toString(),
+        recovery_credit_liability_after_oog_yocto: cashAfterOog[6].toString(),
+        recovery_credit_liability_after_retry_yocto: cashAfterRetry[6].toString(),
+        revaluation_batch_limit: STORAGE_REVALUATION_BATCH_LIMIT,
+        low_gas_limit_tgas: lowGasTgas.toString(),
+        failed_transaction_hash: outOfGas.transaction.hash,
+        failed_batch_gas_burnt: gasBurnt(outOfGas).toString(),
+        failure_was_runtime_out_of_gas: true,
+        state_unchanged_after_oog: true,
+        reserve_remained_blocked_after_oog: true,
+        retry_started_at_original_record_zero: true,
+        retry_result: retryResult,
+        retry_gas_burnt: gasBurnt(retry).toString(),
+        final_batch_result: { status: "complete" },
+        storage_reserve_ready_after_retry: afterRetryCredit.storage_reserve_ready,
+        no_public_network_used: true,
+      };
+    };
     const assertEscrow = async (commitmentId, fields) => {
       const state = await escrow(commitmentId);
       for (const [field, expected] of Object.entries(fields)) {
@@ -1214,6 +1363,10 @@ async function main() {
     }
     if (process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1") {
       results.storage_registry_shape_acceptance = await runStorageRegistryShapeAcceptance();
+      return results;
+    }
+    if (process.env.LCP_STORAGE_REGISTRY_OOG_ONLY === "1") {
+      results.storage_registry_oog_acceptance = await runStorageRevaluationOogAcceptance();
       return results;
     }
 
@@ -2380,7 +2533,8 @@ async function main() {
 
     if (process.env.LCP_RECOVERY_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
-      || process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1") {
+      || process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
+      || process.env.LCP_STORAGE_REGISTRY_OOG_ONLY === "1") {
       fixtures.recovery_acceptance = await runRecoveryAcceptance(nodeStatus, tokenWasm, codeHashV1);
       const fixturePath = process.env.LCP_FIXTURE_OUTPUT;
       if (fixturePath) {
@@ -2391,6 +2545,8 @@ async function main() {
               ? "lcp.storage-registry-funded-pending-sandbox-acceptance.v1"
             : process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
               ? "lcp.storage-registry-shape-sandbox-acceptance.v1"
+            : process.env.LCP_STORAGE_REGISTRY_OOG_ONLY === "1"
+              ? "lcp.storage-registry-oog-sandbox-acceptance.v1"
               : "lcp.receipt-recovery-sandbox-acceptance.v1",
           captured_at: new Date().toISOString(),
           node: fixtures.node,
@@ -2404,6 +2560,8 @@ async function main() {
           ? "Isolated funded-pending credit acceptance passed; no public network was used."
         : process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
           ? "Isolated maximum-length payer storage acceptance passed; no public network was used."
+        : process.env.LCP_STORAGE_REGISTRY_OOG_ONLY === "1"
+          ? "Isolated storage revaluation OOG rollback and retry acceptance passed; no public network was used."
           : "All isolated receipt-recovery Sandbox checks passed; no public network was used.");
       return;
     }

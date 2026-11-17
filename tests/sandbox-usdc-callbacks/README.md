@@ -483,6 +483,46 @@ and the largest 64-record revaluation batch used 11.786 Tgas. These are local
 fixture measurements, not production limits. See the
 [capture](storage-registry-funded-pending-sandbox-acceptance-2026-11-16.json)
 and [checksum manifest](storage-registry-funded-pending-sandbox-acceptance-2026-11-16.sha256).
+
+### Storage-reserve revaluation out-of-gas rollback and retry
+
+Run the focused rollback probe with the same optimized fixture core and mock
+token artifacts:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_STORAGE_REGISTRY_OOG_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/storage-registry-oog-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+The probe seeds 64 funded measured rows for a synthetic 64-character AccountId
+with 0.01 NEAR of admission excess per row (0.64 NEAR total), starts reserve
+revaluation, and submits the maximum 64-record batch with a 10 Tgas limit. It
+requires a runtime out-of-gas receipt, then compares the credit, `Q` liability,
+and registry state and retries from record zero. The retry must advance to
+record 64 and a second batch must complete, restoring reserve readiness. This
+verifies transaction rollback and retry on the pinned local Sandbox; it does
+not establish a production gas limit. See the
+[capture](storage-registry-oog-sandbox-acceptance-2026-11-16.json) and
+[source checksum manifest](storage-registry-oog-sandbox-acceptance-2026-11-16.sha256).
+
+Regenerate the OOG manifest after rerunning or changing any listed input:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/storage-registry-oog-sandbox-acceptance-2026-11-16.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+  > tests/sandbox-usdc-callbacks/storage-registry-oog-sandbox-acceptance-2026-11-16.sha256
+```
+
 Regenerate the manifest after rerunning or changing the captured inputs:
 
 ```sh
