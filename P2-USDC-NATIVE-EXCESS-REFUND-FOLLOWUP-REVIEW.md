@@ -10,7 +10,7 @@ capture checker, not a broader contract audit.
 
 ## Candidate and artifacts
 
-- Source commit: `6b32824a5be6156fe1afa696a76991c696a00309`.
+- Source commit: `785a51bb1338154163211e20f76d510f0a1434f1`.
 - Runtime: NEAR Sandbox 2.14.0, protocol 88; use a clean, independently managed
   runtime and fresh chain.
 - Core fixture SHA-256: `33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872`.
