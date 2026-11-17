@@ -1351,7 +1351,8 @@ async function main() {
         "failed withdrawal must expose the temporary storage growth of its persisted attempt");
       assert.equal(await view(CORE_ID, "get_storage_refund_balance", { account_id: RECIPIENT_ID }),
         refundAmount.toString(), "underfunded withdrawal must preserve the full payer credit");
-      assert.deepEqual(await nativeCashSnapshot(), cashBeforeUnderfundedWithdrawal,
+      const cashAfterUnderfundedWithdrawal = await nativeCashSnapshot();
+      assert.deepEqual(cashAfterUnderfundedWithdrawal, cashBeforeUnderfundedWithdrawal,
         "underfunded withdrawal must roll back the attempt and cash-ledger writes");
       const withdrawalMargin = await setNativeFreeMargin(
         refundAmount + withdrawalStorageGrowth,
@@ -1411,10 +1412,15 @@ async function main() {
         cash_after_failed_refund: excessRefundState.cash.map(String),
         one_transfer_withdrawal_margin_fixture: oneTransferMargin,
         underfunded_withdrawal_transaction_hash: underfundedCreditWithdrawalTx.transaction.hash,
+        underfunded_withdrawal_status: underfundedCreditWithdrawalTx.status,
+        underfunded_withdrawal_receipts_outcome: underfundedCreditWithdrawalTx.receipts_outcome,
+        cash_before_underfunded_withdrawal: cashBeforeUnderfundedWithdrawal.map(String),
+        cash_after_underfunded_withdrawal: cashAfterUnderfundedWithdrawal.map(String),
         measured_withdrawal_storage_growth_yocto: withdrawalStorageGrowth.toString(),
         withdrawal_margin_fixture: withdrawalMargin,
         withdrawal_transaction_hash: creditWithdrawalTx.transaction.hash,
         withdrawal_fees_yocto: withdrawalFees.toString(),
+        withdrawal_transaction_outcome: creditWithdrawalReceiptTree.transaction_outcome,
         payer_balance_before_yocto: payerBalanceBefore.toString(),
         payer_balance_after_yocto: payerBalanceAfter.toString(),
         withdrawal_receipts_outcome: creditWithdrawalReceiptTree.receipts_outcome,

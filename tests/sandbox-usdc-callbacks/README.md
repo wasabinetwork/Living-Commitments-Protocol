@@ -456,11 +456,23 @@ The missing-recipient method and override exist only in the
 `sandbox-callback-fixture` build; this is local Sandbox evidence, not a testnet
 transfer or a production deployment.
 
+Run the separate capture checker from the repository root:
+
+```sh
+node tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
+```
+
+It validates the recorded receipt outcomes, event fields, cash snapshots,
+measured storage threshold, payer balance reconciliation, code hash, and source
+manifest. It checks internal consistency only; it does not recreate the
+Sandbox execution or validate receipt proofs against block headers.
+
 Regenerate and verify the capture/source manifest from the repository root:
 
 ```sh
 shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json \
   tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs \
   tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
   Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
   contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
