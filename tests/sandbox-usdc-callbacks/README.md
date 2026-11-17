@@ -500,10 +500,11 @@ The probe seeds 64 funded measured rows for a synthetic 64-character AccountId
 with 0.01 NEAR of admission excess per row (0.64 NEAR total), starts reserve
 revaluation, and submits the maximum 64-record batch with a 10 Tgas limit. It
 requires a runtime out-of-gas receipt, then compares the credit, `Q` liability,
-and registry state and retries from record zero. The retry must advance to
-record 64 and a second batch must complete, restoring reserve readiness. This
-verifies transaction rollback and retry on the pinned local Sandbox; it does
-not establish a production gas limit. See the
+and registry state. It also rejects a zero-length batch and a noncontiguous
+cursor without changing that state. It then retries from record zero; the retry
+must advance to record 64 and a second batch must complete, restoring reserve
+readiness. This verifies transaction rollback, validation, and retry on the
+pinned local Sandbox; it does not establish a production gas limit. See the
 [capture](storage-registry-oog-sandbox-acceptance-2026-11-16.json) and
 [source checksum manifest](storage-registry-oog-sandbox-acceptance-2026-11-16.sha256).
 

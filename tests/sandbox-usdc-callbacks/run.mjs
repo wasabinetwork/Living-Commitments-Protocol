@@ -1287,6 +1287,44 @@ async function main() {
       assert.equal(await recordCount(), expectedRecordCount,
         "an out-of-gas batch must preserve every registry record");
 
+      const outOfSequence = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: 1, limit: 1 },
+        "reject a revaluation batch that skips the active cursor",
+        220n * TERA,
+        0n,
+        true,
+      );
+      assert.match(JSON.stringify(outOfSequence.status), /storage reserve batch is out of sequence/i,
+        "a noncontiguous batch must fail at the active cursor check");
+      assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      }), duringRevaluation,
+      "an out-of-sequence batch must preserve the pending credit and reserve state");
+      assert.equal((await nativeCashSnapshot())[6], seededCashSnapshot[6],
+        "an out-of-sequence batch must preserve recovery-credit liability Q");
+      assert.equal(await recordCount(), expectedRecordCount,
+        "an out-of-sequence batch must preserve registry count");
+
+      const zeroLength = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: 0, limit: 0 },
+        "reject a zero-length storage revaluation batch",
+        220n * TERA,
+        0n,
+        true,
+      );
+      assert.match(JSON.stringify(zeroLength.status), /storage reserve revaluation batch size is invalid/i,
+        "a zero-length batch must fail validation");
+      assert.deepEqual(await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      }), duringRevaluation,
+      "an invalid batch size must preserve the pending credit and reserve state");
+      assert.equal((await nativeCashSnapshot())[6], seededCashSnapshot[6],
+        "an invalid batch size must preserve recovery-credit liability Q");
+      assert.equal(await recordCount(), expectedRecordCount,
+        "an invalid batch size must preserve registry count");
+
       const retry = await rootCall(
         "revalue_recovery_storage_batch",
         { start_index: 0, limit: STORAGE_REVALUATION_BATCH_LIMIT },
@@ -1338,6 +1376,10 @@ async function main() {
         failed_transaction_hash: outOfGas.transaction.hash,
         failed_batch_gas_burnt: gasBurnt(outOfGas).toString(),
         failure_was_runtime_out_of_gas: true,
+        out_of_sequence_transaction_hash: outOfSequence.transaction.hash,
+        out_of_sequence_rejected_without_state_change: true,
+        zero_length_transaction_hash: zeroLength.transaction.hash,
+        zero_length_rejected_without_state_change: true,
         state_unchanged_after_oog: true,
         reserve_remained_blocked_after_oog: true,
         retry_started_at_original_record_zero: true,
