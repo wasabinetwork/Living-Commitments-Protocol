@@ -2288,6 +2288,26 @@ impl Contract {
         self.sandbox_storage_refund_callback_gas_tgas = Some(callback_gas_tgas);
     }
 
+    /// Queues a failed attached-deposit excess refund and its production callback
+    /// for isolated Sandbox accounting tests.
+    #[cfg(feature = "sandbox-callback-fixture")]
+    #[payable]
+    pub fn sandbox_queue_excess_refund_failure(&mut self) {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        let payer = env::predecessor_account_id();
+        let attached = env::attached_deposit().as_yoctonear();
+        require!(attached > 0, "fixture excess refund must be positive");
+        let missing_recipient: AccountId = "missing-excess-refund.sandbox".parse().unwrap();
+        refund_excess_to_recipient(payer, missing_recipient, attached, 0, 0);
+    }
+
     /// Isolated recipient override for native claim failure tests in Sandbox.
     #[cfg(feature = "sandbox-callback-fixture")]
     pub fn sandbox_set_next_transfer_recipient(
@@ -10952,6 +10972,22 @@ fn refund_excess(
     required: u128,
     additional_outflow_yocto: u128,
 ) {
+    refund_excess_to_recipient(
+        account_id.clone(),
+        account_id,
+        attached,
+        required,
+        additional_outflow_yocto,
+    );
+}
+
+fn refund_excess_to_recipient(
+    account_id: near_sdk::AccountId,
+    recipient: near_sdk::AccountId,
+    attached: u128,
+    required: u128,
+    additional_outflow_yocto: u128,
+) {
     let excess = attached
         .checked_sub(required)
         .unwrap_or_else(|| env::panic_str("storage deposit underpayment"));
@@ -10971,7 +11007,7 @@ fn refund_excess(
             .unwrap_or_else(|| env::panic_str("native cash outflow overflow"));
         native_cash::record_outflow(total_outflow);
         native_cash::assert_solvency();
-        let _refund_promise = Promise::new(account_id.clone())
+        let _refund_promise = Promise::new(recipient)
             .transfer(NearToken::from_yoctonear(excess))
             .then(Promise::new(env::current_account_id()).function_call(
                 "on_storage_refund_attempt".to_string(),

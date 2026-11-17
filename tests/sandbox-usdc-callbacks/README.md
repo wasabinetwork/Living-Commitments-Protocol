@@ -429,6 +429,50 @@ shasum -a 256 tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-accep
 shasum -a 256 -c tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
 ```
 
+To exercise a failed native excess-storage-refund callback and recover through
+the production legacy payer-credit withdrawal, set
+`LCP_NATIVE_EXCESS_REFUND_ONLY=1` in the same recovery-enabled build:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+The feature-gated fixture sends an attached `0.01 NEAR` deposit through the
+production `refund_excess` accounting and callback, but directs the transfer to
+a deliberately nonexistent Sandbox account. The callback restores the exact
+amount as a withdrawable payer credit. A withdrawal with only `0.01 NEAR` free
+margin is rejected before scheduling the transfer because the persisted
+withdrawal attempt increases measured storage by `0.00026 NEAR`. With exactly
+`0.01026 NEAR` free margin, the production withdrawal and callback settle once;
+the final payer balance reconciles to the `0.01 NEAR` credit after measured
+transaction fees, and the native cash ledger remains solvent. Captured on
+protocol 88 (run at 2026-11-16 AST; capture timestamp is UTC) in
+[`native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json)
+with its [source checksum manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256).
+The missing-recipient method and override exist only in the
+`sandbox-callback-fixture` build; this is local Sandbox evidence, not a testnet
+transfer or a production deployment.
+
+Regenerate and verify the capture/source manifest from the repository root:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs contracts/sandbox-mock-ft/Cargo.toml \
+  contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+  P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
+  > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256
+```
+
 The broader November 16 recovery-lifecycle run passed a read-only contract-VM
 probe of a valid maximum-size certificate envelope: 500-byte intent, 714-byte certificate, five signatures,
 1,202 decoded bytes, and 1,604 Base64 characters. This synthetic probe uses the

@@ -1277,6 +1277,154 @@ async function main() {
       return results;
     }
 
+    if (process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1") {
+      const refundAmount = ONE_NEAR / 100n;
+      const freeMargin = await setNativeFreeMargin(
+        refundAmount + NATIVE_STORAGE_MARGIN_BUFFER,
+        "native excess-refund callback failure",
+      );
+      const excessRefundTx = await sendTransaction(
+        RECIPIENT_ID,
+        recipientKey,
+        CORE_ID,
+        [actionFunctionCall("sandbox_queue_excess_refund_failure", {}, 120n * TERA, refundAmount)],
+        "production excess-refund callback with a forced missing recipient",
+      );
+      const excessRefundReceiptTree = await rpc("tx", [
+        excessRefundTx.transaction.hash,
+        RECIPIENT_ID,
+      ]);
+      const failedExcessReceipt = excessRefundReceiptTree.receipts_outcome?.find(
+        ({ outcome }) => outcome.executor_id === "missing-excess-refund.sandbox",
+      );
+      assert.ok(failedExcessReceipt, "excess refund must create its native transfer receipt");
+      assert.ok(isFailedExecution(failedExcessReceipt.outcome.status),
+        "the fixture recipient must force the native excess transfer to fail");
+      const excessRefundState = await waitFor("failed excess-refund callback", async () => {
+        const [credit, cash] = await Promise.all([
+          view(CORE_ID, "get_storage_refund_balance", { account_id: RECIPIENT_ID }),
+          nativeCashSnapshot(),
+        ]);
+        return credit === refundAmount.toString()
+          && cash[3] === refundAmount
+          && cash[4] === 0n
+          ? { done: true, value: { credit, cash } }
+          : { done: false, value: { credit, cash: cash.map(String) } };
+      });
+      assert.equal(nativeFreeMargin(excessRefundState.cash) >= 0n, true,
+        "failed excess refund must preserve native solvency");
+      assert.ok(
+        excessRefundReceiptTree.receipts_outcome?.some(({ outcome }) =>
+          outcome.executor_id === CORE_ID
+            && outcome.logs?.some((log) => log.includes('"event":"excess_storage_refund_failed"'))),
+        "failed excess refund must reconcile into the payer's storage credit",
+      );
+
+      const oneTransferMargin = await setNativeFreeMargin(
+        refundAmount,
+        "native excess-refund credit withdrawal one-transfer boundary",
+      );
+      const cashBeforeUnderfundedWithdrawal = await nativeCashSnapshot();
+      const underfundedCreditWithdrawalTx = await sendTransaction(
+        RECIPIENT_ID,
+        recipientKey,
+        CORE_ID,
+        [actionFunctionCall("withdraw_storage_refund", {}, 120n * TERA)],
+        "native excess-refund credit withdrawal at one-transfer margin",
+        { expectFailure: true },
+      );
+      const underfundedWithdrawalLogs = (underfundedCreditWithdrawalTx.receipts_outcome ?? [])
+        .flatMap(({ outcome }) => outcome?.logs ?? []);
+      const cashGateLog = underfundedWithdrawalLogs.find((log) =>
+        log.includes("SANDBOX_CASH_GATE_FAILED"));
+      assert.ok(cashGateLog,
+        "one-transfer margin must reject the legacy credit withdrawal before scheduling a transfer");
+      assert.ok(!underfundedWithdrawalLogs.some((log) =>
+        log.includes('"event":"service_report_refund_requested"')),
+      "underfunded excess-credit withdrawal must stop before requesting its transfer");
+      const storageMatch = cashGateLog.match(/SANDBOX_CASH_GATE_FAILED C=(\d+) S=(\d+)/);
+      assert.ok(storageMatch, "cash-gate log must include balance and measured storage cost");
+      assert.equal(BigInt(storageMatch[1]), cashBeforeUnderfundedWithdrawal[0],
+        "failed withdrawal must roll back the account balance");
+      const withdrawalStorageGrowth = BigInt(storageMatch[2]) - cashBeforeUnderfundedWithdrawal[1];
+      assert.ok(withdrawalStorageGrowth > 0n,
+        "failed withdrawal must expose the temporary storage growth of its persisted attempt");
+      assert.equal(await view(CORE_ID, "get_storage_refund_balance", { account_id: RECIPIENT_ID }),
+        refundAmount.toString(), "underfunded withdrawal must preserve the full payer credit");
+      assert.deepEqual(await nativeCashSnapshot(), cashBeforeUnderfundedWithdrawal,
+        "underfunded withdrawal must roll back the attempt and cash-ledger writes");
+      const withdrawalMargin = await setNativeFreeMargin(
+        refundAmount + withdrawalStorageGrowth,
+        "native excess-refund credit withdrawal measured storage boundary",
+      );
+      const payerBalanceBefore = await accountBalance(RECIPIENT_ID);
+      const creditWithdrawalTx = await sendTransaction(
+        RECIPIENT_ID,
+        recipientKey,
+        CORE_ID,
+        [actionFunctionCall("withdraw_storage_refund", {}, 120n * TERA)],
+        "withdraw failed excess refund from the production payer-credit path",
+      );
+      const settledExcessCredit = await waitFor("excess-refund credit withdrawal callback", async () => {
+        const [credit, cash] = await Promise.all([
+          view(CORE_ID, "get_storage_refund_balance", { account_id: RECIPIENT_ID }),
+          nativeCashSnapshot(),
+        ]);
+        return credit === "0" && cash[3] === 0n && cash[4] === 0n
+          ? { done: true, value: cash }
+          : { done: false, value: { credit, cash: cash.map(String) } };
+      });
+      const creditWithdrawalReceiptTree = await rpc("tx", [
+        creditWithdrawalTx.transaction.hash,
+        RECIPIENT_ID,
+      ]);
+      assert.ok(
+        creditWithdrawalReceiptTree.receipts_outcome?.some(({ outcome }) =>
+          outcome.executor_id === CORE_ID
+            && outcome.logs?.some((log) => log.includes('"event":"service_report_refund_sent"'))),
+        "successful retry must settle through the production storage-credit callback",
+      );
+      const withdrawalFees = BigInt(
+        creditWithdrawalReceiptTree.transaction_outcome?.outcome?.tokens_burnt ?? 0,
+      ) + (creditWithdrawalReceiptTree.receipts_outcome ?? []).reduce(
+        (sum, receipt) => sum + BigInt(receipt.outcome?.tokens_burnt ?? 0),
+        0n,
+      );
+      const payerBalanceAfter = await waitFor("finalized excess-refund credit payout", async () => {
+        const balance = await accountBalance(RECIPIENT_ID);
+        return balance + withdrawalFees >= payerBalanceBefore + refundAmount
+          ? { done: true, value: balance }
+          : { done: false, value: balance.toString() };
+      }, 60_000);
+      assert.equal(payerBalanceAfter + withdrawalFees, payerBalanceBefore + refundAmount,
+        "payer's exact excess refund must reconcile after measured transaction fees");
+      const finalNativeCash = await nativeCashSnapshot();
+      assert.ok(nativeFreeMargin(finalNativeCash) >= 0n,
+        "successful excess-credit withdrawal must preserve native solvency");
+      results.native_excess_refund_cash_gate = {
+        payer: RECIPIENT_ID,
+        amount_yocto: refundAmount.toString(),
+        free_margin_fixture: freeMargin,
+        failure_transaction_hash: excessRefundTx.transaction.hash,
+        failure_receipts_outcome: excessRefundReceiptTree.receipts_outcome,
+        failed_credit_balance_yocto: excessRefundState.credit,
+        cash_after_failed_refund: excessRefundState.cash.map(String),
+        one_transfer_withdrawal_margin_fixture: oneTransferMargin,
+        underfunded_withdrawal_transaction_hash: underfundedCreditWithdrawalTx.transaction.hash,
+        measured_withdrawal_storage_growth_yocto: withdrawalStorageGrowth.toString(),
+        withdrawal_margin_fixture: withdrawalMargin,
+        withdrawal_transaction_hash: creditWithdrawalTx.transaction.hash,
+        withdrawal_fees_yocto: withdrawalFees.toString(),
+        payer_balance_before_yocto: payerBalanceBefore.toString(),
+        payer_balance_after_yocto: payerBalanceAfter.toString(),
+        withdrawal_receipts_outcome: creditWithdrawalReceiptTree.receipts_outcome,
+        cash_after_withdrawal: finalNativeCash.map(String),
+        isolated_sandbox_only: true,
+      };
+      console.log("PASS native excess-refund failure restores payer credit; production withdrawal pays it exactly once");
+      return results;
+    }
+
     const maximumEnvelope = maximumRecoveryEnvelope(committee);
     const maximumEnvelopeBytes = Buffer.from(maximumEnvelope.envelope, "base64");
     assert.equal(maximumEnvelope.intentBytes.length, 500, "maximum intent must use the configured 500-byte limit");
@@ -3025,6 +3173,7 @@ async function main() {
     if (process.env.LCP_RECOVERY_ONLY === "1"
       || process.env.LCP_USDC_CLAIM_ONLY === "1"
       || process.env.LCP_USDC_REFUND_ONLY === "1"
+      || process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_SHAPE_ONLY === "1"
       || process.env.LCP_STORAGE_REGISTRY_OOG_ONLY === "1") {
@@ -3032,7 +3181,9 @@ async function main() {
       const fixturePath = process.env.LCP_FIXTURE_OUTPUT;
       if (fixturePath) {
         await writeFile(fixturePath, `${JSON.stringify({
-          fixture_schema: process.env.LCP_USDC_REFUND_ONLY === "1"
+          fixture_schema: process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1"
+            ? "lcp.native-excess-refund-cash-gate-sandbox-acceptance.v1"
+            : process.env.LCP_USDC_REFUND_ONLY === "1"
             ? "lcp.nep141-refund-cash-gate-sandbox-acceptance.v1"
             : process.env.LCP_USDC_CLAIM_ONLY === "1"
             ? "lcp.nep141-claim-cash-gate-sandbox-acceptance.v1"
@@ -3051,7 +3202,9 @@ async function main() {
           scenarios: fixtures.recovery_acceptance,
         }, null, 2)}\n`);
       }
-      console.log(process.env.LCP_USDC_REFUND_ONLY === "1"
+      console.log(process.env.LCP_NATIVE_EXCESS_REFUND_ONLY === "1"
+        ? "Isolated native excess-refund callback cash-gate acceptance passed; no public network was used."
+        : process.env.LCP_USDC_REFUND_ONLY === "1"
         ? "Isolated NEP-141 refund cash-gate acceptance passed; no public network was used."
         : process.env.LCP_USDC_CLAIM_ONLY === "1"
         ? "Isolated NEP-141 claim cash-gate acceptance passed; no public network was used."
