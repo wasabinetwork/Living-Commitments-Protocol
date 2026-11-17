@@ -508,6 +508,30 @@ pinned local Sandbox; it does not establish a production gas limit. See the
 [capture](storage-registry-oog-sandbox-acceptance-2026-11-16.json) and
 [source checksum manifest](storage-registry-oog-sandbox-acceptance-2026-11-16.sha256).
 
+### Release artifact feature boundary
+
+Build the normal core release artifact without fixture features, using a
+separate target directory so the optimized Sandbox artifact remains intact:
+
+```sh
+CARGO_TARGET_DIR=target/lcp-release-check cargo build --locked -p lcp-core \
+  --no-default-features --target wasm32-unknown-unknown --release
+node tests/sandbox-usdc-callbacks/verify-release-feature-exclusion.mjs
+```
+
+The verifier parses the actual Wasm export section, requires representative
+production methods, and rejects any `sandbox_*` exports, including the fixture
+storage seeding and registry methods. The captured release artifact has no
+Sandbox fixture exports. This checks the default non-fixture build boundary; it
+is not a reproducible-build verification. See the
+[release capture](release-feature-exclusion-2026-11-16.json) and its
+[source checksum manifest](release-feature-exclusion-2026-11-16.sha256). Verify
+the captured source files from the repository root with:
+
+```sh
+shasum -a 256 -c tests/sandbox-usdc-callbacks/release-feature-exclusion-2026-11-16.sha256
+```
+
 Regenerate the OOG manifest after rerunning or changing any listed input:
 
 ```sh
