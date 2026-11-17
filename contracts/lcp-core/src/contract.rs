@@ -8093,6 +8093,56 @@ mod tests {
     const PENDING_EVALUATION_INPUT_HASH: [u8; 32] = [12; 32];
     const PENDING_EVALUATION_EVIDENCE_HASH: [u8; 32] = [13; 32];
 
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn empty_recovery_bootstrap_args() -> crate::RecoveryBootstrapArgs {
+        crate::RecoveryBootstrapArgs {
+            genesis_hash: String::new(),
+            instance_id: String::new(),
+            committee_keys: Vec::new(),
+            approved_usdc_code_hashes: Vec::new(),
+            active_usdc_code_hash: String::new(),
+        }
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(
+        expected = "receipt recovery must be bootstrapped before commitments or transfers are created"
+    )]
+    fn recovery_bootstrap_rejects_prior_commitment_activity() {
+        testing_env!(context(accounts(0), 0));
+        let mut contract = Contract::new();
+        contract.next_commitment_id = 1;
+
+        contract.bootstrap_receipt_recovery(empty_recovery_bootstrap_args());
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(
+        expected = "receipt recovery must be bootstrapped before commitments or transfers are created"
+    )]
+    fn recovery_bootstrap_rejects_prior_challenge_activity() {
+        testing_env!(context(accounts(0), 0));
+        let mut contract = Contract::new();
+        contract.next_challenge_id = 1;
+
+        contract.bootstrap_receipt_recovery(empty_recovery_bootstrap_args());
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(
+        expected = "receipt recovery must be bootstrapped before commitments or transfers are created"
+    )]
+    fn recovery_bootstrap_rejects_prior_transfer_activity() {
+        testing_env!(context(accounts(0), 0));
+        let mut contract = Contract::new();
+        contract.next_transfer_id = 1;
+
+        contract.bootstrap_receipt_recovery(empty_recovery_bootstrap_args());
+    }
+
     fn context(predecessor: AccountId, attached_deposit: u128) -> near_sdk::VMContext {
         context_at(predecessor, attached_deposit, NOW_NS)
     }
