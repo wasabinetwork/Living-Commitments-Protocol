@@ -547,37 +547,42 @@ growth, transaction roots, final execution status, root-reachable receipt
 outcome/body graphs with a recognized status for every receipt, callback events,
 successful payout-receipt status, contract transfer actions, cash snapshots,
 payer balance and credit reconciliation, replay rejection for any payout amount,
-and source manifest. Mutation checks reject a changed artifact, removed failure
+and the capture/source manifest. Verify the separate tooling manifest with the
+`shasum` command below. Mutation checks reject a changed artifact, removed failure
 event, duplicate, missing or altered payout, incomplete or disconnected receipt
 graphs, missing or failed withdrawal status, promise-only payout status, a
 one-yocto replay payout, a replay or underfunded contract transfer to any
-recipient, a payout receipt body that disagrees with its outcome executor, and a
-failed excess-refund callback receipt.
+recipient, a payout receipt body that disagrees with its outcome executor, a
+failed excess-refund callback receipt, an extra third-party transfer in either
+the successful withdrawal or failed-refund graph, duplicate settlement events,
+and a settlement event in the replay graph.
 To check another capture, pass its repository path and manifest as arguments. The
 checker validates saved Sandbox RPC records; it does not rerun the Sandbox or
 validate cryptographic receipt inclusion proofs against block headers.
 
-Regenerate and verify the capture/source manifest from the repository root. The
-manifest pins the evidence capture together with the contract sources and the
-checker inputs (this README, the verifier, and its mutation tests), so any change
-to those tooling files also requires regenerating it:
+Regenerate and verify the capture/source manifest from the repository root. It
+pins only the evidence capture and the contract/build inputs used by the Sandbox
+fixture. Verifier, tests, runner, package metadata, and README hashes live in a
+separate tooling manifest so edits to mutable tooling and docs do not invalidate
+the capture/source manifest:
 
 ```sh
 shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json \
-  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
-  tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs \
-  tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs \
-  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
   Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
   contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
   contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
   contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
   contracts/lcp-core/src/receipt_recovery.rs contracts/sandbox-mock-ft/Cargo.toml \
-  contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md \
-  P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
-  P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
+  contracts/sandbox-mock-ft/src/lib.rs \
   > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256
 shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256
+
+shasum -a 256 tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs \
+  tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.tooling.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.tooling.sha256
 ```
 
 For a fresh, source-built fixture, pass the build output directly and pin its

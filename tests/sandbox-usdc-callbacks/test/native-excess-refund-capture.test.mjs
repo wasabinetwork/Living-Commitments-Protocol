@@ -217,3 +217,54 @@ test("rejects any contract payout during replay, including one yocto", () => {
   assert.throws(() => validateNativeExcessRefundCapture(changed),
     /contract-originated transfer to any recipient/);
 });
+
+test("rejects an extra contract transfer to a third party during successful withdrawal", () => {
+  const changed = clone();
+  appendContractTransfer(changed, "withdrawal", {
+    receiver: "unrelated-account.sandbox",
+    amount: "1",
+  });
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /exactly one payer transfer and no other contract-originated transfers/);
+});
+
+test("rejects an extra contract transfer during failed excess-refund settlement", () => {
+  const changed = clone();
+  appendContractTransfer(changed, "failure", {
+    receiver: "unrelated-account.sandbox",
+    amount: "1",
+  });
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /exactly one contract-originated transfer to the forced missing account/);
+});
+
+test("rejects duplicate settlement events in a successful withdrawal graph", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const source = scenario.withdrawal_receipts_outcome.find(({ outcome }) =>
+    (outcome.logs ?? []).some((log) => log.includes('"event":"service_report_refund_sent"')));
+  assert.ok(source, "capture must contain the successful settlement event");
+  const settlementLog = source.outcome.logs.find((log) =>
+    log.includes('"event":"service_report_refund_sent"'));
+  const target = scenario.withdrawal_receipts_outcome.find(({ id }) => id !== source.id);
+  assert.ok(target, "capture must contain another withdrawal receipt outcome");
+  target.outcome.logs = [...(target.outcome.logs ?? []), settlementLog];
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /exactly one settlement event/);
+});
+
+test("rejects a settlement event in the replay graph even without a transfer", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const source = scenario.withdrawal_receipts_outcome.find(({ outcome }) =>
+    (outcome.logs ?? []).some((log) => log.includes('"event":"service_report_refund_sent"')));
+  assert.ok(source, "capture must contain the successful settlement event");
+  const settlementLog = source.outcome.logs.find((log) =>
+    log.includes('"event":"service_report_refund_sent"'));
+  const target = scenario.replay_receipts_outcome.find(({ outcome }) =>
+    outcome.executor_id === "lcp-core-sandbox.sandbox");
+  assert.ok(target, "replay graph must contain a contract receipt outcome");
+  target.outcome.logs = [...(target.outcome.logs ?? []), settlementLog];
+  assert.throws(() => validateNativeExcessRefundCapture(changed),
+    /must not emit a second settlement event/);
+});

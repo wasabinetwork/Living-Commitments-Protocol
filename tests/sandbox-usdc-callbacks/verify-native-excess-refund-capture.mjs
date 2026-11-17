@@ -41,13 +41,18 @@ function parseEvent(log) {
 }
 
 function findEvent(receipts, name) {
+  return findEvents(receipts, name)[0] ?? null;
+}
+
+function findEvents(receipts, name) {
+  const matches = [];
   for (const receipt of receipts) {
     for (const log of receipt.outcome?.logs ?? []) {
       const event = parseEvent(log);
-      if (event?.event === name) return { receipt, event };
+      if (event?.event === name) matches.push({ receipt, event });
     }
   }
-  return null;
+  return matches;
 }
 
 function nativeTransfers(receipts) {
@@ -213,10 +218,12 @@ export function validateNativeExcessRefundCapture(capture) {
   assert.equal(failedRefundEvent.event.data?.[0]?.amount_yocto, amount.toString());
   assert.equal(scenario.failed_credit_balance_yocto, amount.toString());
   const failedTransfers = nativeTransfers(scenario.failure_receipts);
-  assert.deepEqual(failedTransfers.filter(({ predecessor_id, receiver_id }) =>
-    predecessor_id === "lcp-core-sandbox.sandbox" && receiver_id === "missing-excess-refund.sandbox")
-    .map(({ amount_yocto }) => amount_yocto), [amount.toString()],
-  "failed excess-refund action body must transfer the exact credit amount to the forced missing account");
+  const failedContractTransfers = failedTransfers.filter(({ predecessor_id }) =>
+    predecessor_id === "lcp-core-sandbox.sandbox");
+  assert.deepEqual(failedContractTransfers.map(({ receiver_id, amount_yocto }) => ({ receiver_id, amount_yocto })), [{
+    receiver_id: "missing-excess-refund.sandbox",
+    amount_yocto: amount.toString(),
+  }], "failed refund must contain exactly one contract-originated transfer to the forced missing account");
   const cashAfterFailure = scenario.cash_after_failed_refund.map(BigInt);
   assert.equal(cashAfterFailure[3], amount, "failed refund must remain a legacy refund liability");
   assert.equal(cashAfterFailure[4], 0n, "failed transfer must clear its scheduled outflow");
@@ -249,16 +256,20 @@ export function validateNativeExcessRefundCapture(capture) {
     "successful retry must start with the exact measured transfer-plus-storage margin",
   );
 
-  const settledEvent = findEvent(scenario.withdrawal_receipts_outcome, "service_report_refund_sent");
+  const settlementEvents = findEvents(scenario.withdrawal_receipts_outcome, "service_report_refund_sent");
+  assert.equal(settlementEvents.length, 1,
+    "successful withdrawal must contain exactly one settlement event");
+  const [settledEvent] = settlementEvents;
   assert.ok(settledEvent, "production credit-withdrawal callback must settle successfully");
   assert.equal(settledEvent.receipt.outcome.executor_id, "lcp-core-sandbox.sandbox");
   assert.equal(settledEvent.event.data?.[0]?.account_id, scenario.payer);
   assert.equal(settledEvent.event.data?.[0]?.amount_yocto, amount.toString());
   const payoutTransfers = nativeTransfers(scenario.withdrawal_receipts)
-    .filter(({ predecessor_id, receiver_id }) =>
-      predecessor_id === "lcp-core-sandbox.sandbox" && receiver_id === scenario.payer);
-  assert.deepEqual(payoutTransfers.map(({ amount_yocto }) => amount_yocto), [amount.toString()],
-    "successful withdrawal must contain exactly one payer transfer for the credit amount");
+    .filter(({ predecessor_id }) => predecessor_id === "lcp-core-sandbox.sandbox");
+  assert.deepEqual(payoutTransfers.map(({ receiver_id, amount_yocto }) => ({ receiver_id, amount_yocto })), [{
+    receiver_id: scenario.payer,
+    amount_yocto: amount.toString(),
+  }], "successful withdrawal must contain exactly one payer transfer and no other contract-originated transfers");
   for (const payout of payoutTransfers) {
     assertReceiptSucceeded(successfulWithdrawalOutcomes.get(payout.receipt_id),
       `successful withdrawal payout receipt ${payout.receipt_id}`);
@@ -282,9 +293,10 @@ export function validateNativeExcessRefundCapture(capture) {
   assert.deepEqual(nativeTransfers(scenario.replay_receipts)
     .filter(({ predecessor_id }) => predecessor_id === "lcp-core-sandbox.sandbox"), [],
   "settled withdrawal replay must not create a contract-originated transfer to any recipient");
-  assert.ok(!logsOf(scenario.replay_receipts_outcome)
-    .some((log) => log.includes('"event":"service_report_refund_requested"')),
+  assert.equal(findEvents(scenario.replay_receipts_outcome, "service_report_refund_requested").length, 0,
   "settled withdrawal replay must not request a second payout");
+  assert.equal(findEvents(scenario.replay_receipts_outcome, "service_report_refund_sent").length, 0,
+    "settled withdrawal replay must not emit a second settlement event");
   assert.equal(scenario.payer_credit_after_replay_yocto, "0",
     "withdrawal replay must leave payer credit closed");
 
