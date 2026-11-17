@@ -3342,16 +3342,25 @@ async function main() {
       version: nodeStatus.version,
     };
 
-    const coreWasm = await readFile(join(wasmDir, "lcp_core.wasm"));
+    const coreWasmPath = process.env.LCP_CORE_WASM_PATH ?? join(wasmDir, "lcp_core.wasm");
+    const coreWasm = await readFile(coreWasmPath);
     const tokenWasm = await readFile(join(wasmDir, "sandbox_mock_ft.wasm"));
     const tokenVariantBWasm = await readFile(join(wasmDir, "sandbox_mock_ft_variant_b.wasm"));
+    const coreWasmSha256 = createHash("sha256").update(coreWasm).digest("hex");
+    if (process.env.LCP_EXPECTED_CORE_WASM_SHA256) {
+      assert.match(process.env.LCP_EXPECTED_CORE_WASM_SHA256, /^[a-f0-9]{64}$/,
+        "LCP_EXPECTED_CORE_WASM_SHA256 must be 64 lowercase hex characters");
+      assert.equal(coreWasmSha256, process.env.LCP_EXPECTED_CORE_WASM_SHA256,
+        "selected core WASM does not match LCP_EXPECTED_CORE_WASM_SHA256");
+    }
     const codeHashV1 = base58Encode(createHash("sha256").update(tokenWasm).digest());
     const codeHashV2 = base58Encode(createHash("sha256").update(tokenVariantBWasm).digest());
     const codeHashCore = base58Encode(createHash("sha256").update(coreWasm).digest());
     fixtures.artifacts = {
       lcp_core_fixture: {
-        wasm_sha256: createHash("sha256").update(coreWasm).digest("hex"),
+        wasm_sha256: coreWasmSha256,
         near_code_hash: codeHashCore,
+        input_mode: process.env.LCP_CORE_WASM_PATH ? "explicit-path" : "default-target-path",
       },
       mock_ft_variant_a: {
         wasm_sha256: createHash("sha256").update(tokenWasm).digest("hex"),

@@ -1,0 +1,668 @@
+{
+  "node": {
+    "sandbox_version": "2.14.0",
+    "protocol_version": 88,
+    "chain_id": "test-chain-vrdts",
+    "genesis_hash": "9v3TwatwoqWPkUHeJWnX6uc6B2aJTJQrn6NYsgs12u8w",
+    "version": {
+      "build": "2.14.0",
+      "commit": "bc4e9e8cfb03d9e82f027883055624e18576993e",
+      "rustc_version": "1.95.0",
+      "version": "2.14.0"
+    }
+  },
+  "artifacts": {
+    "lcp_core_fixture": {
+      "wasm_sha256": "0f194b5306379eed784235b3177cabc2f9ca31f89669223961f3926d8a714963",
+      "near_code_hash": "21wVBHeifP1dEmASeZgxurf554cwyPVyvfDK6QecDQjt"
+    },
+    "mock_ft_variant_a": {
+      "wasm_sha256": "c8669f67957668888767cebb360d34c096e0654684e489377b634ab11c898619",
+      "near_code_hash": "EVHJNjrSMLAbCFmTCtQwbqKdXzmf48HgDwioHo2GAkME"
+    },
+    "mock_ft_variant_b": {
+      "wasm_sha256": "56c46e717bf7b12e41ea848b14a6b58e5c73e2c979c2f4a38cb6910561b7e489",
+      "near_code_hash": "6qhneJTJNrGbxyrp2ZHspsCa8GqX7jD6ZZDRw1jpMQ9n"
+    }
+  },
+  "transactions": {
+    "failure": {
+      "hash": "xkTrWRJCLBVtt5W2dN8EH8trtjx3iukDYNV4izUhh5D",
+      "final": "FINAL",
+      "status": {
+        "SuccessValue": ""
+      },
+      "root": {
+        "block_hash": "5xK3CW962x3CNLKFANeeEEndwcCG7zfB4JDVa2LP8BJ6",
+        "id": "xkTrWRJCLBVtt5W2dN8EH8trtjx3iukDYNV4izUhh5D",
+        "outcome": {
+          "executor_id": "recipient.sandbox",
+          "gas_burnt": 309823797455,
+          "logs": [],
+          "metadata": {
+            "gas_profile": null,
+            "version": 1
+          },
+          "receipt_ids": [
+            "3hqpFD1d2824HfjvYHjDwtzCVkpnnuqVxkgeRsEfegMC"
+          ],
+          "status": {
+            "SuccessReceiptId": "3hqpFD1d2824HfjvYHjDwtzCVkpnnuqVxkgeRsEfegMC"
+          },
+          "tokens_burnt": "30982379745500000000"
+        },
+        "proof": []
+      },
+      "graph_closed": true,
+      "receipts": [
+        {
+          "id": "3hqpFD1d2824HfjvYHjDwtzCVkpnnuqVxkgeRsEfegMC",
+          "children": [
+            "2SYP1uxzFf5bm4mi2KfP7g9CVpxZHTaKDeFyRP7nohq9",
+            "EHv8i7QKLLaA94GS5kknBCKFL6ujaBtNBkCUobtrEn9a",
+            "5fHpiufT1pzr9TEAXtWPcCsaAk6Abyye4Ki5nuPYFDfh"
+          ],
+          "executor": "lcp-core-sandbox.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "recipient.sandbox",
+          "receiver": "lcp-core-sandbox.sandbox",
+          "actions": [
+            {
+              "FunctionCall": {
+                "args": "e30=",
+                "deposit": "10000000000000000000000",
+                "gas": 120000000000000,
+                "method_name": "sandbox_queue_excess_refund_failure"
+              }
+            }
+          ]
+        },
+        {
+          "id": "2SYP1uxzFf5bm4mi2KfP7g9CVpxZHTaKDeFyRP7nohq9",
+          "children": [
+            "4PcwghPDYQAVCNdRFPMoPc7m14mADZat25PX46mZVotT",
+            "AFK6bJafjvGLW9eWYYR6XhTLqVzDyDnxLpBiUZ83uv2"
+          ],
+          "executor": "missing-excess-refund.sandbox",
+          "status": {
+            "Failure": {
+              "ActionError": {
+                "index": 0,
+                "kind": {
+                  "AccountDoesNotExist": {
+                    "account_id": "missing-excess-refund.sandbox"
+                  }
+                }
+              }
+            }
+          },
+          "logs": [],
+          "predecessor": "lcp-core-sandbox.sandbox",
+          "receiver": "missing-excess-refund.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "10000000000000000000000"
+              }
+            }
+          ]
+        },
+        {
+          "id": "4PcwghPDYQAVCNdRFPMoPc7m14mADZat25PX46mZVotT",
+          "children": [],
+          "executor": "lcp-core-sandbox.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "lcp-core-sandbox.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "10000000000000000000000"
+              }
+            }
+          ]
+        },
+        {
+          "id": "AFK6bJafjvGLW9eWYYR6XhTLqVzDyDnxLpBiUZ83uv2",
+          "children": [],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "200864306250000000000"
+              }
+            }
+          ]
+        },
+        {
+          "id": "EHv8i7QKLLaA94GS5kknBCKFL6ujaBtNBkCUobtrEn9a",
+          "children": [
+            "A8gGLvmY3mRbhXEqvyPTVwx4M9dysr1TWiyjSztkJDKx"
+          ],
+          "executor": "lcp-core-sandbox.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [
+            "EVENT_JSON:{\"standard\":\"lcp\",\"version\":\"1.0.0\",\"event\":\"excess_storage_refund_failed\",\"data\":[{\"attempt_id\":\"1\",\"account_id\":\"recipient.sandbox\",\"amount_yocto\":\"10000000000000000000000\"}]}"
+          ],
+          "predecessor": "lcp-core-sandbox.sandbox",
+          "receiver": "lcp-core-sandbox.sandbox",
+          "actions": [
+            {
+              "FunctionCall": {
+                "args": "eyJhdHRlbXB0X2lkIjoiMSJ9",
+                "deposit": "0",
+                "gas": 20000000000000,
+                "method_name": "on_storage_refund_attempt"
+              }
+            }
+          ]
+        },
+        {
+          "id": "A8gGLvmY3mRbhXEqvyPTVwx4M9dysr1TWiyjSztkJDKx",
+          "children": [],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "20584404285471200000000"
+              }
+            }
+          ]
+        },
+        {
+          "id": "5fHpiufT1pzr9TEAXtWPcCsaAk6Abyye4Ki5nuPYFDfh",
+          "children": [],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "99409866852178700000000"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "underfunded_withdrawal": {
+      "hash": "GYsxWjdgUe7trUU2JArV6fyEF9Y1txYpXiG2Jr6xNR4Z",
+      "final": "FINAL",
+      "status": {
+        "Failure": {
+          "ActionError": {
+            "index": 0,
+            "kind": {
+              "FunctionCallError": {
+                "ExecutionError": "Smart contract panicked: native cash solvency check failed"
+              }
+            }
+          }
+        }
+      },
+      "root": {
+        "block_hash": "HBMCUgVXmhNUdwd2WnmMeiAaTBr599WF4XmNudyWFZFo",
+        "id": "GYsxWjdgUe7trUU2JArV6fyEF9Y1txYpXiG2Jr6xNR4Z",
+        "outcome": {
+          "executor_id": "recipient.sandbox",
+          "gas_burnt": 309251592875,
+          "logs": [],
+          "metadata": {
+            "gas_profile": null,
+            "version": 1
+          },
+          "receipt_ids": [
+            "8A119ZvbKseo3JNqr3apkjp4H8H18ddVk3vYv8iXeczK"
+          ],
+          "status": {
+            "SuccessReceiptId": "8A119ZvbKseo3JNqr3apkjp4H8H18ddVk3vYv8iXeczK"
+          },
+          "tokens_burnt": "30925159287500000000"
+        },
+        "proof": []
+      },
+      "graph_closed": true,
+      "receipts": [
+        {
+          "id": "8A119ZvbKseo3JNqr3apkjp4H8H18ddVk3vYv8iXeczK",
+          "children": [
+            "Cj1zQka1rXKyMu9TGEkvy7su9gDoWjJ3VMUT9tEJLqb"
+          ],
+          "executor": "lcp-core-sandbox.sandbox",
+          "status": {
+            "Failure": {
+              "ActionError": {
+                "index": 0,
+                "kind": {
+                  "FunctionCallError": {
+                    "ExecutionError": "Smart contract panicked: native cash solvency check failed"
+                  }
+                }
+              }
+            }
+          },
+          "logs": [
+            "SANDBOX_CASH_GATE_FAILED C=31000313848374256100000000 S=11645790000000000000000000 escrow=0 operations=0 legacy_refund=10000000000000000000000 recovery_credit=18356343848374256100000000 F=978440000000000000000000 X=10000000000000000000000 storage_shortfall=0"
+          ],
+          "predecessor": "recipient.sandbox",
+          "receiver": "lcp-core-sandbox.sandbox",
+          "actions": [
+            {
+              "FunctionCall": {
+                "args": "e30=",
+                "deposit": "0",
+                "gas": 120000000000000,
+                "method_name": "withdraw_storage_refund"
+              }
+            }
+          ]
+        },
+        {
+          "id": "Cj1zQka1rXKyMu9TGEkvy7su9gDoWjJ3VMUT9tEJLqb",
+          "children": [],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "120579513902436300000000"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "withdrawal": {
+      "hash": "5CXESnV8hqqULiPM4JwBiArWPtvoCwCfHCZpKkxmCA7u",
+      "final": "FINAL",
+      "status": {
+        "SuccessValue": ""
+      },
+      "root": {
+        "block_hash": "FYGp2NMUuEPGVrZWBRrJ5NzY6TtQuL2zMARC3etku62y",
+        "id": "5CXESnV8hqqULiPM4JwBiArWPtvoCwCfHCZpKkxmCA7u",
+        "outcome": {
+          "executor_id": "recipient.sandbox",
+          "gas_burnt": 309251592875,
+          "logs": [],
+          "metadata": {
+            "gas_profile": null,
+            "version": 1
+          },
+          "receipt_ids": [
+            "6m4MdMg76vYmAB4BPGzzKB1QpxGWMQKJD5tiQ8MrzoiC"
+          ],
+          "status": {
+            "SuccessReceiptId": "6m4MdMg76vYmAB4BPGzzKB1QpxGWMQKJD5tiQ8MrzoiC"
+          },
+          "tokens_burnt": "30925159287500000000"
+        },
+        "proof": []
+      },
+      "graph_closed": true,
+      "receipts": [
+        {
+          "id": "6m4MdMg76vYmAB4BPGzzKB1QpxGWMQKJD5tiQ8MrzoiC",
+          "children": [
+            "6xqfgDG3YjcRgNhwjVwR6RWY8y8mmy32hJoZNQNxhNjk",
+            "5gXJSsvfNXoM1tz4Rkrfpiq4smah3VtAqhySdFcgy4DE",
+            "AHg6JsnzTETCxW4JTkSWnm1EVeHq7vvmt3kFcnoQUrfJ"
+          ],
+          "executor": "lcp-core-sandbox.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [
+            "EVENT_JSON:{\"standard\":\"lcp\",\"version\":\"1.0.0\",\"event\":\"service_report_refund_requested\",\"data\":[{\"account_id\":\"recipient.sandbox\",\"amount_yocto\":\"10000000000000000000000\"}]}"
+          ],
+          "predecessor": "recipient.sandbox",
+          "receiver": "lcp-core-sandbox.sandbox",
+          "actions": [
+            {
+              "FunctionCall": {
+                "args": "e30=",
+                "deposit": "0",
+                "gas": 120000000000000,
+                "method_name": "withdraw_storage_refund"
+              }
+            }
+          ]
+        },
+        {
+          "id": "6xqfgDG3YjcRgNhwjVwR6RWY8y8mmy32hJoZNQNxhNjk",
+          "children": [
+            "A2Qsw2FRKodhTGXjq9yG9w9vUkKVTnRBazkyZvP8sJq8"
+          ],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "lcp-core-sandbox.sandbox",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "10000000000000000000000"
+              }
+            }
+          ]
+        },
+        {
+          "id": "A2Qsw2FRKodhTGXjq9yG9w9vUkKVTnRBazkyZvP8sJq8",
+          "children": [],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "200864306250000000000"
+              }
+            }
+          ]
+        },
+        {
+          "id": "5gXJSsvfNXoM1tz4Rkrfpiq4smah3VtAqhySdFcgy4DE",
+          "children": [
+            "CVigwKd5NSkk9UzHMM2vQRNfmhS7V87q7tPU6vne3QVy"
+          ],
+          "executor": "lcp-core-sandbox.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [
+            "EVENT_JSON:{\"standard\":\"lcp\",\"version\":\"1.0.0\",\"event\":\"service_report_refund_sent\",\"data\":[{\"attempt_id\":\"2\",\"account_id\":\"recipient.sandbox\",\"amount_yocto\":\"10000000000000000000000\"}]}"
+          ],
+          "predecessor": "lcp-core-sandbox.sandbox",
+          "receiver": "lcp-core-sandbox.sandbox",
+          "actions": [
+            {
+              "FunctionCall": {
+                "args": "eyJhdHRlbXB0X2lkIjoiMiJ9",
+                "deposit": "0",
+                "gas": 20000000000000,
+                "method_name": "on_storage_refund_attempt"
+              }
+            }
+          ]
+        },
+        {
+          "id": "CVigwKd5NSkk9UzHMM2vQRNfmhS7V87q7tPU6vne3QVy",
+          "children": [],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "20583948331341900000000"
+              }
+            }
+          ]
+        },
+        {
+          "id": "AHg6JsnzTETCxW4JTkSWnm1EVeHq7vvmt3kFcnoQUrfJ",
+          "children": [],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "99380242638259100000000"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "replay": {
+      "hash": "DrY2iX7cRRweAztBkwYhHdBxxsXaVCBgvkAheXnv2NoC",
+      "final": "FINAL",
+      "status": {
+        "Failure": {
+          "ActionError": {
+            "index": 0,
+            "kind": {
+              "FunctionCallError": {
+                "ExecutionError": "Smart contract panicked: no storage refund credit is available"
+              }
+            }
+          }
+        }
+      },
+      "root": {
+        "block_hash": "gqihTpxXysd3o5hkRsEgmzvDw6fvUbrFfewmCrpTeHn",
+        "id": "DrY2iX7cRRweAztBkwYhHdBxxsXaVCBgvkAheXnv2NoC",
+        "outcome": {
+          "executor_id": "recipient.sandbox",
+          "gas_burnt": 309251592875,
+          "logs": [],
+          "metadata": {
+            "gas_profile": null,
+            "version": 1
+          },
+          "receipt_ids": [
+            "FV45fn2igjrigVHjztAgC5GdhJFdFVhc2nDdB2cRHTbx"
+          ],
+          "status": {
+            "SuccessReceiptId": "FV45fn2igjrigVHjztAgC5GdhJFdFVhc2nDdB2cRHTbx"
+          },
+          "tokens_burnt": "30925159287500000000"
+        },
+        "proof": []
+      },
+      "graph_closed": true,
+      "receipts": [
+        {
+          "id": "FV45fn2igjrigVHjztAgC5GdhJFdFVhc2nDdB2cRHTbx",
+          "children": [
+            "3UusEE2TGqHaveMaAcPQNuZf1n4kxoUmKimmHiqD6bvX"
+          ],
+          "executor": "lcp-core-sandbox.sandbox",
+          "status": {
+            "Failure": {
+              "ActionError": {
+                "index": 0,
+                "kind": {
+                  "FunctionCallError": {
+                    "ExecutionError": "Smart contract panicked: no storage refund credit is available"
+                  }
+                }
+              }
+            }
+          },
+          "logs": [],
+          "predecessor": "recipient.sandbox",
+          "receiver": "lcp-core-sandbox.sandbox",
+          "actions": [
+            {
+              "FunctionCall": {
+                "args": "e30=",
+                "deposit": "0",
+                "gas": 120000000000000,
+                "method_name": "withdraw_storage_refund"
+              }
+            }
+          ]
+        },
+        {
+          "id": "3UusEE2TGqHaveMaAcPQNuZf1n4kxoUmKimmHiqD6bvX",
+          "children": [],
+          "executor": "recipient.sandbox",
+          "status": {
+            "SuccessValue": ""
+          },
+          "logs": [],
+          "predecessor": "system",
+          "receiver": "recipient.sandbox",
+          "actions": [
+            {
+              "Transfer": {
+                "deposit": "120656235652347300000000"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "accounting": {
+    "free_margin_fixture": {
+      "target_free_margin_yocto": "60000000000000000000000",
+      "account_balance_yocto": "30990313848374256100000000",
+      "storage_cost_yocto": "11644510000000000000000000",
+      "required_without_fixture_yocto": "12622950000000000000000000",
+      "available_without_fixture_yocto": "18367363848374256100000000",
+      "previous_fixture_liability_yocto": "0",
+      "fixture_liability_yocto": "18307363848374256100000000",
+      "free_after_fixture_yocto": "60000000000000000000000",
+      "cash_snapshot": [
+        "30990313848374256100000000",
+        "11644510000000000000000000",
+        "0",
+        "0",
+        "0",
+        "0",
+        "18307363848374256100000000",
+        "978440000000000000000000",
+        "0"
+      ]
+    },
+    "failed_credit_balance_yocto": "10000000000000000000000",
+    "cash_after_failed_refund": [
+      "31000313848374256100000000",
+      "11645530000000000000000000",
+      "0",
+      "10000000000000000000000",
+      "0",
+      "0",
+      "18307363848374256100000000",
+      "978440000000000000000000",
+      "0"
+    ],
+    "one_transfer_withdrawal_margin_fixture": {
+      "target_free_margin_yocto": "10000000000000000000000",
+      "account_balance_yocto": "31000313848374256100000000",
+      "storage_cost_yocto": "11645530000000000000000000",
+      "required_without_fixture_yocto": "12633970000000000000000000",
+      "available_without_fixture_yocto": "18366343848374256100000000",
+      "previous_fixture_liability_yocto": "18307363848374256100000000",
+      "fixture_liability_yocto": "18356343848374256100000000",
+      "free_after_fixture_yocto": "10000000000000000000000",
+      "cash_snapshot": [
+        "31000313848374256100000000",
+        "11645530000000000000000000",
+        "0",
+        "10000000000000000000000",
+        "0",
+        "0",
+        "18356343848374256100000000",
+        "978440000000000000000000",
+        "0"
+      ]
+    },
+    "cash_before_underfunded_withdrawal": [
+      "31000313848374256100000000",
+      "11645530000000000000000000",
+      "0",
+      "10000000000000000000000",
+      "0",
+      "0",
+      "18356343848374256100000000",
+      "978440000000000000000000",
+      "0"
+    ],
+    "cash_after_underfunded_withdrawal": [
+      "31000313848374256100000000",
+      "11645530000000000000000000",
+      "0",
+      "10000000000000000000000",
+      "0",
+      "0",
+      "18356343848374256100000000",
+      "978440000000000000000000",
+      "0"
+    ],
+    "measured_withdrawal_storage_growth_yocto": "260000000000000000000",
+    "withdrawal_margin_fixture": {
+      "target_free_margin_yocto": "10260000000000000000000",
+      "account_balance_yocto": "31000313848374256100000000",
+      "storage_cost_yocto": "11645530000000000000000000",
+      "required_without_fixture_yocto": "12633970000000000000000000",
+      "available_without_fixture_yocto": "18366343848374256100000000",
+      "previous_fixture_liability_yocto": "18356343848374256100000000",
+      "fixture_liability_yocto": "18356083848374256100000000",
+      "free_after_fixture_yocto": "10260000000000000000000",
+      "cash_snapshot": [
+        "31000313848374256100000000",
+        "11645530000000000000000000",
+        "0",
+        "10000000000000000000000",
+        "0",
+        "0",
+        "18356083848374256100000000",
+        "978440000000000000000000",
+        "0"
+      ]
+    },
+    "withdrawal_fees_yocto": "753985281786500000000",
+    "payer_balance_before_yocto": "29988936484179395200000000",
+    "payer_balance_after_yocto": "29998182498897608700000000",
+    "final_payer_credit_yocto": "0",
+    "payer_credit_after_replay_yocto": "0",
+    "cash_after_withdrawal": [
+      "30990313848374256100000000",
+      "11644510000000000000000000",
+      "0",
+      "0",
+      "0",
+      "0",
+      "18356083848374256100000000",
+      "978440000000000000000000",
+      "0"
+    ]
+  }
+}

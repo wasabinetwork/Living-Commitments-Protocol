@@ -1,0 +1,80 @@
+{
+  "dispatchId": "ctx_c34dac28f180",
+  "taskId": "task_5c36ff4a1dfe",
+  "runId": "run_eb98c6f4c0e8",
+  "workerState": "ready",
+  "dispatchStatus": "dispatched",
+  "agentTerminalHandle": "structworker_ee7f5c0a-1530-4cdc-816a-2ea7626ee73c",
+  "terminalState": "retained",
+  "coordinatedFrom": null,
+  "resource": {
+    "id": "wtr_7093fe698918",
+    "ownershipState": "owned",
+    "releaseState": "retained",
+    "retainedReason": "user_requested",
+    "terminalHandle": "structworker_ee7f5c0a-1530-4cdc-816a-2ea7626ee73c",
+    "worktreeId": "34d4b888-98ea-44fb-83dd-3041d14918c0::/Users/gilbertoadon/orca/workspaces/Living Commitments Protocol/native-excess-refund-followup-review",
+    "endpointId": "586715e6-5c08-4ff8-aed3-4689eb1e7fbe",
+    "endpointIncarnation": "structured:020e39e6-1805-4d0e-9582-22b301460edc",
+    "originDispatchId": "ctx_c34dac28f180",
+    "ownerDispatchId": "ctx_c34dac28f180",
+    "releaseRequestedAt": null,
+    "releaseCompletedAt": null,
+    "releaseError": null,
+    "recoveryAttemptCount": 0,
+    "lastRecoveryAt": null,
+    "autoReleaseAt": null,
+    "archive": {
+      "source": null,
+      "status": null
+    }
+  },
+  "projection": {
+    "id": "ctx_c34dac28f180",
+    "dispatchId": "ctx_c34dac28f180",
+    "taskId": "task_5c36ff4a1dfe",
+    "runId": "run_eb98c6f4c0e8",
+    "role": "worker",
+    "parent": null,
+    "provider": {
+      "id": "codex",
+      "model": "gpt-6.1-sol"
+    },
+    "host": {
+      "kind": "local",
+      "id": "local"
+    },
+    "workspace": {
+      "id": "34d4b888-98ea-44fb-83dd-3041d14918c0::/Users/gilbertoadon/orca/workspaces/Living Commitments Protocol/native-excess-refund-followup-review",
+      "kind": "folder_or_worktree"
+    },
+    "stage": {
+      "worker": "ready",
+      "dispatch": "dispatched",
+      "detail": "input_accepted",
+      "activity": "working"
+    },
+    "outcome": "in_progress",
+    "liveness": {
+      "verdict": "live",
+      "observedAt": 1794891431203,
+      "source": "execution_host"
+    },
+    "evidence": {
+      "durable": true,
+      "liveStatus": "fresh",
+      "lastObservedAt": 1794891429241
+    },
+    "resource": {
+      "state": "owned"
+    },
+    "nextAction": {
+      "kind": "none",
+      "argv": []
+    },
+    "attention": {
+      "categories": [],
+      "requiresAction": false
+    }
+  }
+}

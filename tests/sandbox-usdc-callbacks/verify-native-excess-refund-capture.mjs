@@ -6,12 +6,13 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
-const stem = "native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17";
+const stem = "native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible";
 const defaultCapturePath = join(here, `${stem}.json`);
 const base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const EXPECTED_CORE_WASM_SHA256 = "33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872";
-const EXPECTED_CORE_CODE_HASH = "4URYaJBxtUGhYbafSHMRkVyGcHcY8Zs1uwugpRM1p76Z";
+const EXPECTED_CORE_WASM_SHA256 = "4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad";
+const EXPECTED_CORE_CODE_HASH = "6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212";
 const EXPECTED_WITHDRAWAL_STORAGE_GROWTH = 260_000_000_000_000_000_000n;
+const TERMINAL_EXECUTION_STATUSES = new Set(["SuccessValue", "SuccessReceiptId", "Failure"]);
 
 function base58Encode(bytes) {
   let value = BigInt(`0x${bytes.toString("hex") || "0"}`);
@@ -68,6 +69,27 @@ function nativeTransfers(receipts) {
   });
 }
 
+function assertTerminalStatus(status, label) {
+  assert.ok(status && typeof status === "object" && !Array.isArray(status),
+    `${label} must include an execution status`);
+  const keys = Object.keys(status);
+  assert.equal(keys.length, 1, `${label} must have exactly one execution status`);
+  assert.ok(TERMINAL_EXECUTION_STATUSES.has(keys[0]),
+    `${label} must have a recognized terminal execution status`);
+  return keys[0];
+}
+
+function assertFinalResultStatus(status, label, expectedSuccess) {
+  const statusName = assertTerminalStatus(status, label);
+  assert.equal(statusName !== "Failure", expectedSuccess,
+    `${label} must ${expectedSuccess ? "succeed" : "fail"}`);
+}
+
+function assertReceiptSucceeded(outcome, label) {
+  const statusName = assertTerminalStatus(outcome?.outcome?.status, label);
+  assert.equal(statusName, "SuccessValue", `${label} must be a direct successful transfer result`);
+}
+
 function assertFinalReceiptGraph(label, finalExecutionStatus, transactionOutcome, outcomes, bodies) {
   assert.equal(finalExecutionStatus, "FINAL", `${label} must use finalized transaction status`);
   assert.ok(Array.isArray(transactionOutcome?.outcome?.receipt_ids),
@@ -76,20 +98,32 @@ function assertFinalReceiptGraph(label, finalExecutionStatus, transactionOutcome
   assert.ok(Array.isArray(bodies), `${label} must capture raw receipt bodies`);
   const outcomeIds = new Set(outcomes.map(({ id }) => id));
   assert.equal(outcomeIds.size, outcomes.length, `${label} must have unique receipt outcome IDs`);
+  const outcomesById = new Map(outcomes.map((row) => [row.id, row]));
   const bodyIds = new Set(bodies.map(({ receipt_id }) => receipt_id));
   assert.equal(bodyIds.size, bodies.length, `${label} must have unique raw receipt bodies`);
-  const referencedIds = [
-    ...transactionOutcome.outcome.receipt_ids,
-    ...outcomes.flatMap(({ outcome }) => outcome?.receipt_ids ?? []),
-  ];
-  assert.deepEqual([...new Set(referencedIds)].filter((id) => !outcomeIds.has(id)), [],
-    `${label} must include every referenced child outcome`);
   assert.deepEqual([...outcomeIds].filter((id) => !bodyIds.has(id)), [],
     `${label} must include each receipt body`);
   assert.deepEqual([...bodyIds].filter((id) => !outcomeIds.has(id)), [],
     `${label} must not contain a receipt body without an outcome`);
-  assert.ok(outcomes.every(({ outcome }) => !Object.hasOwn(outcome?.status ?? {}, "Unknown")),
-    `${label} must not leave a receipt outcome unknown at FINAL`);
+
+  const roots = transactionOutcome.outcome.receipt_ids;
+  assert.equal(new Set(roots).size, roots.length, `${label} root receipt IDs must be unique`);
+  const reachable = new Set();
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const receiptId = pending.pop();
+    if (reachable.has(receiptId)) continue;
+    const row = outcomesById.get(receiptId);
+    assert.ok(row, `${label} must include every referenced child outcome`);
+    reachable.add(receiptId);
+    assertTerminalStatus(row.outcome?.status, `${label} receipt ${receiptId}`);
+    assert.ok(Array.isArray(row.outcome?.receipt_ids),
+      `${label} receipt ${receiptId} must list child receipt IDs`);
+    pending.push(...row.outcome.receipt_ids);
+  }
+  assert.deepEqual([...reachable].sort(), [...outcomeIds].sort(),
+    `${label} must not contain disconnected receipt outcomes or bodies`);
+  return outcomesById;
 }
 
 export function validateNativeExcessRefundCapture(capture) {
@@ -100,9 +134,9 @@ export function validateNativeExcessRefundCapture(capture) {
 
   const coreArtifact = capture.wasm_artifacts.lcp_core_fixture;
   assert.equal(coreArtifact.wasm_sha256, EXPECTED_CORE_WASM_SHA256,
-    "fixture must use the independently reproduced core WASM artifact");
+    "fixture must use the pinned NEP-330 reproducible core WASM artifact");
   assert.equal(coreArtifact.near_code_hash, EXPECTED_CORE_CODE_HASH,
-    "fixture must use the independently reproduced NEAR code hash");
+    "fixture must use the pinned NEP-330 reproducible NEAR code hash");
   const wasmDigest = Buffer.from(coreArtifact.wasm_sha256, "hex");
   assert.equal(wasmDigest.length, 32, "WASM digest must be a SHA-256 digest");
   assert.equal(base58Encode(wasmDigest), coreArtifact.near_code_hash,
@@ -118,8 +152,14 @@ export function validateNativeExcessRefundCapture(capture) {
   assertFinalReceiptGraph("underfunded withdrawal", scenario.underfunded_withdrawal_final_execution_status,
     scenario.underfunded_withdrawal_transaction_outcome,
     scenario.underfunded_withdrawal_receipts_outcome, scenario.underfunded_withdrawal_receipts);
-  assertFinalReceiptGraph("successful withdrawal", scenario.withdrawal_final_execution_status,
+  const successfulWithdrawalOutcomes = assertFinalReceiptGraph("successful withdrawal",
+    scenario.withdrawal_final_execution_status,
     scenario.withdrawal_transaction_outcome, scenario.withdrawal_receipts_outcome, scenario.withdrawal_receipts);
+  for (const [receiptId, row] of successfulWithdrawalOutcomes) {
+    assert.notEqual(assertTerminalStatus(row.outcome?.status,
+      `successful withdrawal receipt ${receiptId}`), "Failure",
+    `successful withdrawal receipt ${receiptId} must not fail`);
+  }
   assertFinalReceiptGraph("replayed withdrawal", scenario.replay_final_execution_status,
     scenario.replay_transaction_outcome, scenario.replay_receipts_outcome, scenario.replay_receipts);
 
@@ -133,18 +173,18 @@ export function validateNativeExcessRefundCapture(capture) {
     assert.equal(transactionOutcome.id, transactionHash, `${label} root must match captured transaction hash`);
   }
 
-  assert.ok(!Object.hasOwn(scenario.failure_transaction_outcome.outcome.status ?? {}, "Failure"),
-    "the excess-refund request itself must succeed while its transfer fails downstream");
-  assert.ok(!Object.hasOwn(scenario.failure_status ?? {}, "Failure"),
-    "the finalized failed-refund transaction result must succeed after callback reconciliation");
-  assert.ok(Object.hasOwn(scenario.underfunded_withdrawal_status ?? {}, "Failure"),
-    "cash-gated withdrawal must fail at the contract root");
-  assert.ok(!Object.hasOwn(scenario.withdrawal_transaction_outcome.outcome.status ?? {}, "Failure"),
-    "successful withdrawal must succeed at the contract root");
-  assert.ok(!Object.hasOwn(scenario.withdrawal_status ?? {}, "Failure"),
-    "the finalized withdrawal transaction result must succeed");
-  assert.ok(Object.hasOwn(scenario.replay_status ?? {}, "Failure"),
-    "withdrawal replay after settlement must fail at the contract root");
+  assertFinalResultStatus(scenario.failure_transaction_outcome.outcome.status,
+    "failed excess-refund request root", true);
+  assertFinalResultStatus(scenario.failure_status,
+    "failed excess-refund finalized transaction", true);
+  assertFinalResultStatus(scenario.underfunded_withdrawal_status,
+    "cash-gated withdrawal", false);
+  assertFinalResultStatus(scenario.withdrawal_transaction_outcome.outcome.status,
+    "successful withdrawal root", true);
+  assertFinalResultStatus(scenario.withdrawal_status,
+    "successful withdrawal finalized transaction", true);
+  assertFinalResultStatus(scenario.replay_status,
+    "withdrawal replay after settlement", false);
 
   const missingAccountReceipt = scenario.failure_receipts_outcome.find(
     ({ outcome }) => outcome.executor_id === "missing-excess-refund.sandbox",
@@ -155,6 +195,9 @@ export function validateNativeExcessRefundCapture(capture) {
     "missing-excess-refund.sandbox",
     "the native transfer must fail because the fixture recipient does not exist",
   );
+  assert.equal(assertTerminalStatus(missingAccountReceipt.outcome.status,
+    "forced missing-account refund transfer"), "Failure",
+  "the attempted excess-refund transfer must have a finalized failure outcome");
   const failedRefundEvent = findEvent(scenario.failure_receipts_outcome, "excess_storage_refund_failed");
   assert.ok(failedRefundEvent, "production callback failure event must be captured");
   assert.equal(failedRefundEvent.receipt.outcome.executor_id, "lcp-core-sandbox.sandbox");
@@ -182,10 +225,10 @@ export function validateNativeExcessRefundCapture(capture) {
   assert.ok(cashGateLog, "one-transfer margin rejection must capture the cash-gate diagnostic");
   assert.ok(!underfundedLogs.some((log) => log.includes('"event":"service_report_refund_requested"')),
     "underfunded withdrawal must not request a native transfer");
-  assert.ok(!nativeTransfers(scenario.underfunded_withdrawal_receipts)
-    .some(({ predecessor_id, receiver_id, amount_yocto }) => predecessor_id === "lcp-core-sandbox.sandbox"
-      && receiver_id === scenario.payer && amount_yocto === amount.toString()),
-  "underfunded withdrawal must not create the payer payout action");
+  assert.deepEqual(nativeTransfers(scenario.underfunded_withdrawal_receipts)
+    .filter(({ predecessor_id, receiver_id }) => predecessor_id === "lcp-core-sandbox.sandbox"
+      && receiver_id === scenario.payer), [],
+  "underfunded withdrawal must not create a contract-to-payer transfer of any amount");
   const gateMatch = cashGateLog.match(/C=(\d+) S=(\d+).*X=(\d+)/);
   assert.ok(gateMatch, "cash-gate diagnostic must include balance, storage and planned outflow");
   assert.equal(BigInt(gateMatch[1]), cashBeforeWithdrawal[0]);
@@ -209,6 +252,10 @@ export function validateNativeExcessRefundCapture(capture) {
       predecessor_id === "lcp-core-sandbox.sandbox" && receiver_id === scenario.payer);
   assert.deepEqual(payoutTransfers.map(({ amount_yocto }) => amount_yocto), [amount.toString()],
     "successful withdrawal must contain exactly one payer transfer for the credit amount");
+  for (const payout of payoutTransfers) {
+    assertReceiptSucceeded(successfulWithdrawalOutcomes.get(payout.receipt_id),
+      `successful withdrawal payout receipt ${payout.receipt_id}`);
+  }
   assert.equal(scenario.final_payer_credit_yocto, "0", "successful callback must close the payer credit");
   const fees = BigInt(scenario.withdrawal_fees_yocto);
   const receiptFees = scenario.withdrawal_receipts_outcome.reduce(
@@ -225,10 +272,10 @@ export function validateNativeExcessRefundCapture(capture) {
   assert.equal(after + fees, before + amount,
     "payer balance increase plus measured transaction fees must equal the credit paid");
 
-  assert.ok(!nativeTransfers(scenario.replay_receipts).some(({ predecessor_id, receiver_id, amount_yocto }) =>
-    predecessor_id === "lcp-core-sandbox.sandbox"
-      && receiver_id === scenario.payer && amount_yocto === amount.toString()),
-  "settled withdrawal replay must not create a duplicate payer transfer");
+  assert.deepEqual(nativeTransfers(scenario.replay_receipts)
+    .filter(({ predecessor_id, receiver_id }) => predecessor_id === "lcp-core-sandbox.sandbox"
+      && receiver_id === scenario.payer), [],
+  "settled withdrawal replay must not create a contract-to-payer transfer of any amount");
   assert.ok(!logsOf(scenario.replay_receipts_outcome)
     .some((log) => log.includes('"event":"service_report_refund_requested"')),
   "settled withdrawal replay must not request a second payout");

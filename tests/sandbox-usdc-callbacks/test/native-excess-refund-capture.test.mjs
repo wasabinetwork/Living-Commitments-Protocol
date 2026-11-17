@@ -4,7 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { validateNativeExcessRefundCapture } from "../verify-native-excess-refund-capture.mjs";
 
-const here = new URL("../native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json", import.meta.url);
+const here = new URL("../native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json", import.meta.url);
 const canonical = JSON.parse(await readFile(fileURLToPath(here), "utf8"));
 const clone = () => structuredClone(canonical);
 
@@ -15,7 +15,7 @@ test("accepts the complete native excess-refund capture", () => {
 test("rejects an unpinned core artifact digest", () => {
   const changed = clone();
   changed.wasm_artifacts.lcp_core_fixture.wasm_sha256 = "00".repeat(32);
-  assert.throws(() => validateNativeExcessRefundCapture(changed), /independently reproduced core WASM/);
+  assert.throws(() => validateNativeExcessRefundCapture(changed), /pinned NEP-330 reproducible core WASM/);
 });
 
 test("rejects a missing refund-failure callback event", () => {
@@ -70,4 +70,88 @@ test("rejects an incomplete child receipt graph", () => {
   scenario.withdrawal_receipts = scenario.withdrawal_receipts
     .filter(({ receipt_id }) => receipt_id !== childId);
   assert.throws(() => validateNativeExcessRefundCapture(changed), /every referenced child outcome/);
+});
+
+test("rejects a disconnected matched receipt outcome and body", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const receiptId = "disconnected-matched-receipt";
+  scenario.withdrawal_receipts_outcome.push({
+    id: receiptId,
+    outcome: { executor_id: scenario.payer, status: { SuccessValue: "" }, receipt_ids: [], logs: [] },
+  });
+  scenario.withdrawal_receipts.push({
+    receipt_id: receiptId,
+    predecessor_id: "lcp-core-sandbox.sandbox",
+    receiver_id: scenario.payer,
+    receipt: { Action: { actions: [] } },
+  });
+  assert.throws(() => validateNativeExcessRefundCapture(changed), /disconnected receipt outcomes or bodies/);
+});
+
+test("rejects a payout action whose receipt outcome failed", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const payout = scenario.withdrawal_receipts.find((receipt) => receipt.predecessor_id === "lcp-core-sandbox.sandbox"
+    && receipt.receiver_id === scenario.payer
+    && receipt.receipt?.Action?.actions?.some((action) => action.Transfer));
+  assert.ok(payout, "capture must contain the payer transfer body");
+  const outcome = scenario.withdrawal_receipts_outcome.find(({ id }) => id === payout.receipt_id);
+  assert.ok(outcome, "payer transfer must have a matching execution outcome");
+  outcome.outcome.status = { Failure: { ActionError: {} } };
+  assert.throws(() => validateNativeExcessRefundCapture(changed), /must not fail/);
+});
+
+test("rejects a payout receipt that only returns a child receipt ID", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const payout = scenario.withdrawal_receipts.find((receipt) => receipt.predecessor_id === "lcp-core-sandbox.sandbox"
+    && receipt.receiver_id === scenario.payer
+    && receipt.receipt?.Action?.actions?.some((action) => action.Transfer));
+  assert.ok(payout, "capture must contain the payer transfer body");
+  const outcome = scenario.withdrawal_receipts_outcome.find(({ id }) => id === payout.receipt_id);
+  assert.ok(outcome, "payer transfer must have a matching execution outcome");
+  outcome.outcome.status = { SuccessReceiptId: "unrelated-child" };
+  assert.throws(() => validateNativeExcessRefundCapture(changed), /direct successful transfer result/);
+});
+
+test("rejects a withdrawal receipt without an execution status", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const outcome = scenario.withdrawal_receipts_outcome[0];
+  outcome.outcome.status = {};
+  assert.throws(() => validateNativeExcessRefundCapture(changed), /exactly one execution status/);
+});
+
+test("rejects a failed non-payout receipt in an otherwise successful withdrawal", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const payout = scenario.withdrawal_receipts.find((receipt) => receipt.predecessor_id === "lcp-core-sandbox.sandbox"
+    && receipt.receiver_id === scenario.payer
+    && receipt.receipt?.Action?.actions?.some((action) => action.Transfer));
+  assert.ok(payout, "capture must contain the payer transfer body");
+  const outcome = scenario.withdrawal_receipts_outcome.find(({ id }) => id !== payout.receipt_id);
+  assert.ok(outcome, "capture must contain a separate withdrawal receipt");
+  outcome.outcome.status = { Failure: { ActionError: {} } };
+  assert.throws(() => validateNativeExcessRefundCapture(changed), /successful withdrawal receipt .* must not fail/);
+});
+
+test("rejects any contract payout during replay, including one yocto", () => {
+  const changed = clone();
+  const scenario = changed.scenarios.native_excess_refund_cash_gate;
+  const parent = scenario.replay_receipts_outcome.find(({ outcome }) => outcome.receipt_ids?.length);
+  assert.ok(parent, "replay graph must have a receipt that can reference a child");
+  const receiptId = "one-yocto-replay-payout";
+  parent.outcome.receipt_ids.push(receiptId);
+  scenario.replay_receipts_outcome.push({
+    id: receiptId,
+    outcome: { executor_id: scenario.payer, status: { SuccessValue: "" }, receipt_ids: [], logs: [] },
+  });
+  scenario.replay_receipts.push({
+    receipt_id: receiptId,
+    predecessor_id: "lcp-core-sandbox.sandbox",
+    receiver_id: scenario.payer,
+    receipt: { Action: { actions: [{ Transfer: { deposit: "1" } }] } },
+  });
+  assert.throws(() => validateNativeExcessRefundCapture(changed), /transfer of any amount/);
 });

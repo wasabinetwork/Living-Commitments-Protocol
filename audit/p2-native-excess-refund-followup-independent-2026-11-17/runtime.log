@@ -1,0 +1,37 @@
+
+added 46 packages in 4s
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.2
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.2
+npm notice To update run: npm install -g npm@12.2.2
+npm notice
+PASS create lcp-core-sandbox.sandbox: 9gZEDGyvC969gnVTMmPZ7m3VqqFoqyG4YF9sQ6c2S334
+PASS create mock-usdc.sandbox: F4NjaBjZtZb1bBsGFJDX7KKbFogwo3SL1n1ZukPitfP6
+PASS create no-code-token.sandbox: 9qX1ZyvSbnGuQi6zyRQ6Hg1iRSgpchLUm5s6FYVtJSYb
+PASS create order-a.sandbox: ALedxSZWZxzegbBeeL8EQBxnx5WW9f5g1u4wwpEb1uV8
+PASS create order-b.sandbox: 5cd2Uo5HMzoiNnkeDJK2KzFqJzvXNsyoWWAsESWD2piV
+PASS create cash-recipient.sandbox: CZbz7MuvktCTURDFhYMeoNidxz6PEirZyo6cXKgkSNPd
+PASS create recipient.sandbox: FRgw7KwPp7qwjPjHSWvC3t15wEeaPgeLRJWzbqSF3TTg
+SUBMITTED deploy fixture core: 5UrruVU6BF2Szen35XL678tcHu7dSgFEmbogF3WeLeKT
+PASS deploy fixture core finalized with the expected code hash
+PASS lcp-core-sandbox.sandbox.new: EtLjsXBWma2jMytDec9ta87mYWMBDj9Kqed6mEf7nNqR
+PASS fund isolated core native liquidity margin: 63mNsdb4abhTY3eUAzUjAwWmSxUGYUWBKKkrmJeDkbL4
+PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call
+SUBMITTED deploy recovery mock USDC: 3UkfFwjJaUaKYH4jqGAQWD4dpW7QhLqY1ZbBZi62StX5
+PASS deploy recovery mock USDC finalized with the expected code hash
+PASS mock-usdc.sandbox.new: AJZxC5UP2YNsKrYaaKv59HEXsD9mTM6xR9r6Sa5bmwcH
+EXPECTED FAILURE RECEIPT lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"transaction_status":{"SuccessReceiptId":"HZk2ZugfdWPVKp5Cnt9wbsChccmCzePRSs78MM24QMH2"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"logs":[]},{"status":{"SuccessValue":""},"logs":[]},{"status":{"SuccessValue":""},"logs":[]}]}
+PASS expected failure lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: BBefHJNGFACbVEWV34JYh469M3hwKjn9Y5hfed4o3ACP
+PASS lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: F1zGZRdMwsFqQTBtes7e9geS9C1vMWYZpNPcWRUnwRTS
+PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys
+SUBMITTED set free native cash margin for native excess-refund callback failure: Dq1oMPZyHbh3a8fbTwk55ctJSgRKwMcsghhmD6F9Mb7s
+PASS production excess-refund callback with a forced missing recipient: xkTrWRJCLBVtt5W2dN8EH8trtjx3iukDYNV4izUhh5D
+SUBMITTED set free native cash margin for native excess-refund credit withdrawal one-transfer boundary: 1J5nBkf4d96m9ArL71qc8P3BpZvEAe31tYF3qNfqbdf
+EXPECTED FAILURE RECEIPT native excess-refund credit withdrawal at one-transfer margin: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"transaction_status":{"SuccessReceiptId":"8A119ZvbKseo3JNqr3apkjp4H8H18ddVk3vYv8iXeczK"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"logs":["SANDBOX_CASH_GATE_FAILED C=31000313848374256100000000 S=11645790000000000000000000 escrow=0 operations=0 legacy_refund=10000000000000000000000 recovery_credit=18356343848374256100000000 F=978440000000000000000000 X=10000000000000000000000 storage_shortfall=0"]}]}
+PASS expected failure native excess-refund credit withdrawal at one-transfer margin: GYsxWjdgUe7trUU2JArV6fyEF9Y1txYpXiG2Jr6xNR4Z
+SUBMITTED set free native cash margin for native excess-refund credit withdrawal measured storage boundary: FihQ3HsxX4M4fJKXQ8yvbUsfroMpxDgRBgvyzdwRxKaH
+PASS withdraw failed excess refund from the production payer-credit path: 5CXESnV8hqqULiPM4JwBiArWPtvoCwCfHCZpKkxmCA7u
+EXPECTED FAILURE RECEIPT replay excess-refund credit withdrawal after settlement: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: no storage refund credit is available"}}}}},"transaction_status":{"SuccessReceiptId":"FV45fn2igjrigVHjztAgC5GdhJFdFVhc2nDdB2cRHTbx"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: no storage refund credit is available"}}}}},"logs":[]}]}
+PASS expected failure replay excess-refund credit withdrawal after settlement: DrY2iX7cRRweAztBkwYhHdBxxsXaVCBgvkAheXnv2NoC
+PASS native excess-refund failure restores payer credit; production withdrawal pays it exactly once
+Isolated native excess-refund callback cash-gate acceptance passed; no public network was used.

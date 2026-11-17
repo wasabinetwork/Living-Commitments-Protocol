@@ -1,0 +1,25 @@
+• Collecting cargo project metadata...
+• done
+
+• Checking rustc version...
+INFO: contract's near-sdk targets protocol version 85; rustc 1.100.0 accepted (bulk-memory opcodes supported by nearcore VM)
+• done
+
+• Checking the host environment...
+• done
+
+• Building contract
+ │     Finished `release` profile [optimized] target(s) in 0.56s
+
+• Running an optimize for size post-step with wasm-opt --enable-nontrapping-float-to-int --enable-bulk-memory...
+    Finished wasm-opt -O in 6s 912ms
+• done
+
+✓ Contract successfully built! (in CARGO_NEAR_BUILD_ENVIRONMENT=host)
+     -                Binary: /private/tmp/lcp-followup-020e39/recheck/lcp_core.wasm
+     -                  Size: 1.2 MB (1161655 bytes)
+     - SHA-256 checksum hex : 0f194b5306379eed784235b3177cabc2f9ca31f89669223961f3926d8a714963
+     - SHA-256 checksum bs58: 21wVBHeifP1dEmASeZgxurf554cwyPVyvfDK6QecDQjt
+    Finished cargo near build in 12s
+Here is the console command if you ever need to re-run it again:
+cargo near build non-reproducible-wasm --locked --no-abi --out-dir /tmp/lcp-followup-020e39/recheck --manifest-path contracts/lcp-core/Cargo.toml --features 'sandbox-callback-fixture usdc-receipt-recovery'

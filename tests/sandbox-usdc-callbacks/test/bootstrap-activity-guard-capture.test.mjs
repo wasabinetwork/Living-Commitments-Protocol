@@ -9,11 +9,17 @@ import { validateBootstrapActivityGuardCapture } from "../verify-bootstrap-activ
 const here = dirname(fileURLToPath(import.meta.url));
 const capture = JSON.parse(await readFile(resolve(
   here,
-  "../bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json",
+  "../bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json",
 ), "utf8"));
 
 test("accepts the complete bootstrap-after-commitment Sandbox capture", () => {
   validateBootstrapActivityGuardCapture(capture);
+});
+
+test("rejects a core artifact hash that is not the pinned reproducible candidate", () => {
+  const changed = structuredClone(capture);
+  changed.wasm_artifacts.lcp_core_fixture.wasm_sha256 = "00".repeat(32);
+  assert.throws(() => validateBootstrapActivityGuardCapture(changed), /reproducible recovery core artifact/);
 });
 
 test("rejects a core code hash that differs from the deployed guard instance", () => {

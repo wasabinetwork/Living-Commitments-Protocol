@@ -1,0 +1,15 @@
+✔ accepts the complete native excess-refund capture (12.111074ms)
+✔ rejects an unpinned core artifact digest (4.055678ms)
+✔ rejects a missing refund-failure callback event (1.871403ms)
+✔ rejects a duplicate successful payout action (4.714599ms)
+✔ rejects a missing successful payout action (2.316792ms)
+✔ rejects an altered payout amount (2.452592ms)
+✔ rejects an incomplete child receipt graph (1.686891ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 393.691473

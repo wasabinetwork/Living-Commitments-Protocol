@@ -1,0 +1,6 @@
+{
+  "failure": true,
+  "underfunded_withdrawal": true,
+  "withdrawal": true,
+  "replay": true
+}

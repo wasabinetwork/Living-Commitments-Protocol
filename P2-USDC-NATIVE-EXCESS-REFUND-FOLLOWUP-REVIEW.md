@@ -2,26 +2,36 @@
 
 ## Objective
 
-Independently verify that the two low-severity evidence gaps (E1/E2) from
+Independently verify the owner remediation for E2, while retaining the E1 closure
+from the follow-up report. The remaining changes address the artifact mismatch
+and checker mutations reported in
 [`P2-USDC-NATIVE-EXCESS-REFUND-INDEPENDENT-REVIEW.md`](P2-USDC-NATIVE-EXCESS-REFUND-INDEPENDENT-REVIEW.md)
-are closed in the refreshed capture and runner. The earlier report accepted the
-scoped contract behavior; this follow-up reviews evidence completeness and the
-capture checker, not a broader contract audit.
+and
+[`P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-INDEPENDENT-REVIEW.md`](P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-INDEPENDENT-REVIEW.md).
+The earlier reports accepted the scoped contract behavior; this follow-up reviews
+artifact provenance, evidence completeness, and the capture checker, not a
+broader contract audit.
 
 ## Candidate and artifacts
 
-- Source commit: `785a51bb1338154163211e20f76d510f0a1434f1`.
+- Contract source commit: `950e3cb50fd79f559f5b6ff725fbfa32db70a063`.
 - Runtime: NEAR Sandbox 2.14.0, protocol 88; use a clean, independently managed
   runtime and fresh chain.
-- Core fixture SHA-256: `33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872`.
-- NEAR code hash: `4URYaJBxtUGhYbafSHMRkVyGcHcY8Zs1uwugpRM1p76Z`.
-- Capture and 23-row source manifest:
-  [`November 17 capture`](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json),
-  [`manifest`](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256).
+- Reproducible build: cargo-near 0.23.0, Rust 1.100.0, pinned image
+  `sha256:265b662a03642196c8a1b97cb8e1bff9156488b584a9e040e9ef1f264e1049f1`,
+  variant `sandbox-recovery`.
+- Core fixture SHA-256: `4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad`.
+- NEAR code hash: `6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212`.
+- Two reproducible build invocations returned the same WASM and code hashes.
+- Capture and 24-row source manifest:
+  [`NEP-330 reproducible November 17 capture`](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json),
+  [`manifest`](tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256).
+- The plain clean-build capture (`0f194b…`) and older `33997e…` capture are
+  retained for comparison; neither is the candidate in this handoff.
 - Runner and checker:
   [`run.mjs`](tests/sandbox-usdc-callbacks/run.mjs),
   [`capture verifier`](tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs),
-  [`seven mutation checks`](tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs).
+  [`13 automated checks (one valid control and twelve mutations)`](tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs).
 
 The [Sandbox guide](tests/sandbox-usdc-callbacks/README.md) contains locked
 build commands and the isolated Docker invocation. Run the checker and mutation
@@ -44,8 +54,15 @@ as the reproduction.
    `0.00026 NEAR` storage growth, payer balance-plus-fees equation, zero final
    payer credit, and solvent final cash snapshot.
 4. Confirm the mutation tests reject a changed artifact, missing failure
-   callback, duplicate payout, missing payout, altered amount, and incomplete
-   receipt graph. Report any additional mutation weakness found.
+   callback, duplicate/missing/altered payout, missing child, disconnected
+   outcome/body pair, missing receipt status, failed payout or other successful-
+   withdrawal receipt, promise-only payout receipt, and any replay transfer
+   amount including one yocto.
+5. Independently rebuild commit `950e3cb50fd79f559f5b6ff725fbfa32db70a063`
+   with the pinned `sandbox-recovery` NEP-330 variant. Run the Sandbox using
+   the output path explicitly with `LCP_CORE_WASM_PATH`, set
+   `LCP_EXPECTED_CORE_WASM_SHA256` to the digest above, and confirm the result
+   before deployment. Do not rely on the cached `target/.../lcp_core.wasm`.
 
 ## Scope and report format
 

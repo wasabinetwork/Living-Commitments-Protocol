@@ -1,0 +1,15 @@
+AssertionError [ERR_ASSERTION]: fixture must use the independently reproduced core WASM artifact
++ actual - expected
+
++ '0f194b5306379eed784235b3177cabc2f9ca31f89669223961f3926d8a714963'
+- '33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872'
+
+    at validateNativeExcessRefundCapture (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:102:10)
+    at main (file:///Users/gilbertoadon/Downloads/Develop/Living%20Commitments%20Protocol/tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs:279:3) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: '0f194b5306379eed784235b3177cabc2f9ca31f89669223961f3926d8a714963',
+  expected: '33997ebb2f48d2ebb82db46d6f6625476ac963f71b71257aaee288c1a5671872',
+  operator: 'strictEqual',
+  diff: 'simple'
+}

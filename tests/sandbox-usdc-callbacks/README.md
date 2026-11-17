@@ -345,7 +345,7 @@ focused activity-guard case:
 docker run --rm --init --platform linux/amd64 \
   -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
   -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
-  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json node run.mjs'
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core/lcp_core.wasm LCP_EXPECTED_CORE_WASM_SHA256=4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json node run.mjs'
 ```
 
 The fixture deploys a second fresh core, calls `new`, creates a real draft
@@ -356,7 +356,7 @@ commitment counter guard; challenge and transfer counters have separate
 feature-gated unit tests because those actions require a commitment first.
 It does not contact testnet or alter a deployed contract.
 
-The [captured transaction and receipt evidence](bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json)
+The [captured transaction and receipt evidence](bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json)
 stores both finalized transaction graphs, including the receipt body fetched by
 receipt ID when `EXPERIMENTAL_tx_status` omitted it. Verify the capture and its
 source manifest, then run the capture mutation checks:
@@ -369,7 +369,7 @@ node --test tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.t
 Regenerate and verify its source manifest after changing any captured input:
 
 ```sh
-shasum -a 256 tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json \
+shasum -a 256 tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json \
   tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
   tests/sandbox-usdc-callbacks/verify-bootstrap-activity-guard-capture.mjs \
   tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.test.mjs \
@@ -381,9 +381,15 @@ shasum -a 256 tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acce
   contracts/lcp-core/src/receipt_recovery.rs contracts/sandbox-mock-ft/Cargo.toml \
   contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
   P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
-  > tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.sha256
-shasum -a 256 -c tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17.sha256
+  > tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.sha256
 ```
+
+The earlier `bootstrap-activity-guard-sandbox-acceptance-2026-11-17-clean-build.json`
+is retained as a diagnostic capture from the plain Rust build. The verifier and
+mutation tests use the pinned reproducible artifact capture above. The native
+plain-build comparison remains available as a [diagnostic capture](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-clean-build.json)
+with its [manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-clean-build.sha256).
 
 To run only the production NEP-141 tranche-claim cash-gate case, add
 `LCP_USDC_CLAIM_ONLY=1` while keeping `LCP_RECOVERY_ONLY=1`:
@@ -479,13 +485,13 @@ shasum -a 256 -c tests/sandbox-usdc-callbacks/nep141-refund-cash-gate-sandbox-ac
 
 To exercise a failed native excess-storage-refund callback and recover through
 the production legacy payer-credit withdrawal, set
-`LCP_NATIVE_EXCESS_REFUND_ONLY=1` in the same recovery-enabled build:
+`LCP_NATIVE_EXCESS_REFUND_ONLY=1` and select the pinned reproducible core:
 
 ```sh
 docker run --rm --init --platform linux/amd64 \
   -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
   -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
-  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json node run.mjs'
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core/lcp_core.wasm LCP_EXPECTED_CORE_WASM_SHA256=4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json node run.mjs'
 ```
 
 The feature-gated fixture sends an attached `0.01 NEAR` deposit through the
@@ -503,16 +509,28 @@ every raw receipt body and execution outcome; the verifier requires a closed
 child graph. Recent nearcore versions do not wait for gas-refund receipts by
 default, so this explicit finality setting prevents partial receipt captures
 ([nearcore changelog](https://github.com/near/nearcore/blob/master/CHANGELOG.md)).
-The original independently reviewed November 16 capture remains
-unchanged. The refreshed protocol-88 run is captured on November 17 (UTC
-timestamp) in
-[`native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json)
-with its [source checksum manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256).
+The first November 17 capture is retained as historical evidence; it records
+WASM hash `33997ebb…781872`. The independent follow-up and an owner clean build
+both produced `0f194b53…714963` (NEAR code hash
+`21wVBHeifP1dEmASeZgxurf554cwyPVyvfDK6QecDQjt`). These plain builds did not
+embed NEP-330 source metadata. The pinned `sandbox-recovery` NEP-330 build from
+contract source commit `950e3cb50fd79f559f5b6ff725fbfa32db70a063` produced
+`4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad` (NEAR
+code hash `6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212`) on two independent
+build invocations. NEP-330 embeds the source revision and build environment,
+so this exact output is tied to that commit and pinned container digest. The
+plain-build captures remain diagnostic and are not used as the current
+acceptance candidate.
+The runner accepts `LCP_CORE_WASM_PATH` and
+`LCP_EXPECTED_CORE_WASM_SHA256`; it rejects a digest mismatch before deploying.
+The fresh protocol-88 run using the pinned reproducible binary is captured in
+[`native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json)
+with its [source checksum manifest](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256).
 The E1/E2 independent follow-up scope and reproduction checklist are in the
 [review handoff](../../P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md).
-The original capture and manifest are preserved for the independently reviewed
-source revision `519e59bad5115d2cad9d6564c898d548d94b2648`; verify that
-historical manifest at that revision rather than against the refreshed files.
+The original November 16 capture and manifest remain unchanged; verify that
+historical manifest at its pinned source revision rather than against refreshed
+files.
 The missing-recipient method and override exist only in the
 `sandbox-callback-fixture` build; this is local Sandbox evidence, not a testnet
 transfer or a production deployment.
@@ -524,12 +542,15 @@ node tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
 node --test tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs
 ```
 
-The checker pins the independently reproduced fixture WASM hash and code hash,
-exact storage growth, transaction roots, final execution status, complete
-receipt outcome/body graphs, callback events, contract transfer actions,
-cash snapshots, payer balance and credit reconciliation, replay rejection, and
-source manifest. Mutation checks reject a changed artifact, removed failure
-event, duplicate, missing or altered payout, and an incomplete receipt graph.
+The checker pins the NEP-330 reproducible fixture WASM hash and code hash, exact storage
+growth, transaction roots, final execution status, root-reachable receipt
+outcome/body graphs with a recognized status for every receipt, callback events,
+successful payout-receipt status, contract transfer actions, cash snapshots,
+payer balance and credit reconciliation, replay rejection for any payout amount,
+and source manifest. Mutation checks reject a changed artifact, removed failure
+event, duplicate, missing or altered payout, incomplete or disconnected receipt
+graphs, missing or failed withdrawal status, promise-only payout status, and a
+one-yocto replay payout.
 To check another capture, pass its repository path and manifest as arguments. The
 checker validates saved Sandbox RPC records; it does not rerun the Sandbox or
 validate cryptographic receipt inclusion proofs against block headers.
@@ -537,7 +558,7 @@ validate cryptographic receipt inclusion proofs against block headers.
 Regenerate and verify the capture/source manifest from the repository root:
 
 ```sh
-shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.json \
+shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json \
   tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
   tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs \
   tests/sandbox-usdc-callbacks/test/native-excess-refund-capture.test.mjs \
@@ -550,9 +571,58 @@ shasum -a 256 tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbo
   contracts/sandbox-mock-ft/src/lib.rs TODO.md P2-USDC-NATIVE-EXCESS-REFUND-FOLLOWUP-REVIEW.md \
   P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
   P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md \
-  > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256
-shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17.sha256
+  > tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.sha256
 ```
+
+For a fresh, source-built fixture, pass the build output directly and pin its
+digest instead of relying on the default `target` path:
+
+```sh
+CARGO_TARGET_DIR=/tmp/lcp-near-sandbox-cache/recovery-target cargo near build \
+  non-reproducible-wasm --locked --no-abi \
+  --manifest-path contracts/lcp-core/Cargo.toml \
+  --features 'sandbox-callback-fixture usdc-receipt-recovery' \
+  --out-dir /tmp/lcp-near-sandbox-cache/recovery-core
+shasum -a 256 /tmp/lcp-near-sandbox-cache/recovery-core/lcp_core.wasm
+```
+
+The committed recovery variant uses the digest-pinned SourceScan image for a
+NEP-330 build. Build from the exact clean contract source commit; NEP-330
+includes that commit in the WASM, so a different commit produces a different
+digest even when the Rust sources are unchanged:
+
+```sh
+git worktree add --detach /tmp/lcp-p2-repro-source 950e3cb50fd79f559f5b6ff725fbfa32db70a063
+cd /tmp/lcp-p2-repro-source
+cargo near build reproducible-wasm --manifest-path contracts/lcp-core/Cargo.toml \
+  --variant sandbox-recovery --out-dir /tmp/lcp-near-sandbox-cache/reproducible-core
+shasum -a 256 /tmp/lcp-near-sandbox-cache/reproducible-core/lcp_core.wasm
+```
+
+The pinned image is `sourcescan/cargo-near:0.23.0-rust-1.100.0` at
+`sha256:265b662a03642196c8a1b97cb8e1bff9156488b584a9e040e9ef1f264e1049f1`.
+Two builds from the commit above yielded the same hash and NEAR code hash. A
+`non-reproducible-wasm` build remains useful for quick iteration, but is not the
+artifact pinned by the acceptance captures.
+
+Set `LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core/lcp_core.wasm` and
+`LCP_EXPECTED_CORE_WASM_SHA256=4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad`
+in the isolated Docker runner environment when generating the reproducible capture:
+
+```sh
+mkdir -p /tmp/lcp-near-sandbox-cache/bin /tmp/lcp-near-sandbox-cache/tmp
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_NATIVE_EXCESS_REFUND_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core/lcp_core.wasm LCP_EXPECTED_CORE_WASM_SHA256=4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json node run.mjs'
+```
+
+The owner captures from the plain `0f194b…` clean build are retained at the
+[`native clean-build capture`](native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-clean-build.json),
+[`bootstrap clean-build capture`](bootstrap-activity-guard-sandbox-acceptance-2026-11-17-clean-build.json),
+and their checksum manifests. The original `33997e…` capture and manifest are
+historical; neither is the pinned reproducible candidate.
 
 The broader November 16 recovery-lifecycle run passed a read-only contract-VM
 probe of a valid maximum-size certificate envelope: 500-byte intent, 714-byte certificate, five signatures,

@@ -8,8 +8,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const defaultCapturePath = resolve(
   here,
-  "bootstrap-activity-guard-sandbox-acceptance-2026-11-17.json",
+  "bootstrap-activity-guard-sandbox-acceptance-2026-11-17-reproducible.json",
 );
+const EXPECTED_CORE_WASM_SHA256 = "4cb5c001110a83cc4f360b67fab25ea5332fb00394ce446f72e4593e3b269cad";
+const EXPECTED_CORE_CODE_HASH = "6ASj694x4mbtLfdzv5tMXC1HqDMB8QWmn8fc1hp12212";
 const BOOTSTRAP_GUARD_ERROR =
   "receipt recovery must be bootstrapped before commitments or transfers are created";
 
@@ -64,6 +66,11 @@ export function validateBootstrapActivityGuardCapture(capture) {
   assert.equal(capture.node.protocol_version, 88);
   assert.ok(capture.node.chain_id.startsWith("test-chain-"),
     "fixture must come from isolated NEAR Sandbox");
+
+  assert.equal(capture.wasm_artifacts?.lcp_core_fixture?.wasm_sha256, EXPECTED_CORE_WASM_SHA256,
+    "fixture must use the pinned reproducible recovery core artifact");
+  assert.equal(capture.wasm_artifacts?.lcp_core_fixture?.near_code_hash, EXPECTED_CORE_CODE_HASH,
+    "fixture must use the pinned reproducible recovery core code hash");
 
   const scenario = capture.scenarios?.bootstrap_after_commitment_activity;
   assert.ok(scenario, "capture is missing the bootstrap-after-commitment scenario");
