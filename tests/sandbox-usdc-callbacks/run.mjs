@@ -23,6 +23,8 @@ const ORDER_B_ID = "order-b.sandbox";
 const CASH_RECIPIENT_ID = "cash-recipient.sandbox";
 const RECIPIENT_ID = "recipient.sandbox";
 const SERVICE_OPERATOR_B_ID = "service-operator-b.sandbox";
+const STORAGE_BOND_REGISTRY_LIMIT = 2_048;
+const STORAGE_REVALUATION_BATCH_LIMIT = 64;
 const AMOUNT = 1_000_000n;
 const INITIAL_TOKEN_BALANCE = 10_000_000n;
 const ONE_NEAR = 10n ** 24n;
@@ -885,6 +887,157 @@ async function main() {
     const creditPayerCall = (method, args, description, gas = 150n * TERA, expectFailure = false) =>
       sendTransaction(CASH_RECIPIENT_ID, cashRecipientKey, CORE_ID, [actionFunctionCall(method, args, gas)], description,
         expectFailure ? { expectFailure: true } : {});
+    const runStorageRegistryAcceptance = async () => {
+      const gasBurnt = (transaction) => (transaction.receipts_outcome ?? [])
+        .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n);
+      const recordCount = async () => BigInt(await view(CORE_ID, "sandbox_recovery_storage_record_count", {}));
+      const initialRecordCount = await recordCount();
+      assert.ok(initialRecordCount < BigInt(STORAGE_BOND_REGISTRY_LIMIT),
+        "bootstrap must leave capacity for the registry-limit acceptance");
+      let seededCreditCount = 0;
+      let currentCount = initialRecordCount;
+      let measuredStorageBytes = 0n;
+      let maxSeedBatchGas = 0n;
+      const seedBatchGas = [];
+      const seedBatchSize = 32;
+
+      while (currentCount < BigInt(STORAGE_BOND_REGISTRY_LIMIT)) {
+        const remaining = BigInt(STORAGE_BOND_REGISTRY_LIMIT) - currentCount;
+        const count = Number(remaining < BigInt(seedBatchSize) ? remaining : BigInt(seedBatchSize));
+        const transaction = await rootCall(
+          "sandbox_seed_recovery_credit_rows",
+          { first_credit_index: String(seededCreditCount), count },
+          `seed ${count} measured storage rows`,
+          220n * TERA,
+        );
+        const addedStorageBytes = BigInt(returnedJson(transaction));
+        assert.ok(addedStorageBytes > 0n, "storage row batches must measure positive storage growth");
+        measuredStorageBytes += addedStorageBytes;
+        seededCreditCount += count;
+        const batchGas = gasBurnt(transaction);
+        seedBatchGas.push(batchGas.toString());
+        if (batchGas > maxSeedBatchGas) maxSeedBatchGas = batchGas;
+        const nextCount = await recordCount();
+        assert.equal(nextCount, currentCount + BigInt(count),
+          "each seeded measured row must consume exactly one registry record");
+        currentCount = nextCount;
+      }
+
+      assert.equal(currentCount, BigInt(STORAGE_BOND_REGISTRY_LIMIT),
+        "Sandbox must reach the configured storage-bond record limit");
+      const fixtureCreditId = (index) => createHash("sha256")
+        .update(Buffer.concat([
+          Buffer.from("LCP/SANDBOX/STORAGE-REGISTRY-CAP/V1\0", "utf8"),
+          u32(index),
+        ]))
+        .digest("hex");
+      const sampleCreditId = fixtureCreditId(seededCreditCount - 1);
+      const sampleCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      });
+      assert.ok(sampleCredit, "the last accepted credit row must remain readable");
+      assert.ok(sampleCredit.storage_reserve_ready,
+        "the registry must remain cash-ready at its configured record limit");
+
+      const overflowCreditId = fixtureCreditId(seededCreditCount);
+      const overCapacity = await rootCall(
+        "sandbox_seed_recovery_credit_rows",
+        { first_credit_index: String(seededCreditCount), count: 1 },
+        "reject storage bond record 2049",
+        220n * TERA,
+        0n,
+        true,
+      );
+      assert.match(JSON.stringify(overCapacity), /storage bond registry is full/,
+        "the first record beyond the cap must fail at the registry bound");
+      assert.equal(await recordCount(), BigInt(STORAGE_BOND_REGISTRY_LIMIT),
+        "failed capacity admission must leave the registry count unchanged");
+      assert.equal(await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: overflowCreditId,
+      }), null, "failed capacity admission must roll back its newly written credit row");
+
+      await rootCall("sandbox_mark_recovery_storage_price_stale", {},
+        "mark storage reserve stale for bounded registry revaluation");
+      const started = await rootCall("begin_recovery_storage_revaluation", {},
+        "begin storage reserve revaluation after stale-price fixture");
+      assert.equal(returnedJson(started), true,
+        "stale storage reserve must enter the revaluation state");
+      const staleCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      });
+      assert.equal(staleCredit.storage_reserve_ready, false,
+        "cash-sensitive actions must report not-ready during revaluation");
+
+      const invalidBatch = await rootCall(
+        "revalue_recovery_storage_batch",
+        { start_index: 0, limit: STORAGE_REVALUATION_BATCH_LIMIT + 1 },
+        "reject revaluation batch larger than 64 records",
+        220n * TERA,
+        0n,
+        true,
+      );
+      assert.match(JSON.stringify(invalidBatch), /batch size is invalid/,
+        "a 65-record maintenance batch must reject");
+
+      let maxRevaluationGas = 0n;
+      const revaluationBatches = [];
+      for (let startIndex = 0; startIndex < STORAGE_BOND_REGISTRY_LIMIT;
+        startIndex += STORAGE_REVALUATION_BATCH_LIMIT) {
+        const endIndex = startIndex + STORAGE_REVALUATION_BATCH_LIMIT;
+        const transaction = await rootCall(
+          "revalue_recovery_storage_batch",
+          { start_index: startIndex, limit: STORAGE_REVALUATION_BATCH_LIMIT },
+          `revalue storage records ${startIndex}–${endIndex}`,
+          220n * TERA,
+        );
+        const result = returnedJson(transaction);
+        const expectedStatus = endIndex === STORAGE_BOND_REGISTRY_LIMIT ? "complete" : "in_progress";
+        assert.equal(result.status, expectedStatus,
+          `64-record revaluation ending at ${endIndex} must have the expected status`);
+        if (expectedStatus === "in_progress") {
+          assert.equal(Number(result.next_record_index), endIndex,
+            "revaluation progress must advance by exactly 64 records");
+        }
+        const batchGas = gasBurnt(transaction);
+        revaluationBatches.push({
+          start_index: startIndex,
+          end_index: endIndex,
+          gas_burnt: batchGas.toString(),
+        });
+        if (batchGas > maxRevaluationGas) maxRevaluationGas = batchGas;
+      }
+
+      const readyCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: sampleCreditId,
+      });
+      assert.ok(readyCredit.storage_reserve_ready,
+        "completed max-sized batches must restore storage-reserve readiness");
+      assert.equal(await recordCount(), BigInt(STORAGE_BOND_REGISTRY_LIMIT),
+        "revaluation must preserve all registry entries");
+
+      return {
+        registry_limit: STORAGE_BOND_REGISTRY_LIMIT,
+        initial_record_count: initialRecordCount.toString(),
+        measured_credit_rows_added: seededCreditCount,
+        final_record_count: currentCount.toString(),
+        measured_credit_storage_bytes: measuredStorageBytes.toString(),
+        seed_batch_size: seedBatchSize,
+        seed_batch_count: seedBatchGas.length,
+        maximum_seed_batch_gas_burnt: maxSeedBatchGas.toString(),
+        overflow_transaction_hash: overCapacity.transaction.hash,
+        overflow_admission_rolled_back: true,
+        overflow_credit_row_absent: true,
+        revaluation_batch_limit: STORAGE_REVALUATION_BATCH_LIMIT,
+        oversized_batch_rejected: true,
+        revaluation_batch_count: revaluationBatches.length,
+        maximum_revaluation_batch_gas_burnt: maxRevaluationGas.toString(),
+        revaluation_batches: revaluationBatches,
+        storage_reserve_ready_before_revaluation: true,
+        storage_reserve_blocked_during_revaluation: true,
+        storage_reserve_ready_after_revaluation: true,
+        no_public_network_used: true,
+      };
+    };
     const assertEscrow = async (commitmentId, fields) => {
       const state = await escrow(commitmentId);
       for (const [field, expected] of Object.entries(fields)) {
@@ -893,6 +1046,11 @@ async function main() {
       assertConservation(state);
       return state;
     };
+
+    if (process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1") {
+      results.storage_registry_acceptance = await runStorageRegistryAcceptance();
+      return results;
+    }
 
     const callbackFirst = await queueRecovery(101, 20, "recovery callback-first transfer");
     const callbackFirstState = await waitFor("callback-first recovery transfer", async () => {
@@ -2055,19 +2213,23 @@ async function main() {
     };
     console.log("PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call");
 
-    if (process.env.LCP_RECOVERY_ONLY === "1") {
+    if (process.env.LCP_RECOVERY_ONLY === "1" || process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1") {
       fixtures.recovery_acceptance = await runRecoveryAcceptance(nodeStatus, tokenWasm, codeHashV1);
       const fixturePath = process.env.LCP_FIXTURE_OUTPUT;
       if (fixturePath) {
         await writeFile(fixturePath, `${JSON.stringify({
-          fixture_schema: "lcp.receipt-recovery-sandbox-acceptance.v1",
+          fixture_schema: process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
+            ? "lcp.storage-registry-sandbox-acceptance.v1"
+            : "lcp.receipt-recovery-sandbox-acceptance.v1",
           captured_at: new Date().toISOString(),
           node: fixtures.node,
           wasm_artifacts: fixtures.artifacts,
           scenarios: fixtures.recovery_acceptance,
         }, null, 2)}\n`);
       }
-      console.log("All isolated receipt-recovery Sandbox checks passed; no public network was used.");
+      console.log(process.env.LCP_STORAGE_REGISTRY_CAP_ONLY === "1"
+        ? "Isolated storage registry cap acceptance passed; no public network was used."
+        : "All isolated receipt-recovery Sandbox checks passed; no public network was used.");
       return;
     }
 

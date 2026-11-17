@@ -407,6 +407,50 @@ are written; this affects only the isolated local process. The capture is
 with hashes in
 [`receipt-recovery-sandbox-acceptance-2026-11-16.sha256`](receipt-recovery-sandbox-acceptance-2026-11-16.sha256).
 
+### Storage-bond registry capacity and revaluation batch
+
+With the same optimized fixture-enabled recovery core and mock-token artifacts
+above, run the focused capacity probe:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$PWD:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 LCP_RECOVERY_ONLY=1 LCP_STORAGE_REGISTRY_CAP_ONLY=1 LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp LCP_FIXTURE_OUTPUT=/repo/tests/sandbox-usdc-callbacks/storage-registry-sandbox-acceptance-2026-11-16.json node run.mjs'
+```
+
+The protocol-88 Sandbox run began with three registry entries and added 2,045
+fixture-seeded zero-value payer-credit rows to reach the provisional 2,048
+record cap. Those rows used the same short Sandbox payer ID and fixed record
+shape; measured storage growth was 961,150 bytes. The next admission failed,
+leaving the count at 2,048 and its credit row absent. A 65-record revaluation
+request failed; 32 production calls revalued 64 records each and restored
+reserve readiness only after the final batch. Maximum observed gas was 45.279
+Tgas for a 32-row seed transaction and 11.785 Tgas for a 64-record revaluation
+transaction. These are fixture observations, not worst-case gas estimates or
+permanent production limits; variable payer-ID lengths, other record states,
+independent reproduction, and the rest of the acceptance matrix remain open.
+The capture is
+[`storage-registry-sandbox-acceptance-2026-11-16.json`](storage-registry-sandbox-acceptance-2026-11-16.json).
+Verify its code/source/capture integrity with the adjacent checksum manifest.
+Regenerate that manifest after rerunning the acceptance or changing its inputs:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/storage-registry-sandbox-acceptance-2026-11-16.json \
+  tests/sandbox-usdc-callbacks/run.mjs tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs \
+  evaluators/service-availability/src/main.rs evaluators/service-availability/probe.mjs \
+  evaluators/service-availability/test/probe.test.mjs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  TODO.md P2-USDC-RECEIPT-RECOVERY-DESIGN.md \
+  > tests/sandbox-usdc-callbacks/storage-registry-sandbox-acceptance-2026-11-16.sha256
+```
+
 To keep the governance timing check fast, `sandbox-callback-fixture` sets the
 rotation minimum to ten seconds and tests rejection before the deadline and
 acceptance after it. Release builds retain the seven-day minimum. This verifies

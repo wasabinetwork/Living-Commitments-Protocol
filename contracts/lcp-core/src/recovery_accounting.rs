@@ -1222,6 +1222,10 @@ pub(crate) fn storage_reserve_metrics() -> StorageReserveMetricsV1 {
         .unwrap_or_else(|message| env::panic_str(message))
 }
 
+pub(crate) fn storage_bond_record_count() -> u32 {
+    load_reserve().record_count
+}
+
 /// Converts free treasury storage reserve into a payer credit after measured
 /// storage has been released. The credit and reserve transition are atomic.
 pub(crate) fn credit_released_storage_to_payer(credit_id: [u8; 32], amount_yocto: u128) {

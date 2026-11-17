@@ -659,6 +659,79 @@ impl Contract {
         crate::recovery_accounting::sandbox_mark_storage_price_stale();
     }
 
+    /// Preallocates measured refund-credit rows to exercise the bounded
+    /// storage-bond registry's capacity and revaluation batch in Sandbox.
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    pub fn sandbox_seed_recovery_credit_rows(&mut self, first_credit_index: U64, count: u8) -> U64 {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        require!(
+            env::predecessor_account_id().as_str() == "sandbox",
+            "fixture storage rows must be seeded by the Sandbox root"
+        );
+        require!(
+            env::attached_deposit().as_yoctonear() == 0,
+            "do not attach a deposit to the storage registry fixture"
+        );
+        require!(
+            count > 0 && usize::from(count) <= crate::recovery_accounting::MAX_REVALUATION_BATCH,
+            "fixture storage row batch size is invalid"
+        );
+        let first = u32::try_from(first_credit_index.0)
+            .unwrap_or_else(|_| env::panic_str("fixture credit index exceeds u32"));
+        let end = first
+            .checked_add(u32::from(count))
+            .unwrap_or_else(|| env::panic_str("fixture credit index overflow"));
+        let payer = env::predecessor_account_id();
+        let mut total_storage_bytes = 0u64;
+        for index in first..end {
+            let mut preimage = b"LCP/SANDBOX/STORAGE-REGISTRY-CAP/V1\0".to_vec();
+            preimage.extend_from_slice(&index.to_le_bytes());
+            let credit_id: [u8; 32] = env::sha256(&preimage)
+                .try_into()
+                .unwrap_or_else(|_| env::panic_str("fixture credit ID has an invalid length"));
+            let measured = crate::recovery_accounting::preallocate_measured_refund_credit(
+                credit_id,
+                payer.clone(),
+                0,
+                env::storage_usage(),
+            );
+            total_storage_bytes = total_storage_bytes
+                .checked_add(measured.storage_bytes)
+                .unwrap_or_else(|| env::panic_str("fixture storage byte total overflow"));
+        }
+        native_cash::assert_solvency();
+        U64(total_storage_bytes)
+    }
+
+    /// Returns the fixture-only storage registry count for Sandbox assertions.
+    #[cfg(all(
+        feature = "sandbox-callback-fixture",
+        feature = "usdc-receipt-recovery"
+    ))]
+    pub fn sandbox_recovery_storage_record_count(&self) -> U64 {
+        require!(
+            env::chain_id().starts_with("test-chain-"),
+            "NEAR Sandbox chain required"
+        );
+        require!(
+            env::current_account_id().as_str() == "lcp-core-sandbox.sandbox",
+            "fixture contract account required"
+        );
+        U64(u64::from(
+            crate::recovery_accounting::storage_bond_record_count(),
+        ))
+    }
+
     /// Revalues at most 64 records. Pass the returned `next_record_index` to
     /// continue; restart at zero if the storage byte cost changes mid-process.
     pub fn revalue_recovery_storage_batch(
