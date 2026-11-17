@@ -962,16 +962,17 @@ async function main() {
     if (process.env.LCP_USDC_REFUND_ONLY === "1") {
       const commitmentId = "9902";
       const amountRaw = 2_345_678n;
+      const excessRefundDeposit = ONE_NEAR / 100n;
       const seedTx = await functionCall(CORE_ID, coreKey, "sandbox_seed_closed_refund_commitment", {
         commitment_id: commitmentId,
-        sponsor: "sandbox",
+        sponsor: RECIPIENT_ID,
         beneficiary: CASH_RECIPIENT_ID,
         escrow_amount_raw: amountRaw.toString(),
         operations_funded_yocto: (ONE_NEAR / 100n).toString(),
         operations_spent_yocto: "0",
         token_account_id: TOKEN_ID,
       }, 120n * TERA);
-      const sponsorTokenBefore = await tokenBalance("sandbox");
+      const sponsorTokenBefore = await tokenBalance(RECIPIENT_ID);
       const coreTokenBefore = await tokenBalance(CORE_ID);
       const freeMargin = await setNativeFreeMargin(0n, "NEP-141 escrow refund transfer-deposit boundary");
       const refundAction = (deposit) => actionFunctionCall(
@@ -981,8 +982,8 @@ async function main() {
         deposit,
       );
       const discoveryFailure = await sendTransaction(
-        "sandbox",
-        rootKey,
+        RECIPIENT_ID,
+        recipientKey,
         CORE_ID,
         [refundAction(0n)],
         "discover NEP-141 refund storage and transfer deposit",
@@ -1010,7 +1011,7 @@ async function main() {
         "failed storage discovery must not mark the token escrow refunded");
       assert.equal(afterDiscovery.free_raw, amountRaw.toString(),
         "failed storage discovery must preserve the full refundable token balance");
-      assert.equal(await tokenBalance("sandbox"), sponsorTokenBefore,
+      assert.equal(await tokenBalance(RECIPIENT_ID), sponsorTokenBefore,
         "failed storage discovery must not call the token contract");
 
       const cashBeforeRefund = await nativeCashSnapshot();
@@ -1018,8 +1019,8 @@ async function main() {
         "the exact refund must start with no unreserved native cash margin");
       await functionCall(TOKEN_ID, tokenKey, "set_fail_transfers", { fail: true });
       const failedRefundTx = await sendTransaction(
-        "sandbox",
-        rootKey,
+        RECIPIENT_ID,
+        recipientKey,
         CORE_ID,
         [refundAction(requiredDeposit)],
         "production NEP-141 escrow refund with token failure",
@@ -1040,14 +1041,14 @@ async function main() {
             terminal_outcome: intent?.terminal_outcome,
           } };
       });
-      const failedRefundReceiptTree = await rpc("tx", [failedRefundTx.transaction.hash, "sandbox"]);
+      const failedRefundReceiptTree = await rpc("tx", [failedRefundTx.transaction.hash, RECIPIENT_ID]);
       const failedTokenReceipt = failedRefundReceiptTree.receipts_outcome?.find(
         ({ outcome }) => outcome.executor_id === TOKEN_ID,
       );
       assert.ok(failedTokenReceipt, "production refund must create a token transfer receipt");
       assert.ok(isFailedExecution(failedTokenReceipt.outcome.status),
         "mock NEP-141 failure must fail the token receipt");
-      assert.equal(await tokenBalance("sandbox"), sponsorTokenBefore,
+      assert.equal(await tokenBalance(RECIPIENT_ID), sponsorTokenBefore,
         "failed token refund must not credit the sponsor");
       assert.equal(await tokenBalance(CORE_ID), coreTokenBefore,
         "failed token refund must preserve contract token funds");
@@ -1061,8 +1062,8 @@ async function main() {
       await functionCall(TOKEN_ID, tokenKey, "set_fail_transfers", { fail: false });
       const retryFreeMargin = await setNativeFreeMargin(0n, "NEP-141 escrow refund retry");
       const retryDiscoveryFailure = await sendTransaction(
-        "sandbox",
-        rootKey,
+        RECIPIENT_ID,
+        recipientKey,
         CORE_ID,
         [refundAction(0n)],
         "discover NEP-141 refund retry storage deposit",
@@ -1086,10 +1087,10 @@ async function main() {
       assert.equal(nativeFreeMargin(cashBeforeRetry), 0n,
         "the exact retry must start with no unreserved native cash margin");
       const retryRefundTx = await sendTransaction(
-        "sandbox",
-        rootKey,
+        RECIPIENT_ID,
+        recipientKey,
         CORE_ID,
-        [refundAction(retryRequiredDeposit)],
+        [refundAction(retryRequiredDeposit + excessRefundDeposit)],
         "production NEP-141 escrow refund retry",
       );
       const retryTransferId = String(returnedJson(retryRefundTx));
@@ -1108,14 +1109,14 @@ async function main() {
             terminal_outcome: intent?.terminal_outcome,
           } };
       });
-      const refundReceiptTree = await rpc("tx", [retryRefundTx.transaction.hash, "sandbox"]);
+      const refundReceiptTree = await rpc("tx", [retryRefundTx.transaction.hash, RECIPIENT_ID]);
       const tokenReceipt = refundReceiptTree.receipts_outcome?.find(
         ({ outcome }) => outcome.executor_id === TOKEN_ID,
       );
       assert.ok(tokenReceipt, "production refund retry must create a token transfer receipt");
       assert.ok(tokenReceipt.outcome.status && Object.hasOwn(tokenReceipt.outcome.status, "SuccessValue"),
         `NEP-141 refund retry receipt must succeed: ${JSON.stringify(tokenReceipt.outcome.status)}`);
-      const sponsorTokenAfter = await tokenBalance("sandbox");
+      const sponsorTokenAfter = await tokenBalance(RECIPIENT_ID);
       const coreTokenAfter = await tokenBalance(CORE_ID);
       assert.equal(sponsorTokenAfter - sponsorTokenBefore, amountRaw,
         "configured sponsor must receive exactly the remaining USDC escrow");
@@ -1127,14 +1128,109 @@ async function main() {
       assert.ok(nativeFreeMargin(cashAfterRefund) >= 0n,
         "the exact-storage refund must remain solvent after token transfer and callback");
       assertConservation(settledRefund.escrowState);
+
+      const refundCreditId = settledRefund.intent.refund_credit_id;
+      assert.match(refundCreditId, /^[0-9a-f]{64}$/,
+        "settled refund intent must expose its canonical NEAR deposit credit ID");
+      const finalizeRefundIntentTx = await sendTransaction(
+        "sandbox",
+        rootKey,
+        CORE_ID,
+        [actionFunctionCall("finalize_receipt_recovery_intent", {
+          transfer_id: retryTransferId,
+        }, 180n * TERA)],
+        "finalize NEP-141 refund intent and release its storage bond",
+      );
+      assert.equal(returnedJson(finalizeRefundIntentTx), true,
+        "terminal NEP-141 refund intent must finalize once");
+      assert.equal(await view(CORE_ID, "receipt_recovery_intent", { transfer_id: retryTransferId }), null,
+        "finalized NEP-141 refund intent must be removed");
+      let refundCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: refundCreditId,
+      });
+      assert.ok(refundCredit, "the retry excess must remain assigned to the refund payer");
+      assert.equal(refundCredit.payer, RECIPIENT_ID);
+      assert.equal(refundCredit.state, "available");
+      assert.ok(BigInt(refundCredit.accrued_yocto) >= excessRefundDeposit,
+        "the exact attached-deposit excess must accrue to the refund payer");
+      const refundableCredit = BigInt(refundCredit.accrued_yocto);
+      assert.equal(BigInt(refundCredit.withdrawable_yocto), 0n,
+        "the payer credit must remain blocked until native cash can cover withdrawal");
+      const refundCreditMargin = await setNativeFreeMargin(
+        refundableCredit,
+        "NEP-141 refund excess-credit withdrawal",
+      );
+      refundCredit = await view(CORE_ID, "receipt_recovery_credit", {
+        credit_id_hex: refundCreditId,
+      });
+      assert.equal(refundCredit.withdrawal_available, true,
+        "the exact native margin must make the complete payer credit withdrawable");
+      assert.equal(BigInt(refundCredit.withdrawable_yocto), refundableCredit);
+      const sponsorBalanceBeforeCreditWithdrawal = await accountBalance(RECIPIENT_ID);
+      const withdrawRefundCreditTx = await sendTransaction(
+        RECIPIENT_ID,
+        recipientKey,
+        CORE_ID,
+        [actionFunctionCall("withdraw_receipt_recovery_credit", {
+          credit_id_hex: refundCreditId,
+        }, 180n * TERA)],
+        "withdraw NEP-141 refund excess credit at its exact cash margin",
+      );
+      const settledRefundCredit = await waitFor("NEP-141 refund excess-credit callback", async () => {
+        const [credit, cash] = await Promise.all([
+          view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: refundCreditId }),
+          nativeCashSnapshot(),
+        ]);
+        return credit === null && cash[4] === 0n
+          ? { done: true, value: cash }
+          : { done: false, value: { credit, cash: cash.map(String) } };
+      });
+      const withdrawRefundCreditReceiptTree = await rpc("tx", [
+        withdrawRefundCreditTx.transaction.hash,
+        RECIPIENT_ID,
+      ]);
+      assert.ok(
+        withdrawRefundCreditReceiptTree.receipts_outcome?.some(({ outcome }) =>
+          outcome.executor_id === CORE_ID
+            && outcome.logs?.some((log) => log.includes('"event":"receipt_recovery_credit_withdrawn"'))),
+        "payer credit withdrawal must settle through its production callback",
+      );
+      const refundCreditWithdrawalFees = BigInt(
+        withdrawRefundCreditReceiptTree.transaction_outcome?.outcome?.tokens_burnt ?? 0,
+      ) + (withdrawRefundCreditReceiptTree.receipts_outcome ?? []).reduce(
+        (sum, receipt) => sum + BigInt(receipt.outcome?.tokens_burnt ?? 0),
+        0n,
+      );
+      const sponsorBalanceAfterCreditWithdrawal = await waitFor(
+        "finalized NEAR refund-credit payout",
+        async () => {
+          const balance = await accountBalance(RECIPIENT_ID);
+          return balance + refundCreditWithdrawalFees
+            >= sponsorBalanceBeforeCreditWithdrawal + refundableCredit
+            ? { done: true, value: balance }
+            : { done: false, value: balance.toString() };
+        },
+        60_000,
+      );
+      assert.equal(
+        sponsorBalanceAfterCreditWithdrawal + refundCreditWithdrawalFees,
+        sponsorBalanceBeforeCreditWithdrawal + refundableCredit,
+        `payer balance must reconcile after transfer and gas; credit=${refundableCredit} `
+          + `before=${sponsorBalanceBeforeCreditWithdrawal} after=${sponsorBalanceAfterCreditWithdrawal} `
+          + `fees=${refundCreditWithdrawalFees}`,
+      );
+      assert.ok(nativeFreeMargin(settledRefundCredit) >= 0n,
+        "credit withdrawal callback must leave native cash solvent");
       results.usdc_refund_cash_gate = {
         commitment_id: commitmentId,
         transfer_id: retryTransferId,
         token_account_id: TOKEN_ID,
-        sponsor: "sandbox",
+        sponsor: RECIPIENT_ID,
         amount_raw: amountRaw.toString(),
         first_attempt_attached_deposit_yocto: requiredDeposit.toString(),
-        retry_attached_deposit_yocto: retryRequiredDeposit.toString(),
+        retry_required_attached_deposit_yocto: retryRequiredDeposit.toString(),
+        retry_excess_attached_deposit_yocto: excessRefundDeposit.toString(),
+        retry_attached_deposit_yocto: (retryRequiredDeposit + excessRefundDeposit).toString(),
         required_deposit_includes_ft_transfer_yocto: true,
         ft_transfer_attached_deposit_yocto: "1",
         starting_free_native_margin_yocto: "0",
@@ -1149,6 +1245,16 @@ async function main() {
         refund_retry_discovery_failure_transaction_hash: retryDiscoveryFailure.transaction.hash,
         retry_transfer_id: retryTransferId,
         refund_retry_transaction_hash: retryRefundTx.transaction.hash,
+        refund_credit_id: refundCreditId,
+        refund_credit_amount_yocto: refundableCredit.toString(),
+        refund_intent_finalize_transaction_hash: finalizeRefundIntentTx.transaction.hash,
+        refund_credit_withdrawal_transaction_hash: withdrawRefundCreditTx.transaction.hash,
+        refund_credit_withdrawal_fee_yocto: refundCreditWithdrawalFees.toString(),
+        sponsor_balance_before_credit_withdrawal_yocto: sponsorBalanceBeforeCreditWithdrawal.toString(),
+        sponsor_balance_after_credit_withdrawal_yocto: sponsorBalanceAfterCreditWithdrawal.toString(),
+        refund_credit_withdrawal_free_margin_fixture: refundCreditMargin,
+        refund_credit_withdrawal_receipts: withdrawRefundCreditReceiptTree.receipts_outcome,
+        native_cash_after_credit_withdrawal: settledRefundCredit.map(String),
         seed_transaction_hash: seedTx.transaction.hash,
         free_margin_fixture: freeMargin,
         retry_free_margin_fixture: retryFreeMargin,
@@ -1167,7 +1273,7 @@ async function main() {
         core_token_balance_after: coreTokenAfter.toString(),
         isolated_sandbox_only: true,
       };
-      console.log("PASS failed production NEP-141 refund preserves escrow; retry returns it to the sponsor and reconciles the 1 yoctoNEAR deposit");
+      console.log("PASS failed production NEP-141 refund preserves escrow; retry returns escrow and the exact-margin excess-deposit credit to the sponsor");
       return results;
     }
 

@@ -393,12 +393,20 @@ plus transfer deposit, then calls production `refund_remaining` from the
 sponsor with zero starting free native-cash margin. It first forces a token
 failure and confirms the callback restores the full refundable balance and
 marks that attempt terminal-failure. A new transfer ID then retries with the
-exact deposit; the mock token enforces the 1 yoctoNEAR `ft_transfer` deposit,
-the sponsor receives the remaining token escrow, and the callback records the
-refund and terminal-success intent. Native solvency remains intact. On
-November 16, 2026, the protocol-88 Sandbox retry settled `2,345,678` raw units
-and retained `0.0039 NEAR` after storage accounting. This validates the local
-mock-token path, not Circle USDC's runtime.
+measured storage and 1 yoctoNEAR transfer deposit plus `0.01 NEAR` excess. The
+mock token enforces its 1 yoctoNEAR `ft_transfer` deposit, the sponsor receives
+the remaining token escrow, and the callback records the refund and
+terminal-success intent. Finalizing that intent releases its storage bond to
+the same persisted payer credit as the deposit excess. The credit is larger
+than the available free margin, so it is not withdrawable yet. After setting
+exactly the credit amount as free margin, the sponsor withdraws it through
+the production callback, and the balance delta reconciles after measured
+transaction fees. On November 16,
+2026, the protocol-88 Sandbox retry settled `2,345,678` raw units, produced a
+`0.01742 NEAR` payer credit (`0.01 NEAR` excess plus its released storage bond),
+and had `0.0041 NEAR` free margin after token settlement; the exact-margin
+credit withdrawal then completed while preserving native solvency. This
+validates the local mock-token path, not Circle USDC's runtime.
 Capture and source hashes:
 [`nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.json`](nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.json)
 and [checksum manifest](nep141-refund-cash-gate-sandbox-acceptance-2026-11-16.sha256).
