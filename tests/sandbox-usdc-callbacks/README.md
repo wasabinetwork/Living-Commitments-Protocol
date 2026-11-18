@@ -9,9 +9,38 @@ sidecar, and the native cash gate checks that it is current and solvent. The
 recovery acceptance runner below creates intents and payer credits and
 exercises their lifecycle in Sandbox.
 
-## Current local acceptance candidate — 2026-11-17
+## Quarantine recovery capture — 2026-11-17
 
-The current recovery source candidate is commit
+Source commit `29ed5853e9b49b23018a6434b16768ba956bf9f8` quarantines a
+certificate `Failure` and releases it only when the shared token balance
+covers every gross unit. The pinned reproducible `sandbox-recovery` build
+used `sourcescan/cargo-near:0.23.0-rust-1.100.0` at image digest
+`sha256:265b662a03642196c8a1b97cb8e1bff9156488b584a9e040e9ef1f264e1049f1`
+and produced WASM SHA-256
+`0fee5f62932238054322e4817fc9e0dcc9b271f6d8a10f2b51e9df3e6c31ca0b` and
+NEAR code hash `25Bw8xcjfSQoAUzABmrpNd9zGLrs65Nj2tLxciFnAVsG`. The owner
+ran `LCP_RECOVERY_ONLY=1` in `node:26-trixie-slim` at
+`sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc`
+on Sandbox 2.14.0, protocol 88. No public network or `.env.testnet`
+credentials were used.
+
+The capture is
+[`recovery-acceptance-2026-11-17-29ed585/recovery.json`](recovery-acceptance-2026-11-17-29ed585/recovery.json).
+Commitment 104 ends the failed transfer with `quarantined_raw` `1000000`
+and `free_raw` `0`, then `release_usdc_certificate_quarantine` restores
+`free_raw` `1000000`, and the retry pays `1000000` once. Its source
+manifest is
+[`recovery-acceptance-2026-11-17-29ed585.sha256`](recovery-acceptance-2026-11-17-29ed585.sha256)
+and its tooling manifest is
+[`recovery-acceptance-2026-11-17-29ed585.tooling.sha256`](recovery-acceptance-2026-11-17-29ed585.tooling.sha256).
+This is owner-run local evidence. It does not replace an independent
+reproduction, and it is not canary approval. The `689fbf1` captures below
+remain the evidence for that older source. Do not regenerate their
+manifests.
+
+## Historical local acceptance candidate — 689fbf1
+
+The recovery source for this older capture set is commit
 `689fbf1bc464248b5a6ff019983ef8b415dcd819`. The pinned reproducible build
 used `sourcescan/cargo-near:0.23.0-rust-1.100.0` at image digest
 `sha256:265b662a03642196c8a1b97cb8e1bff9156488b584a9e040e9ef1f264e1049f1`
@@ -22,7 +51,7 @@ captures were generated with this artifact on isolated Sandbox 2.14.0,
 protocol 88, using the pinned Node runner image documented below. No public
 network or `.env.testnet` credentials were used.
 
-The current capture set is in
+That capture set is in
 [`recovery-acceptance-2026-11-17-689fbf1/`](recovery-acceptance-2026-11-17-689fbf1/):
 
 - `protocol-88.json` — native callback rollback, token transfer failure and
