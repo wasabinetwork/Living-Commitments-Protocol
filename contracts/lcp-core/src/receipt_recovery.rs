@@ -31,6 +31,7 @@ const MAX_CODE_HASH_CANCELLATION_BYTES: usize = 305;
 const MAX_CODE_HASH_ENVELOPE_BYTES: usize = 801;
 const MAX_CODE_HASH_ENVELOPE_BASE64_BYTES: usize = 1_068;
 const PENDING_INTENT_PREFIX: &[u8] = b"lcp:receipt-recovery-intent:v1:";
+const CONSUMED_TRANSFER_PREFIX: &[u8] = b"lcp:receipt-recovery-consumed:v1:";
 const INTENT_STORAGE_BOND_DOMAIN: &[u8] = b"lcp:receipt-recovery-intent-bond:v1:";
 const INTENT_REFUND_CREDIT_DOMAIN: &[u8] = b"lcp:receipt-recovery-intent-credit:v1:";
 // The Sandbox feature keeps the same governance checks but shortens the delay
@@ -204,6 +205,9 @@ pub(crate) fn write_pending_intent(
     if intent.transfer_id == 0 || intent.instance_id == [0; 32] {
         env::panic_str("recovery intent has an invalid transfer or instance ID");
     }
+    if transfer_consumed(intent.transfer_id) {
+        env::panic_str("recovery transfer id is already consumed");
+    }
     let key = pending_intent_storage_key(intent.transfer_id);
     if env::storage_has_key(&key) {
         env::panic_str("recovery intent already exists for this transfer");
@@ -365,7 +369,37 @@ pub(crate) fn finalize_terminal_intent(transfer_id: u64) -> bool {
         storage_usage_before,
         crate::recovery_accounting::StorageBondReleaseV1::PayerCredit,
     );
+    // The pending key is gone. A later restore of those bytes must not make
+    // this transfer id allocatable or settleable again.
+    note_transfer_consumed(transfer_id);
     true
+}
+
+pub(crate) fn transfer_consumed(transfer_id: u64) -> bool {
+    env::storage_has_key(&consumed_transfer_storage_key(transfer_id))
+}
+
+/// Refuse a consumed ID before the caller writes settlement or a pending transfer.
+/// A panic here rolls the transaction back; checking first keeps the refusal
+/// ahead of those writes when the counter has been rewound.
+pub(crate) fn reject_if_transfer_consumed(transfer_id: u64) {
+    if transfer_consumed(transfer_id) {
+        env::panic_str("recovery transfer id is already consumed");
+    }
+}
+
+fn note_transfer_consumed(transfer_id: u64) {
+    let key = consumed_transfer_storage_key(transfer_id);
+    if !env::storage_has_key(&key) {
+        env::storage_write(&key, &[1]);
+    }
+}
+
+fn consumed_transfer_storage_key(transfer_id: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(CONSUMED_TRANSFER_PREFIX.len() + 8);
+    key.extend_from_slice(CONSUMED_TRANSFER_PREFIX);
+    key.extend_from_slice(&transfer_id.to_le_bytes());
+    key
 }
 
 fn pending_intent_view(record: &PendingRecoveryIntentRecordV1) -> PendingRecoveryIntentViewV1 {
@@ -1316,7 +1350,18 @@ pub(crate) fn encode_lower_hex_32(value: &[u8; 32]) -> String {
 pub(crate) fn clear_pending_intents_for_test() {
     for transfer_id in 1..=8 {
         env::storage_remove(&pending_intent_storage_key(transfer_id));
+        env::storage_remove(&consumed_transfer_storage_key(transfer_id));
     }
+}
+
+#[cfg(test)]
+pub(crate) fn pending_intent_bytes_for_test(transfer_id: u64) -> Option<Vec<u8>> {
+    env::storage_read(&pending_intent_storage_key(transfer_id))
+}
+
+#[cfg(test)]
+pub(crate) fn restore_pending_intent_for_test(transfer_id: u64, bytes: &[u8]) {
+    env::storage_write(&pending_intent_storage_key(transfer_id), bytes);
 }
 
 #[cfg(test)]

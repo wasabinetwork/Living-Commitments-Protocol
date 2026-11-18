@@ -384,6 +384,10 @@ impl Contract {
             env::attached_deposit().as_yoctonear() == 0,
             "do not attach a deposit to recover a NEP-141 transfer"
         );
+        require!(
+            !crate::receipt_recovery::transfer_consumed(transfer_id.0),
+            "recovery transfer id is already consumed"
+        );
         let pending = crate::receipt_recovery::pending_intent(transfer_id.0)
             .unwrap_or_else(|| env::panic_str("pending recovery intent does not exist"));
         require!(
@@ -1097,6 +1101,8 @@ impl Contract {
             .next_transfer_id
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
+        #[cfg(feature = "usdc-receipt-recovery")]
+        crate::receipt_recovery::reject_if_transfer_consumed(transfer_id);
         settlement.pending_raw = settlement
             .pending_raw
             .checked_add(amount_raw.0)
@@ -5006,6 +5012,8 @@ impl Contract {
             .next_transfer_id
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
+        #[cfg(feature = "usdc-receipt-recovery")]
+        crate::receipt_recovery::reject_if_transfer_consumed(transfer_id);
         let free_raw = self
             .escrow_available_for_tranche(&commitment)
             .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
@@ -5766,6 +5774,8 @@ impl Contract {
             .next_transfer_id
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
+        #[cfg(feature = "usdc-receipt-recovery")]
+        crate::receipt_recovery::reject_if_transfer_consumed(transfer_id);
         #[cfg(any(
             feature = "testnet-transfer-failure-fixture",
             feature = "sandbox-callback-fixture"
@@ -6007,6 +6017,8 @@ impl Contract {
             .next_transfer_id
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
+        #[cfg(feature = "usdc-receipt-recovery")]
+        crate::receipt_recovery::reject_if_transfer_consumed(transfer_id);
         commitment.operations_funded_yocto -= amount;
         commitment.pending_transfer_count = commitment
             .pending_transfer_count
@@ -9862,6 +9874,155 @@ mod tests {
         assert_eq!(status.quarantined_raw.0, 0);
         assert_eq!(status.free_raw.0, 3_000_000);
         assert_eq!(status.pending_raw.0, 0);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "recovery transfer id is already consumed")]
+    fn restored_pending_intent_cannot_settle_a_consumed_transfer() {
+        let hash_a = [4u8; 32];
+        let (mut contract, _) = bootstrapped_recovery(&[hash_a], hash_a);
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let transfer_id = claim_usdc_tranche(&mut contract, id);
+        let saved = crate::receipt_recovery::pending_intent_bytes_for_test(transfer_id.0)
+            .expect("claim writes a pending intent");
+        assert!(contract
+            .settle_token_transfer_outcome(
+                transfer_id.0,
+                crate::receipt_recovery::TransferOutcomeV1::Success,
+                [9; 32],
+            )
+            .is_some());
+        testing_env!(context_at(accounts(4), 0, NOW_NS));
+        assert!(contract.finalize_receipt_recovery_intent(transfer_id));
+        assert!(crate::receipt_recovery::transfer_consumed(transfer_id.0));
+        assert!(crate::receipt_recovery::pending_intent_bytes_for_test(transfer_id.0).is_none());
+        let counter = contract.next_transfer_id;
+        crate::receipt_recovery::restore_pending_intent_for_test(transfer_id.0, &saved);
+        assert_eq!(contract.next_transfer_id, counter);
+        contract.recover_nep141_transfer(transfer_id, "AAAA".to_string());
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn rewound_transfer_counter_cannot_allocate_a_consumed_id() {
+        let hash_a = [4u8; 32];
+        let (mut contract, _) = bootstrapped_recovery(&[hash_a], hash_a);
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let settled_id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, settled_id);
+        let transfer_id = claim_usdc_tranche(&mut contract, settled_id);
+        assert!(contract
+            .settle_token_transfer_outcome(
+                transfer_id.0,
+                crate::receipt_recovery::TransferOutcomeV1::Success,
+                [9; 32],
+            )
+            .is_some());
+        testing_env!(context_at(accounts(4), 0, NOW_NS));
+        assert!(contract.finalize_receipt_recovery_intent(transfer_id));
+        assert!(crate::receipt_recovery::transfer_consumed(transfer_id.0));
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let open_id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, open_id);
+        let open_before = contract.get_escrow_status(open_id).unwrap();
+        let settled_before = contract.get_escrow_status(settled_id).unwrap();
+        let pool_before = crate::usdc_pool::snapshot(open_id.0);
+        contract.next_transfer_id = transfer_id.0 - 1;
+
+        let claim = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            claim_usdc_tranche(&mut contract, open_id);
+        }));
+        let message = claim.as_ref().err().and_then(|payload| {
+            payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .map(str::to_owned)
+        });
+        assert!(
+            message
+                .as_deref()
+                .is_some_and(|text| text.contains("recovery transfer id is already consumed")),
+            "unexpected panic: {message:?}"
+        );
+        assert_eq!(contract.next_transfer_id, transfer_id.0 - 1);
+        assert_eq!(
+            escrow_raws(&contract.get_escrow_status(open_id).unwrap()),
+            escrow_raws(&open_before)
+        );
+        assert_eq!(
+            escrow_raws(&contract.get_escrow_status(settled_id).unwrap()),
+            escrow_raws(&settled_before)
+        );
+        assert_eq!(
+            crate::usdc_pool::snapshot(open_id.0).generation,
+            pool_before.generation
+        );
+        assert_eq!(
+            crate::usdc_pool::snapshot(open_id.0).spendable_raw,
+            pool_before.spendable_raw
+        );
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_none());
+        assert!(crate::receipt_recovery::pending_intent_bytes_for_test(transfer_id.0).is_none());
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn transfer_id_overflow_does_not_allocate() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let before = contract.get_escrow_status(id).unwrap();
+        contract.next_transfer_id = u64::MAX;
+
+        let claim = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            claim_usdc_tranche(&mut contract, id);
+        }));
+        let message = claim.as_ref().err().and_then(|payload| {
+            payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .map(str::to_owned)
+        });
+        assert!(
+            message
+                .as_deref()
+                .is_some_and(|text| text.contains("transfer ID overflow")),
+            "unexpected panic: {message:?}"
+        );
+        assert_eq!(contract.next_transfer_id, u64::MAX);
+        assert_eq!(
+            escrow_raws(&contract.get_escrow_status(id).unwrap()),
+            escrow_raws(&before)
+        );
+        assert!(contract.pending_transfers.get(&1).is_none());
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn escrow_raws(
+        status: &crate::models::EscrowStatusView,
+    ) -> (u128, u128, u128, u128, u128, u128) {
+        (
+            status.funded_raw.0,
+            status.paid_raw.0,
+            status.refunded_raw.0,
+            status.pending_raw.0,
+            status.free_raw.0,
+            status.quarantined_raw.0,
+        )
     }
 
     #[cfg(feature = "usdc-receipt-recovery")]
