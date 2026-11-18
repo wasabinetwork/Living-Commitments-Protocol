@@ -128,10 +128,11 @@ async function main() {
   for (const name of ["pre_execution_failure", "post_mutation_failure"]) {
     const escrow = scenarios[name].escrow;
     const funded = BigInt(escrow.funded_raw);
+    const quarantined = BigInt(escrow.quarantined_raw ?? 0);
     assert.equal(
       funded,
       BigInt(escrow.paid_raw) + BigInt(escrow.refunded_raw)
-        + BigInt(escrow.pending_raw) + BigInt(escrow.free_raw),
+        + BigInt(escrow.pending_raw) + BigInt(escrow.free_raw) + quarantined,
       `${name} violates raw-token escrow conservation`,
     );
     assert.equal(escrow.pending_raw, "0", `${name} must reconcile the failed transfer`);

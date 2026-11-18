@@ -505,6 +505,149 @@ impl Contract {
         result
     }
 
+    /// Records a 4-of-5 proposal to append a USDC code hash or to select one
+    /// that is already approved. The attached deposit stays in the
+    /// non-withdrawable storage reserve. Existing intents keep the hash copied
+    /// at their creation, and the token account does not change.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[payable]
+    pub fn propose_usdc_code_hash_change(
+        &mut self,
+        signed_proposal_base64: String,
+    ) -> crate::ReceiptRecoveryCodeHashViewV1 {
+        let result = crate::recovery_config::propose_code_hash_change(&signed_proposal_base64);
+        emit_event(
+            "usdc_code_hash_change_proposed",
+            json!({
+                "generation": result.proposal_generation.0.to_string(),
+                "proposal_digest": result.proposal_digest,
+                "new_code_hash": result.new_code_hash,
+                "proposer": result.proposer,
+                "activate_at_ns": result.activate_at_ns.0.to_string(),
+            }),
+        );
+        result
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn cancel_usdc_code_hash_change(
+        &mut self,
+        signed_cancellation_base64: String,
+    ) -> crate::ReceiptRecoveryCodeHashViewV1 {
+        let result = crate::recovery_config::cancel_code_hash_change(&signed_cancellation_base64);
+        emit_event(
+            "usdc_code_hash_change_cancelled",
+            json!({
+                "generation": result.proposal_generation.0.to_string(),
+                "proposal_digest": result.proposal_digest,
+                "new_code_hash": result.new_code_hash,
+            }),
+        );
+        result
+    }
+
+    /// Permissionlessly activates a pending code-hash change after its delay.
+    /// Sandbox builds use the same shortened delay as committee rotation.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn activate_usdc_code_hash_change(&mut self) -> crate::ReceiptRecoveryCodeHashViewV1 {
+        let result = crate::recovery_config::activate_code_hash_change();
+        emit_event(
+            "usdc_code_hash_change_activated",
+            json!({
+                "generation": result.proposal_generation.0.to_string(),
+                "proposal_digest": result.proposal_digest,
+                "new_code_hash": result.new_code_hash,
+            }),
+        );
+        result
+    }
+
+    /// Asks the configured token contract whether this commitment's certificate
+    /// quarantine is backed by tokens still in the shared balance. The private
+    /// callback releases it only when every gross unit is backed and the
+    /// accounting generation is unchanged. A short balance leaves the
+    /// quarantine in place.
+    #[cfg(feature = "usdc-receipt-recovery")]
+    pub fn release_usdc_certificate_quarantine(&mut self, commitment_id: U64) {
+        require!(
+            env::attached_deposit().as_yoctonear() == 0,
+            "do not attach a deposit to release a USDC certificate quarantine"
+        );
+        let snapshot = crate::usdc_pool::snapshot(commitment_id.0);
+        require!(
+            snapshot.quarantine_raw > 0,
+            "commitment has no certificate quarantine"
+        );
+        let token_account_id = crate::recovery_config::configured_token_account_id();
+        let balance_args = near_sdk::serde_json::to_vec(&json!({
+            "account_id": env::current_account_id(),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize USDC balance query"));
+        let callback_args = near_sdk::serde_json::to_vec(&json!({
+            "commitment_id": commitment_id,
+            "generation": U64(snapshot.generation),
+            "quarantine_raw": U128(snapshot.quarantine_raw),
+            "spendable_raw": U128(snapshot.spendable_raw),
+            "total_quarantine_raw": U128(snapshot.total_quarantine_raw),
+        }))
+        .unwrap_or_else(|_| env::panic_str("failed to serialize USDC quarantine callback"));
+        let balance = Promise::new(token_account_id).function_call(
+            "ft_balance_of".to_string(),
+            balance_args,
+            NearToken::from_yoctonear(0),
+            Gas::from_tgas(10),
+        );
+        let _callback = balance.then(Promise::new(env::current_account_id()).function_call(
+            "on_usdc_certificate_quarantine_release".to_string(),
+            callback_args,
+            NearToken::from_yoctonear(0),
+            Gas::from_tgas(30),
+        ));
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[private]
+    pub fn on_usdc_certificate_quarantine_release(
+        &mut self,
+        commitment_id: U64,
+        generation: U64,
+        quarantine_raw: U128,
+        spendable_raw: U128,
+        total_quarantine_raw: U128,
+    ) -> bool {
+        if env::promise_results_count() != 1 {
+            env::log_str("ignored USDC quarantine release without one balance result");
+            return false;
+        }
+        let Ok(bytes) = env::promise_result_checked(0, 64) else {
+            env::log_str("ignored USDC quarantine release with an unreadable balance");
+            return false;
+        };
+        let Some(ft_balance_raw) = parse_ft_balance_result(&bytes) else {
+            env::log_str("ignored USDC quarantine release with a malformed balance");
+            return false;
+        };
+        let released = crate::usdc_pool::release_if_fully_backed(
+            commitment_id.0,
+            generation.0,
+            quarantine_raw.0,
+            spendable_raw.0,
+            total_quarantine_raw.0,
+            ft_balance_raw,
+        );
+        if released {
+            emit_event(
+                "usdc_certificate_quarantine_released",
+                json!({
+                    "commitment_id": commitment_id.0.to_string(),
+                    "quarantine_raw": quarantine_raw.0.to_string(),
+                    "ft_balance_raw": ft_balance_raw.to_string(),
+                }),
+            );
+        }
+        released
+    }
+
     /// Retires an inactive epoch after its exact pending-intent count reaches
     /// zero. Its proposer-funded keyset storage becomes a payer credit.
     #[cfg(feature = "usdc-receipt-recovery")]
@@ -935,6 +1078,13 @@ impl Contract {
         require!(
             commitment.pending_transfer_count == 0 && settlement.pending_raw == 0,
             "fixture already has a pending transfer"
+        );
+        let fixture_free = self
+            .escrow_available_for_tranche(&commitment)
+            .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
+        require!(
+            fixture_free >= amount_raw.0,
+            "fixture transfer exceeds free escrow"
         );
         if let Some(previous) = self.tranches.get(&(commitment_id.0, 0)) {
             require!(
@@ -3333,18 +3483,11 @@ impl Contract {
         );
 
         let tranche_amount_raw = tranche_amount_raw_for(&commitment);
-        let escrow_amounts = escrow_amounts_for(&commitment);
         let required_escrow = u128::from(commitment.policy.budget.max_epochs)
             .checked_mul(tranche_amount_raw)
             .unwrap_or_else(|| env::panic_str("required escrow calculation overflow"));
-        let already_allocated = escrow_amounts
-            .paid
-            .checked_add(escrow_amounts.refunded)
-            .and_then(|value| value.checked_add(escrow_amounts.pending))
-            .unwrap_or_else(|| env::panic_str("escrow allocation overflow"));
-        let escrow_available = escrow_amounts
-            .funded
-            .checked_sub(already_allocated)
+        let escrow_available = self
+            .escrow_available_for_tranche(&commitment)
             .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
         require!(
             escrow_available >= required_escrow,
@@ -4863,6 +5006,13 @@ impl Contract {
             .next_transfer_id
             .checked_add(1)
             .unwrap_or_else(|| env::panic_str("transfer ID overflow"));
+        let free_raw = self
+            .escrow_available_for_tranche(&commitment)
+            .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
+        require!(
+            free_raw >= tranche_amount,
+            "tranche exceeds free escrow"
+        );
         if let Some(mut state) = settlement {
             state.pending_raw = state
                 .pending_raw
@@ -5210,6 +5360,10 @@ impl Contract {
         settlement.paid_raw = next_paid_raw;
         settlement.refunded_raw = next_refunded_raw;
         write_settlement_state(transfer.commitment_id, &settlement);
+        #[cfg(feature = "usdc-receipt-recovery")]
+        if outcome == TransferOutcomeV1::Failure && certificate_digest != [0; 32] {
+            crate::usdc_pool::quarantine_certificate_failure(transfer.commitment_id, amount_raw);
+        }
         commitment.pending_transfer_count -= 1;
 
         if let (Some(epoch), Some(mut tranche)) = (tranche_epoch, tranche_update) {
@@ -5603,12 +5757,8 @@ impl Contract {
         let mut settlement = read_settlement_state(commitment_id.0);
         let settlement_asset = settlement_asset_for(&commitment);
         let is_native_near = settlement.is_none();
-        let escrow_amounts = escrow_amounts_for(&commitment);
-        let amount = escrow_amounts
-            .funded
-            .checked_sub(escrow_amounts.paid)
-            .and_then(|value| value.checked_sub(escrow_amounts.refunded))
-            .and_then(|value| value.checked_sub(escrow_amounts.pending))
+        let amount = self
+            .escrow_available_for_tranche(&commitment)
             .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
         require!(amount > 0, "there is no remaining escrow to refund");
 
@@ -5987,12 +6137,10 @@ impl Contract {
     pub fn get_escrow_status(&self, commitment_id: U64) -> Option<EscrowStatusView> {
         let commitment = self.commitments.get(&commitment_id.0)?;
         let amounts = escrow_amounts_for(commitment);
-        let free_raw = amounts
-            .funded
-            .checked_sub(amounts.paid)
-            .and_then(|amount| amount.checked_sub(amounts.refunded))
-            .and_then(|amount| amount.checked_sub(amounts.pending))
+        let free_raw = self
+            .escrow_available_for_tranche(commitment)
             .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
+        let quarantined_raw = usdc_certificate_quarantine(commitment.id);
         let settlement = read_settlement_state(commitment_id.0);
         Some(EscrowStatusView {
             funded_yocto: U128(if settlement.is_some() {
@@ -6024,6 +6172,8 @@ impl Contract {
             refunded_raw: U128(amounts.refunded),
             pending_raw: U128(amounts.pending),
             free_raw: U128(free_raw),
+            quarantined_raw: U128(quarantined_raw),
+            quarantined_yocto: U128(0),
         })
     }
 
@@ -6513,6 +6663,7 @@ impl Contract {
             .checked_sub(amounts.paid)
             .and_then(|amount| amount.checked_sub(amounts.refunded))
             .and_then(|amount| amount.checked_sub(amounts.pending))
+            .and_then(|amount| amount.checked_sub(usdc_certificate_quarantine(commitment.id)))
     }
 
     fn finish_evaluation(
@@ -6766,7 +6917,38 @@ fn settlement_transfer_intent_v2_storage_key(transfer_id: u64) -> Vec<u8> {
     key
 }
 
+#[cfg(feature = "usdc-receipt-recovery")]
+fn settlement_gross_raw(state: &SettlementState) -> u128 {
+    match state.asset {
+        SettlementAsset::Nep141 { .. } => state
+            .funded_raw
+            .checked_sub(state.paid_raw)
+            .and_then(|amount| amount.checked_sub(state.refunded_raw))
+            .unwrap_or_else(|| env::panic_str("token settlement gross underflow")),
+        SettlementAsset::Near => 0,
+    }
+}
+
+fn usdc_certificate_quarantine(commitment_id: u64) -> u128 {
+    #[cfg(feature = "usdc-receipt-recovery")]
+    {
+        crate::usdc_pool::quarantine_of(commitment_id)
+    }
+    #[cfg(not(feature = "usdc-receipt-recovery"))]
+    {
+        let _ = commitment_id;
+        0
+    }
+}
+
 fn write_settlement_state(commitment_id: u64, state: &SettlementState) {
+    #[cfg(feature = "usdc-receipt-recovery")]
+    {
+        let old_gross = read_settlement_state(commitment_id)
+            .map(|previous| settlement_gross_raw(&previous))
+            .unwrap_or(0);
+        crate::usdc_pool::note_gross_change(old_gross, settlement_gross_raw(state));
+    }
     let bytes = near_sdk::borsh::to_vec(state)
         .unwrap_or_else(|_| env::panic_str("failed to serialize settlement state"));
     env::storage_write(&settlement_state_storage_key(commitment_id), &bytes);
@@ -8062,6 +8244,22 @@ fn emit_event(event_name: &str, data: Value) {
     env::log_str(&format!("EVENT_JSON:{event}"));
 }
 
+#[cfg(feature = "usdc-receipt-recovery")]
+fn parse_ft_balance_result(bytes: &[u8]) -> Option<u128> {
+    let text = std::str::from_utf8(bytes).ok()?.trim();
+    let text = text
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(text);
+    if text.is_empty() || text.len() > 39 || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    if text.len() > 1 && text.starts_with('0') {
+        return None;
+    }
+    text.parse().ok()
+}
+
 fn storage_cost(storage_bytes: u64) -> u128 {
     env::storage_byte_cost()
         .as_yoctonear()
@@ -8179,7 +8377,14 @@ mod tests {
         native_cash::clear_initializer_for_test();
         crate::recovery_accounting::clear_initializer_for_test();
         #[cfg(feature = "usdc-receipt-recovery")]
-        crate::recovery_config::clear_initializer_for_test();
+        {
+            crate::recovery_config::clear_initializer_for_test();
+            crate::usdc_pool::clear_for_test();
+            crate::receipt_recovery::clear_pending_intents_for_test();
+            for commitment_id in 1..=8 {
+                env::storage_remove(&settlement_state_storage_key(commitment_id));
+            }
+        }
         Contract::new()
     }
 
@@ -9348,6 +9553,7 @@ mod tests {
         assert_eq!(after_failure.pending_raw.0, 0);
         assert_eq!(after_failure.paid_raw.0, 0);
         assert_eq!(after_failure.free_raw.0, 4_500_000);
+        assert_eq!(after_failure.quarantined_raw.0, 0);
         assert_eq!(
             contract
                 .get_tranche(id, U64(u64::from(EPOCH)))
@@ -9378,6 +9584,550 @@ mod tests {
                 .status,
             TrancheStatus::Paid
         );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn two_funded_usdc_commitments() -> (Contract, U64, U64) {
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = new_contract();
+        let first = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        let second = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, first);
+        fund_and_activate_usdc_service_commitment(&mut contract, second);
+        (contract, first, second)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn claim_usdc_tranche(contract: &mut Contract, id: U64) -> U64 {
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        contract.claim_tranche(id)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn certificate_fail(contract: &mut Contract, transfer_id: u64) {
+        let settled = contract.settle_token_transfer_outcome(
+            transfer_id,
+            crate::receipt_recovery::TransferOutcomeV1::Failure,
+            [9; 32],
+        );
+        assert!(settled.is_some(), "certificate failure must settle the transfer");
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[allow(deprecated)]
+    fn certificate_failure_quarantines_one_commitment_until_the_pool_is_fully_backed() {
+        let (mut contract, first, second) = two_funded_usdc_commitments();
+        let transfer_id = claim_usdc_tranche(&mut contract, first);
+        certificate_fail(&mut contract, transfer_id.0);
+
+        let quarantined = contract.get_escrow_status(first).unwrap();
+        let untouched = contract.get_escrow_status(second).unwrap();
+        assert_eq!(quarantined.pending_raw.0, 0);
+        assert_eq!(quarantined.paid_raw.0, 0);
+        assert_eq!(quarantined.quarantined_raw.0, 1_500_000);
+        assert_eq!(quarantined.free_raw.0, 3_000_000);
+        assert_eq!(untouched.quarantined_raw.0, 0);
+        assert_eq!(untouched.free_raw.0, 4_500_000);
+        assert_eq!(
+            quarantined.free_raw.0 + untouched.free_raw.0 + quarantined.quarantined_raw.0,
+            quarantined.funded_raw.0 + untouched.funded_raw.0
+        );
+        let snapshot = crate::usdc_pool::snapshot(first.0);
+        assert_eq!(snapshot.spendable_raw, 7_500_000);
+        assert_eq!(snapshot.total_quarantine_raw, 1_500_000);
+        assert_eq!(snapshot.quarantine_raw, 1_500_000);
+
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        assert!(!contract.on_usdc_certificate_quarantine_release(
+            first,
+            U64(snapshot.generation),
+            U128(snapshot.quarantine_raw),
+            U128(snapshot.spendable_raw),
+            U128(snapshot.total_quarantine_raw),
+        ));
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"01\"".to_vec()),
+        );
+        assert!(!contract.on_usdc_certificate_quarantine_release(
+            first,
+            U64(snapshot.generation),
+            U128(snapshot.quarantine_raw),
+            U128(snapshot.spendable_raw),
+            U128(snapshot.total_quarantine_raw),
+        ));
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"7500000\"".to_vec()),
+        );
+        assert!(
+            !contract.on_usdc_certificate_quarantine_release(
+                first,
+                U64(snapshot.generation),
+                U128(snapshot.quarantine_raw),
+                U128(snapshot.spendable_raw),
+                U128(snapshot.total_quarantine_raw),
+            ),
+            "a balance that only covers spendable units must not release quarantine"
+        );
+        assert_eq!(crate::usdc_pool::quarantine_of(first.0), 1_500_000);
+
+        let state = read_settlement_state(first.0).unwrap();
+        write_settlement_state(first.0, &state);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"9000000\"".to_vec()),
+        );
+        assert!(
+            !contract.on_usdc_certificate_quarantine_release(
+                first,
+                U64(snapshot.generation),
+                U128(snapshot.quarantine_raw),
+                U128(snapshot.spendable_raw),
+                U128(snapshot.total_quarantine_raw),
+            ),
+            "a generation bump between the balance view and callback must abort release"
+        );
+
+        let fresh = crate::usdc_pool::snapshot(first.0);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"9000000\"".to_vec()),
+        );
+        assert!(contract.on_usdc_certificate_quarantine_release(
+            first,
+            U64(fresh.generation),
+            U128(fresh.quarantine_raw),
+            U128(fresh.spendable_raw),
+            U128(fresh.total_quarantine_raw),
+        ));
+        let released = contract.get_escrow_status(first).unwrap();
+        assert_eq!(released.quarantined_raw.0, 0);
+        assert_eq!(released.free_raw.0, 4_500_000);
+        assert_eq!(
+            contract.get_escrow_status(second).unwrap().free_raw.0,
+            4_500_000
+        );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[allow(deprecated)]
+    fn one_false_certificate_blocks_release_of_every_certificate_quarantine() {
+        let (mut contract, first, second) = two_funded_usdc_commitments();
+        let first_transfer = claim_usdc_tranche(&mut contract, first);
+        certificate_fail(&mut contract, first_transfer.0);
+        let second_transfer = claim_usdc_tranche(&mut contract, second);
+        certificate_fail(&mut contract, second_transfer.0);
+
+        let snapshot = crate::usdc_pool::snapshot(first.0);
+        assert_eq!(snapshot.spendable_raw, 6_000_000);
+        assert_eq!(snapshot.total_quarantine_raw, 3_000_000);
+        // 7_500_000 equals spendable plus one quarantine. Full backing still requires 9_000_000.
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"7500000\"".to_vec()),
+        );
+        assert!(!contract.on_usdc_certificate_quarantine_release(
+            first,
+            U64(snapshot.generation),
+            U128(snapshot.quarantine_raw),
+            U128(snapshot.spendable_raw),
+            U128(snapshot.total_quarantine_raw),
+        ));
+        let other = crate::usdc_pool::snapshot(second.0);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"7500000\"".to_vec()),
+        );
+        assert!(!contract.on_usdc_certificate_quarantine_release(
+            second,
+            U64(other.generation),
+            U128(other.quarantine_raw),
+            U128(other.spendable_raw),
+            U128(other.total_quarantine_raw),
+        ));
+
+        let backed = crate::usdc_pool::snapshot(first.0);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"9000000\"".to_vec()),
+        );
+        assert!(contract.on_usdc_certificate_quarantine_release(
+            first,
+            U64(backed.generation),
+            U128(backed.quarantine_raw),
+            U128(backed.spendable_raw),
+            U128(backed.total_quarantine_raw),
+        ));
+        assert_eq!(contract.get_escrow_status(first).unwrap().free_raw.0, 4_500_000);
+        assert_eq!(
+            contract.get_escrow_status(second).unwrap().quarantined_raw.0,
+            1_500_000
+        );
+
+        let partial = crate::usdc_pool::snapshot(second.0);
+        assert_eq!(partial.spendable_raw, 7_500_000);
+        assert_eq!(partial.total_quarantine_raw, 1_500_000);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"7500000\"".to_vec()),
+        );
+        assert!(!contract.on_usdc_certificate_quarantine_release(
+            second,
+            U64(partial.generation),
+            U128(partial.quarantine_raw),
+            U128(partial.spendable_raw),
+            U128(partial.total_quarantine_raw),
+        ));
+        let fully_backed = crate::usdc_pool::snapshot(second.0);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(b"\"9000000\"".to_vec()),
+        );
+        assert!(contract.on_usdc_certificate_quarantine_release(
+            second,
+            U64(fully_backed.generation),
+            U128(fully_backed.quarantine_raw),
+            U128(fully_backed.spendable_raw),
+            U128(fully_backed.total_quarantine_raw),
+        ));
+        assert_eq!(contract.get_escrow_status(second).unwrap().free_raw.0, 4_500_000);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn certificate_quarantine_is_excluded_from_a_later_refund() {
+        let (mut contract, first, second) = two_funded_usdc_commitments();
+        let first_transfer = claim_usdc_tranche(&mut contract, first);
+        certificate_fail(&mut contract, first_transfer.0);
+        let before_refund = crate::usdc_pool::snapshot(first.0);
+
+        testing_env!(context(accounts(3), 0));
+        contract.close_commitment(first);
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let refund_id = contract.refund_remaining(first);
+
+        let refunding = contract.get_escrow_status(first).unwrap();
+        assert_eq!(refund_id.0, 2);
+        assert_eq!(refunding.pending_raw.0, 3_000_000);
+        assert_eq!(refunding.quarantined_raw.0, 1_500_000);
+        assert_eq!(refunding.free_raw.0, 0);
+        assert_eq!(contract.get_escrow_status(second).unwrap().free_raw.0, 4_500_000);
+        let after_refund = crate::usdc_pool::snapshot(first.0);
+        assert_eq!(after_refund.spendable_raw, before_refund.spendable_raw);
+        assert_eq!(after_refund.quarantine_raw, 1_500_000);
+        assert_ne!(after_refund.generation, before_refund.generation);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "insufficient unallocated commitment escrow")]
+    fn quarantined_tranche_cannot_be_claimed_again_while_free_escrow_is_zero() {
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let mut contract = new_contract();
+        let mut args = usdc_service_commitment_args();
+        args.policy.budget.max_epochs = 1;
+        let id = contract.create_service_availability_commitment_on_chain(args, "testnet");
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let transfer_id = claim_usdc_tranche(&mut contract, id);
+        certificate_fail(&mut contract, transfer_id.0);
+        assert_eq!(contract.get_escrow_status(id).unwrap().free_raw.0, 0);
+
+        testing_env!(context_at(accounts(3), 10_u128.pow(25), NOW_NS));
+        contract.claim_tranche(id);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn certificate_success_pays_without_quarantine() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let transfer_id = claim_usdc_tranche(&mut contract, id);
+        let settled = contract.settle_token_transfer_outcome(
+            transfer_id.0,
+            crate::receipt_recovery::TransferOutcomeV1::Success,
+            [9; 32],
+        );
+        assert!(settled.is_some());
+        let status = contract.get_escrow_status(id).unwrap();
+        assert_eq!(status.paid_raw.0, 1_500_000);
+        assert_eq!(status.quarantined_raw.0, 0);
+        assert_eq!(status.free_raw.0, 3_000_000);
+        assert_eq!(status.pending_raw.0, 0);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn ft_balance_parser_rejects_leading_zeroes_and_unbounded_text() {
+        assert_eq!(parse_ft_balance_result(br#""9000000""#), Some(9_000_000));
+        assert_eq!(parse_ft_balance_result(b"9000000"), Some(9_000_000));
+        assert_eq!(parse_ft_balance_result(b"0"), Some(0));
+        assert_eq!(parse_ft_balance_result(b"00"), None);
+        assert_eq!(parse_ft_balance_result(br#""01""#), None);
+        assert_eq!(parse_ft_balance_result(br#""""#), None);
+        assert_eq!(parse_ft_balance_result(b"12a"), None);
+        assert_eq!(parse_ft_balance_result(&[b'1'; 40]), None);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "commitment has no certificate quarantine")]
+    fn release_rejects_a_commitment_without_quarantine() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        testing_env!(context(accounts(1), 0));
+        contract.release_usdc_certificate_quarantine(id);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "certificate quarantine exceeds USDC spendable accounting")]
+    fn certificate_quarantine_cannot_exceed_spendable_accounting() {
+        testing_env!(context(accounts(0), 0));
+        let _contract = new_contract();
+        crate::usdc_pool::note_gross_change(0, 100);
+        crate::usdc_pool::quarantine_certificate_failure(1, 101);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    const CODE_HASH_DOMAIN: &[u8] = b"LCP/NEP141/CODE-HASH/V1\0";
+    #[cfg(feature = "usdc-receipt-recovery")]
+    const CODE_HASH_CANCEL_DOMAIN: &[u8] = b"LCP/NEP141/CODE-HASH-CANCEL/V1\0";
+    #[cfg(feature = "usdc-receipt-recovery")]
+    const CODE_HASH_DELAY_NS: u64 = 604_800_000_000_000;
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn recovery_signers() -> Vec<(ed25519_dalek::VerifyingKey, ed25519_dalek::SigningKey)> {
+        let mut signers = Vec::new();
+        for secret in 1u8..=5 {
+            let bytes = [secret; 32];
+            let signing = ed25519_dalek::SigningKey::from_bytes(&bytes);
+            let verifying = signing.verifying_key();
+            signers.push((verifying, signing));
+        }
+        signers.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+        signers
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn signed_recovery_envelope(domain: &[u8], message: &[u8]) -> String {
+        use ed25519_dalek::Signer;
+        let digest = crate::receipt_recovery::test_domain_digest(domain, message);
+        let signatures = recovery_signers()
+            .into_iter()
+            .take(4)
+            .map(|(verifying, signing)| crate::receipt_recovery::SignatureEntryV1 {
+                public_key: verifying.to_bytes(),
+                signature: signing.sign(&digest).to_bytes(),
+            })
+            .collect();
+        crate::receipt_recovery::test_signed_envelope(domain, message, signatures)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn code_hash_proposal_bytes(
+        instance: [u8; 32],
+        generation: u64,
+        new_hash: [u8; 32],
+    ) -> Vec<u8> {
+        let proposal = crate::receipt_recovery::UsdcCodeHashChangeV1 {
+            schema_version: 1,
+            chain_id: "test".to_string(),
+            genesis_hash: [9; 32],
+            core_account_id: accounts(0).to_string(),
+            instance_id: instance,
+            proposal_generation: generation,
+            new_code_hash: new_hash,
+            activate_at_ns: NOW_NS + CODE_HASH_DELAY_NS,
+        };
+        near_sdk::borsh::to_vec(&proposal).unwrap()
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn bootstrapped_recovery(hashes: &[[u8; 32]], active: [u8; 32]) -> (Contract, [u8; 32]) {
+        use std::sync::atomic::{AtomicU8, Ordering};
+        static INSTANCE_COUNTER: AtomicU8 = AtomicU8::new(1);
+        let mut instance = [0x44; 32];
+        instance[31] = INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        testing_env!(context_at(accounts(0), 10_u128.pow(24), NOW_NS));
+        let mut contract = new_contract();
+        let mut approved = hashes.to_vec();
+        approved.sort_unstable();
+        contract.bootstrap_receipt_recovery(crate::RecoveryBootstrapArgs {
+            genesis_hash: bs58::encode([9u8; 32]).into_string(),
+            instance_id: crate::receipt_recovery::encode_lower_hex_32(&instance),
+            committee_keys: recovery_signers()
+                .iter()
+                .map(|(verifying, _)| {
+                    format!("ed25519:{}", bs58::encode(verifying.to_bytes()).into_string())
+                })
+                .collect(),
+            approved_usdc_code_hashes: approved
+                .iter()
+                .map(|hash| bs58::encode(hash).into_string())
+                .collect(),
+            active_usdc_code_hash: bs58::encode(active).into_string(),
+        });
+        (contract, instance)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn propose_code_hash(
+        contract: &mut Contract,
+        instance: [u8; 32],
+        generation: u64,
+        new_hash: [u8; 32],
+        deposit: u128,
+    ) -> crate::ReceiptRecoveryCodeHashViewV1 {
+        let message = code_hash_proposal_bytes(instance, generation, new_hash);
+        let envelope = signed_recovery_envelope(CODE_HASH_DOMAIN, &message);
+        testing_env!(context_at(accounts(1), deposit, NOW_NS));
+        contract.propose_usdc_code_hash_change(envelope)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn code_hash_change_keeps_the_token_account_and_existing_intent_hash() {
+        let hash_a = [1u8; 32];
+        let hash_b = [2u8; 32];
+        let hash_c = [3u8; 32];
+        let (mut contract, instance) = bootstrapped_recovery(&[hash_a, hash_b], hash_a);
+        let token_before = contract
+            .receipt_recovery_configuration()
+            .unwrap()
+            .token_account_id;
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let transfer_id = claim_usdc_tranche(&mut contract, id);
+        let pending = crate::receipt_recovery::pending_intent(transfer_id.0).unwrap();
+        assert_eq!(pending.intent.token_code_hash, hash_a);
+
+        let proposed = propose_code_hash(&mut contract, instance, 1, hash_c, 10_u128.pow(24));
+        assert_eq!(proposed.proposal_generation.0, 1);
+        assert_eq!(proposed.new_code_hash, bs58::encode(hash_c).into_string());
+        testing_env!(context_at(accounts(4), 0, NOW_NS + CODE_HASH_DELAY_NS));
+        let activated = contract.activate_usdc_code_hash_change();
+        assert_eq!(activated.proposal_generation.0, 1);
+
+        let config = contract.receipt_recovery_configuration().unwrap();
+        assert_eq!(config.token_account_id, token_before);
+        assert_eq!(config.token_account_id.as_str(), NEAR_TESTNET_USDC_ACCOUNT);
+        assert_eq!(config.active_usdc_code_hash, bs58::encode(hash_c).into_string());
+        assert!(config
+            .approved_usdc_code_hashes
+            .contains(&bs58::encode(hash_a).into_string()));
+        assert!(config
+            .approved_usdc_code_hashes
+            .contains(&bs58::encode(hash_b).into_string()));
+        assert_eq!(config.last_code_hash_generation.0, 1);
+        assert!(config.pending_code_hash_change.is_none());
+        assert_eq!(
+            crate::receipt_recovery::pending_intent(transfer_id.0)
+                .unwrap()
+                .intent
+                .token_code_hash,
+            hash_a
+        );
+
+        let moved = propose_code_hash(&mut contract, instance, 2, hash_b, 10_u128.pow(24));
+        assert_eq!(moved.proposal_generation.0, 2);
+        testing_env!(context_at(accounts(4), 0, NOW_NS + CODE_HASH_DELAY_NS));
+        contract.activate_usdc_code_hash_change();
+        let moved_config = contract.receipt_recovery_configuration().unwrap();
+        assert_eq!(
+            moved_config.active_usdc_code_hash,
+            bs58::encode(hash_b).into_string()
+        );
+        assert_eq!(moved_config.approved_usdc_code_hashes.len(), 3);
+        assert_eq!(moved_config.token_account_id, token_before);
+        assert_eq!(
+            crate::receipt_recovery::pending_intent(transfer_id.0)
+                .unwrap()
+                .intent
+                .token_code_hash,
+            hash_a
+        );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn code_hash_cancellation_consumes_generation_without_changing_hashes() {
+        let hash_a = [1u8; 32];
+        let hash_b = [2u8; 32];
+        let (mut contract, instance) = bootstrapped_recovery(&[hash_a, hash_b], hash_a);
+        let message = code_hash_proposal_bytes(instance, 1, [3u8; 32]);
+        let proposed = propose_code_hash(&mut contract, instance, 1, [3u8; 32], 10_u128.pow(24));
+        let proposal_digest = crate::receipt_recovery::test_domain_digest(CODE_HASH_DOMAIN, &message);
+        assert_eq!(
+            proposed.proposal_digest,
+            crate::receipt_recovery::encode_lower_hex_32(&proposal_digest)
+        );
+        let cancellation = crate::receipt_recovery::UsdcCodeHashCancellationV1 {
+            schema_version: 1,
+            chain_id: "test".to_string(),
+            genesis_hash: [9; 32],
+            core_account_id: accounts(0).to_string(),
+            instance_id: instance,
+            proposal_generation: 1,
+            proposal_digest,
+        };
+        let cancellation_bytes = near_sdk::borsh::to_vec(&cancellation).unwrap();
+        let envelope = signed_recovery_envelope(CODE_HASH_CANCEL_DOMAIN, &cancellation_bytes);
+        testing_env!(context(accounts(2), 0));
+        contract.cancel_usdc_code_hash_change(envelope);
+
+        let config = contract.receipt_recovery_configuration().unwrap();
+        assert!(config.pending_code_hash_change.is_none());
+        assert_eq!(config.last_code_hash_generation.0, 1);
+        assert_eq!(config.active_usdc_code_hash, bs58::encode(hash_a).into_string());
+        assert_eq!(config.approved_usdc_code_hashes.len(), 2);
+        assert_eq!(config.token_account_id.as_str(), NEAR_TESTNET_USDC_ACCOUNT);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "a USDC code hash change is already pending")]
+    fn code_hash_change_rejects_a_second_pending_proposal() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32], [2u8; 32]], [1u8; 32]);
+        propose_code_hash(&mut contract, instance, 1, [3u8; 32], 10_u128.pow(24));
+        propose_code_hash(&mut contract, instance, 2, [4u8; 32], 10_u128.pow(24));
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "attach NEAR to fund the code hash proposal storage reserve")]
+    fn code_hash_change_rejects_zero_deposit() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        propose_code_hash(&mut contract, instance, 1, [2u8; 32], 0);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "USDC code hash proposal does not change the active hash")]
+    fn code_hash_change_rejects_selecting_the_active_hash() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32], [2u8; 32]], [1u8; 32]);
+        propose_code_hash(&mut contract, instance, 1, [1u8; 32], 10_u128.pow(24));
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "approved USDC code hash list is full")]
+    fn code_hash_change_rejects_a_ninth_hash() {
+        let hashes: [[u8; 32]; 8] = core::array::from_fn(|index| [u8::try_from(index + 1).unwrap(); 32]);
+        let (mut contract, instance) = bootstrapped_recovery(&hashes, hashes[0]);
+        propose_code_hash(&mut contract, instance, 1, [9u8; 32], 10_u128.pow(24));
     }
 
     #[test]

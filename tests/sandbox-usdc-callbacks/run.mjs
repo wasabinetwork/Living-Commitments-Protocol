@@ -2600,10 +2600,26 @@ async function main() {
       transfer_id: failedTransfer.transferId,
       certificate_base64: failureCertificate.envelope,
     }, "recover failed FT transfer", 220n * TERA);
-    const failedRecovered = await assertEscrow(104, { pending_raw: 0n, paid_raw: 0n, free_raw: AMOUNT });
+    const failedRecovered = await assertEscrow(104, {
+      pending_raw: 0n,
+      paid_raw: 0n,
+      quarantined_raw: AMOUNT,
+      free_raw: 0n,
+    });
     assert.equal((await tranche(104)).status, "Failed");
     assert.equal(await tokenBalance(CASH_RECIPIENT_ID), fiveOfFiveBalanceBefore + (AMOUNT * 2n),
       "failed token execution must not change recipient balance");
+    const quarantineRelease = await rootCall("release_usdc_certificate_quarantine", {
+      commitment_id: "104",
+    }, "release the true-failure certificate quarantine");
+    assert.equal(hasFailedExecution(quarantineRelease), false,
+      "full-pool backing must release the true-failure quarantine");
+    const releasedEscrow = await assertEscrow(104, {
+      pending_raw: 0n,
+      paid_raw: 0n,
+      quarantined_raw: 0n,
+      free_raw: AMOUNT,
+    });
     await functionCall(TOKEN_ID, tokenKey, "set_fail_transfers", { fail: false });
     const retry = await queueRecovery(104, 20, "retry certificate-recovered failed transfer");
     const retriedState = await waitFor("recovery failure retry settlement", async () => {
@@ -2620,10 +2636,12 @@ async function main() {
       retry_transaction_hash: retry.tx.transaction.hash,
       transfer_id: failedTransfer.transferId,
       failed_escrow: failedRecovered,
+      released_escrow: releasedEscrow,
+      quarantine_release_transaction_hash: quarantineRelease.transaction.hash,
       retry_escrow: retriedState,
       final_token_balance: (await tokenBalance(CASH_RECIPIENT_ID)).toString(),
     };
-    console.log("PASS failure certificate frees the pending tranche; a new transfer ID retries and pays once");
+    console.log("PASS failure certificate quarantines the tranche until full-pool release; a new transfer ID retries and pays once");
 
     const transferIdForCredit = certFirst.transferId;
     const creditIntent = await recoveryIntent(transferIdForCredit);
@@ -3400,8 +3418,9 @@ async function main() {
 
   function assertConservation(status) {
     const funded = BigInt(status.funded_raw);
+    const quarantined = BigInt(status.quarantined_raw ?? 0);
     const settled = BigInt(status.paid_raw) + BigInt(status.refunded_raw)
-      + BigInt(status.pending_raw) + BigInt(status.free_raw);
+      + BigInt(status.pending_raw) + BigInt(status.free_raw) + quarantined;
     assert.equal(funded, settled, "raw-unit escrow conservation failed");
   }
 

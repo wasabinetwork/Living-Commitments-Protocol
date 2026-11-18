@@ -24,6 +24,12 @@ const INTENT_DOMAIN: &[u8] = b"LCP/NEP141/INTENT/V1\0";
 const CERTIFICATE_DOMAIN: &[u8] = b"LCP/NEP141/RECOVERY/V1\0";
 const ROTATION_DOMAIN: &[u8] = b"LCP/NEP141/COMMITTEE-ROTATION/V2\0";
 const ROTATION_CANCELLATION_DOMAIN: &[u8] = b"LCP/NEP141/ROTATION-CANCEL/V2\0";
+const CODE_HASH_DOMAIN: &[u8] = b"LCP/NEP141/CODE-HASH/V1\0";
+const CODE_HASH_CANCELLATION_DOMAIN: &[u8] = b"LCP/NEP141/CODE-HASH-CANCEL/V1\0";
+const MAX_CODE_HASH_PROPOSAL_BYTES: usize = 313;
+const MAX_CODE_HASH_CANCELLATION_BYTES: usize = 305;
+const MAX_CODE_HASH_ENVELOPE_BYTES: usize = 801;
+const MAX_CODE_HASH_ENVELOPE_BASE64_BYTES: usize = 1_068;
 const PENDING_INTENT_PREFIX: &[u8] = b"lcp:receipt-recovery-intent:v1:";
 const INTENT_STORAGE_BOND_DOMAIN: &[u8] = b"lcp:receipt-recovery-intent-bond:v1:";
 const INTENT_REFUND_CREDIT_DOMAIN: &[u8] = b"lcp:receipt-recovery-intent-credit:v1:";
@@ -141,6 +147,38 @@ pub(crate) struct RecoveryNetworkContextV1 {
 
 pub(crate) struct ParsedCommitteeRotationV2 {
     pub(crate) proposal: CommitteeRotationV2,
+    pub(crate) proposal_digest: [u8; 32],
+}
+
+/// Appends one USDC code hash and/or selects an already approved hash as the
+/// active hash. It cannot remove a hash or change the token account.
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq)]
+#[borsh(crate = "near_sdk::borsh")]
+pub(crate) struct UsdcCodeHashChangeV1 {
+    pub(crate) schema_version: u8,
+    pub(crate) chain_id: String,
+    pub(crate) genesis_hash: [u8; 32],
+    pub(crate) core_account_id: String,
+    pub(crate) instance_id: [u8; 32],
+    pub(crate) proposal_generation: u64,
+    pub(crate) new_code_hash: [u8; 32],
+    pub(crate) activate_at_ns: u64,
+}
+
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq)]
+#[borsh(crate = "near_sdk::borsh")]
+pub(crate) struct UsdcCodeHashCancellationV1 {
+    pub(crate) schema_version: u8,
+    pub(crate) chain_id: String,
+    pub(crate) genesis_hash: [u8; 32],
+    pub(crate) core_account_id: String,
+    pub(crate) instance_id: [u8; 32],
+    pub(crate) proposal_generation: u64,
+    pub(crate) proposal_digest: [u8; 32],
+}
+
+pub(crate) struct ParsedUsdcCodeHashChangeV1 {
+    pub(crate) proposal: UsdcCodeHashChangeV1,
     pub(crate) proposal_digest: [u8; 32],
 }
 
@@ -829,6 +867,147 @@ pub(crate) fn parse_and_verify_rotation_cancellation(
     Ok(cancellation)
 }
 
+pub(crate) fn code_hash_change_digest(proposal: &UsdcCodeHashChangeV1) -> [u8; 32] {
+    let bytes = borsh::to_vec(proposal)
+        .unwrap_or_else(|_| env::panic_str("USDC code hash proposal serialization failed"));
+    domain_digest(CODE_HASH_DOMAIN, &bytes)
+}
+
+pub(crate) fn parse_and_verify_code_hash_change(
+    encoded: &str,
+    context: &RecoveryNetworkContextV1,
+    last_code_hash_generation: u64,
+    now_ns: u64,
+    current_keys: &[[u8; 32]],
+) -> Result<ParsedUsdcCodeHashChangeV1, String> {
+    let (message, proposal_digest) = decode_and_verify_signed_message(
+        encoded,
+        MAX_CODE_HASH_ENVELOPE_BASE64_BYTES,
+        MAX_CODE_HASH_ENVELOPE_BYTES,
+        MAX_CODE_HASH_PROPOSAL_BYTES,
+        CODE_HASH_DOMAIN,
+        current_keys,
+    )?;
+    let mut reader = BoundedReader::new(&message);
+    let schema_version = reader.u8()?;
+    if schema_version != 1 {
+        return Err("unsupported USDC code hash schema version".to_owned());
+    }
+    let chain_id = reader.bounded_string(MAX_CHAIN_ID_BYTES, "chain_id")?;
+    let genesis_hash = reader.fixed()?;
+    let core_account_id = reader.bounded_string(MAX_ACCOUNT_ID_BYTES, "core_account_id")?;
+    let instance_id = reader.fixed()?;
+    let proposal_generation = reader.u64()?;
+    let new_code_hash = reader.fixed()?;
+    let activate_at_ns = reader.u64()?;
+    reader.finish()?;
+
+    validate_context_fields(
+        &chain_id,
+        &genesis_hash,
+        &core_account_id,
+        &instance_id,
+        context,
+    )?;
+    let expected_generation = last_code_hash_generation
+        .checked_add(1)
+        .ok_or_else(|| "USDC code hash generation overflow".to_owned())?;
+    if proposal_generation != expected_generation {
+        return Err("USDC code hash generation is stale or skipped".to_owned());
+    }
+    if new_code_hash == [0; 32] {
+        return Err("USDC code hash must not be all zeroes".to_owned());
+    }
+    let minimum_activation = now_ns
+        .checked_add(ROTATION_MINIMUM_DELAY_NS)
+        .ok_or_else(|| "USDC code hash activation timestamp overflow".to_owned())?;
+    if activate_at_ns < minimum_activation {
+        return Err("USDC code hash activation is less than the required delay".to_owned());
+    }
+    let proposal = UsdcCodeHashChangeV1 {
+        schema_version,
+        chain_id,
+        genesis_hash,
+        core_account_id,
+        instance_id,
+        proposal_generation,
+        new_code_hash,
+        activate_at_ns,
+    };
+    if borsh::to_vec(&proposal).map_err(|_| "code hash serialization failed")? != message {
+        return Err("USDC code hash proposal is not canonically encoded".to_owned());
+    }
+    Ok(ParsedUsdcCodeHashChangeV1 {
+        proposal,
+        proposal_digest,
+    })
+}
+
+pub(crate) fn parse_and_verify_code_hash_cancellation(
+    encoded: &str,
+    context: &RecoveryNetworkContextV1,
+    pending: &UsdcCodeHashChangeV1,
+    now_ns: u64,
+    current_keys: &[[u8; 32]],
+) -> Result<UsdcCodeHashCancellationV1, String> {
+    validate_context_fields(
+        &pending.chain_id,
+        &pending.genesis_hash,
+        &pending.core_account_id,
+        &pending.instance_id,
+        context,
+    )?;
+    if now_ns >= pending.activate_at_ns {
+        return Err("USDC code hash change can no longer be cancelled".to_owned());
+    }
+    let (message, _) = decode_and_verify_signed_message(
+        encoded,
+        MAX_CODE_HASH_ENVELOPE_BASE64_BYTES,
+        MAX_CODE_HASH_ENVELOPE_BYTES,
+        MAX_CODE_HASH_CANCELLATION_BYTES,
+        CODE_HASH_CANCELLATION_DOMAIN,
+        current_keys,
+    )?;
+    let mut reader = BoundedReader::new(&message);
+    let schema_version = reader.u8()?;
+    if schema_version != 1 {
+        return Err("unsupported USDC code hash cancellation schema version".to_owned());
+    }
+    let chain_id = reader.bounded_string(MAX_CHAIN_ID_BYTES, "chain_id")?;
+    let genesis_hash = reader.fixed()?;
+    let core_account_id = reader.bounded_string(MAX_ACCOUNT_ID_BYTES, "core_account_id")?;
+    let instance_id = reader.fixed()?;
+    let proposal_generation = reader.u64()?;
+    let proposal_digest = reader.fixed()?;
+    reader.finish()?;
+    validate_context_fields(
+        &chain_id,
+        &genesis_hash,
+        &core_account_id,
+        &instance_id,
+        context,
+    )?;
+    let expected_digest = code_hash_change_digest(pending);
+    if proposal_generation != pending.proposal_generation || proposal_digest != expected_digest {
+        return Err("cancellation does not bind to the exact pending code hash change".to_owned());
+    }
+    let cancellation = UsdcCodeHashCancellationV1 {
+        schema_version,
+        chain_id,
+        genesis_hash,
+        core_account_id,
+        instance_id,
+        proposal_generation,
+        proposal_digest,
+    };
+    if borsh::to_vec(&cancellation).map_err(|_| "code hash cancellation serialization failed")?
+        != message
+    {
+        return Err("USDC code hash cancellation is not canonically encoded".to_owned());
+    }
+    Ok(cancellation)
+}
+
 fn decode_and_verify_signed_message(
     encoded: &str,
     maximum_base64_bytes: usize,
@@ -1131,4 +1310,31 @@ pub(crate) fn encode_lower_hex_32(value: &[u8; 32]) -> String {
         output.push(HEX[(byte & 0x0f) as usize] as char);
     }
     output
+}
+
+#[cfg(test)]
+pub(crate) fn clear_pending_intents_for_test() {
+    for transfer_id in 1..=8 {
+        env::storage_remove(&pending_intent_storage_key(transfer_id));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_signed_envelope(
+    domain: &[u8],
+    message: &[u8],
+    signatures: Vec<SignatureEntryV1>,
+) -> String {
+    let _ = domain;
+    let envelope = RecoveryEnvelopeWireV1 {
+        certificate_bytes: message.to_vec(),
+        signatures,
+    };
+    let bytes = borsh::to_vec(&envelope).expect("test envelope");
+    BASE64_STANDARD.encode(bytes)
+}
+
+#[cfg(test)]
+pub(crate) fn test_domain_digest(domain: &[u8], message: &[u8]) -> [u8; 32] {
+    domain_digest(domain, message)
 }

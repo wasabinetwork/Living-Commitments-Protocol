@@ -11,7 +11,7 @@ use near_sdk::{
 
 use crate::receipt_recovery::{
     self, CommitteeRotationV2, OriginMethodV1, ParsedCommitteeRotationV2, RecoveryIntentV1,
-    RecoveryNetworkContextV1, TransferKindV1,
+    RecoveryNetworkContextV1, TransferKindV1, UsdcCodeHashChangeV1,
 };
 
 const CONFIG_VERSION: u8 = 1;
@@ -35,6 +35,8 @@ const MAINNET_USDC_ACCOUNT: &str =
 const TESTNET_USDC_ACCOUNT: &str =
     "3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af";
 const PENDING_ROTATION_KEY: &[u8] = b"lcp:receipt-recovery-pending-rotation:v1";
+const PENDING_CODE_HASH_KEY: &[u8] = b"lcp:receipt-recovery-pending-code-hash:v1";
+const CODE_HASH_STORAGE_BOND_DOMAIN: &[u8] = b"lcp:code-hash-proposal-bond:v1:";
 
 #[derive(near_sdk::serde::Deserialize, near_sdk::serde::Serialize)]
 #[serde(crate = "near_sdk::serde", deny_unknown_fields)]
@@ -68,6 +70,10 @@ struct RecoveryConfigV1 {
     last_rotation_generation: u64,
     activated_epoch_count: u32,
     used_key_count: u32,
+    /// Consumed by every accepted code-hash proposal. Cancellation and
+    /// activation do not decrement it. Fresh instances start at zero; this
+    /// trailing field is not a production-state migration.
+    last_code_hash_generation: u64,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
@@ -128,6 +134,18 @@ pub struct ReceiptRecoveryConfigViewV1 {
     pub activated_epoch_count: u32,
     pub used_key_count: u32,
     pub pending_rotation: Option<ReceiptRecoveryRotationViewV1>,
+    pub last_code_hash_generation: U64,
+    pub pending_code_hash_change: Option<ReceiptRecoveryCodeHashViewV1>,
+}
+
+#[derive(near_sdk::serde::Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct ReceiptRecoveryCodeHashViewV1 {
+    pub proposal_generation: U64,
+    pub proposal_digest: String,
+    pub new_code_hash: String,
+    pub proposer: AccountId,
+    pub activate_at_ns: U64,
 }
 
 /// Captures the account that initialized the fresh instance. Deployment must
@@ -145,6 +163,9 @@ pub(crate) fn initialize_bootstrap_authority(initializer: &AccountId) {
 #[cfg(test)]
 pub(crate) fn clear_initializer_for_test() {
     env::storage_remove(BOOTSTRAP_AUTHORITY_KEY);
+    env::storage_remove(CONFIG_KEY);
+    env::storage_remove(PENDING_ROTATION_KEY);
+    env::storage_remove(PENDING_CODE_HASH_KEY);
 }
 
 /// Consumes the one-time initializer authority and writes the initial config,
@@ -244,6 +265,7 @@ pub(crate) fn bootstrap(args: RecoveryBootstrapArgs) {
         last_rotation_generation: 0,
         activated_epoch_count: 1,
         used_key_count: 5,
+        last_code_hash_generation: 0,
     };
     let epoch = RecoveryEpochKeysetV1 {
         version: EPOCH_KEYSET_VERSION,
@@ -317,7 +339,16 @@ pub(crate) fn configuration_view() -> Option<ReceiptRecoveryConfigViewV1> {
         activated_epoch_count: config.activated_epoch_count,
         used_key_count: config.used_key_count,
         pending_rotation,
+        last_code_hash_generation: U64(config.last_code_hash_generation),
+        pending_code_hash_change: pending_code_hash_view(),
     })
+}
+
+pub(crate) fn configured_token_account_id() -> AccountId {
+    let config =
+        read_config().unwrap_or_else(|| env::panic_str("receipt recovery is not configured"));
+    validate_config_context(&config);
+    config.token_account_id
 }
 
 pub(crate) fn network_context() -> RecoveryNetworkContextV1 {
@@ -849,10 +880,254 @@ pub(crate) fn decrement_pending_intent_count(epoch: u32) {
     write_epoch_keyset(&keyset);
 }
 
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+struct PendingCodeHashStateV1 {
+    version: u8,
+    proposal: UsdcCodeHashChangeV1,
+    proposal_digest: [u8; 32],
+    proposer: AccountId,
+    storage_record_id: [u8; 32],
+}
+
+pub(crate) fn propose_code_hash_change(encoded: &str) -> ReceiptRecoveryCodeHashViewV1 {
+    let deposit = env::attached_deposit().as_yoctonear();
+    require!(
+        deposit > 0,
+        "attach NEAR to fund the code hash proposal storage reserve"
+    );
+    require!(
+        env::storage_read(PENDING_CODE_HASH_KEY).is_none(),
+        "a USDC code hash change is already pending"
+    );
+    crate::recovery_accounting::assert_cash_gate_ready();
+    let mut config =
+        read_config().unwrap_or_else(|| env::panic_str("receipt recovery is not configured"));
+    validate_config_context(&config);
+    let current = read_epoch_keyset(config.current_epoch);
+    require!(
+        current.active,
+        "active committee keyset is not marked active"
+    );
+    let parsed = receipt_recovery::parse_and_verify_code_hash_change(
+        encoded,
+        &network_context_from(&config),
+        config.last_code_hash_generation,
+        env::block_timestamp(),
+        &current.keys,
+    )
+    .unwrap_or_else(|message| env::panic_str(&message));
+    preview_code_hash(&config, parsed.proposal.new_code_hash);
+    let token_account_id = config.token_account_id.clone();
+    crate::recovery_accounting::top_up_storage_reserve(deposit);
+    config.last_code_hash_generation = parsed.proposal.proposal_generation;
+    write_config(&config);
+    require!(
+        config.token_account_id == token_account_id,
+        "USDC code hash change must not replace the token account"
+    );
+    let storage_record_id =
+        code_hash_storage_record_id(&config.instance_id, parsed.proposal.proposal_generation);
+    let proposer = env::predecessor_account_id();
+    let pending = PendingCodeHashStateV1 {
+        version: CONFIG_VERSION,
+        proposal: parsed.proposal,
+        proposal_digest: parsed.proposal_digest,
+        proposer,
+        storage_record_id,
+    };
+    let storage_before = env::storage_usage();
+    write_pending_code_hash(&pending);
+    let bond = crate::recovery_accounting::register_measured_record(
+        storage_record_id,
+        0,
+        storage_before,
+    );
+    require!(
+        deposit >= crate::recovery_accounting::measured_storage_cost(bond.storage_bytes),
+        "code hash proposal deposit is insufficient for measured storage"
+    );
+    crate::recovery_accounting::assert_cash_gate_ready();
+    crate::native_cash::assert_solvency();
+    code_hash_view(&pending)
+}
+
+pub(crate) fn cancel_code_hash_change(encoded: &str) -> ReceiptRecoveryCodeHashViewV1 {
+    require!(
+        env::attached_deposit().as_yoctonear() == 0,
+        "do not attach a deposit to cancel a USDC code hash change"
+    );
+    let config =
+        read_config().unwrap_or_else(|| env::panic_str("receipt recovery is not configured"));
+    validate_config_context(&config);
+    let pending = read_pending_code_hash()
+        .unwrap_or_else(|| env::panic_str("no USDC code hash change is pending"));
+    require!(
+        pending.proposal.proposal_generation == config.last_code_hash_generation,
+        "pending code hash change does not match the active configuration"
+    );
+    let active = read_epoch_keyset(config.current_epoch);
+    let _cancellation = receipt_recovery::parse_and_verify_code_hash_cancellation(
+        encoded,
+        &network_context_from(&config),
+        &pending.proposal,
+        env::block_timestamp(),
+        &active.keys,
+    )
+    .unwrap_or_else(|message| env::panic_str(&message));
+    let result = code_hash_view(&pending);
+    release_pending_code_hash(&pending);
+    crate::recovery_accounting::assert_cash_gate_ready();
+    crate::native_cash::assert_solvency();
+    result
+}
+
+pub(crate) fn activate_code_hash_change() -> ReceiptRecoveryCodeHashViewV1 {
+    require!(
+        env::attached_deposit().as_yoctonear() == 0,
+        "do not attach a deposit to activate a USDC code hash change"
+    );
+    let mut config =
+        read_config().unwrap_or_else(|| env::panic_str("receipt recovery is not configured"));
+    validate_config_context(&config);
+    let pending = read_pending_code_hash()
+        .unwrap_or_else(|| env::panic_str("no USDC code hash change is pending"));
+    require!(
+        env::block_timestamp() >= pending.proposal.activate_at_ns,
+        "USDC code hash activation time has not arrived"
+    );
+    require!(
+        pending.proposal.proposal_generation == config.last_code_hash_generation,
+        "pending code hash change does not match the active configuration"
+    );
+    let token_account_id = config.token_account_id.clone();
+    let previous_hashes = config.approved_code_hashes;
+    let previous_count = config.approved_code_hash_count;
+    install_code_hash(&mut config, pending.proposal.new_code_hash);
+    require!(
+        config.token_account_id == token_account_id,
+        "USDC code hash change must not replace the token account"
+    );
+    require!(
+        config.approved_code_hash_count >= previous_count,
+        "USDC code hash change removed an approved hash"
+    );
+    for previous in &previous_hashes[..usize::from(previous_count)] {
+        require!(
+            config.approved_code_hashes[..usize::from(config.approved_code_hash_count)]
+                .contains(previous),
+            "USDC code hash change removed an approved hash"
+        );
+    }
+    write_config(&config);
+    let result = code_hash_view(&pending);
+    release_pending_code_hash(&pending);
+    crate::recovery_accounting::assert_cash_gate_ready();
+    crate::native_cash::assert_solvency();
+    result
+}
+
+fn preview_code_hash(config: &RecoveryConfigV1, new_hash: [u8; 32]) {
+    let mut preview = config.clone();
+    install_code_hash(&mut preview, new_hash);
+}
+
+fn install_code_hash(config: &mut RecoveryConfigV1, new_hash: [u8; 32]) {
+    require!(
+        new_hash != [0; 32],
+        "USDC code hash must not be all zeroes"
+    );
+    let count = usize::from(config.approved_code_hash_count);
+    if config.approved_code_hashes[..count].contains(&new_hash) {
+        require!(
+            config.active_code_hash != new_hash,
+            "USDC code hash proposal does not change the active hash"
+        );
+        config.active_code_hash = new_hash;
+        return;
+    }
+    require!(
+        count < MAX_APPROVED_CODE_HASHES,
+        "approved USDC code hash list is full"
+    );
+    let mut hashes = config.approved_code_hashes[..count].to_vec();
+    hashes.push(new_hash);
+    hashes.sort_unstable();
+    require!(
+        hashes.windows(2).all(|pair| pair[0] < pair[1]),
+        "approved USDC code hashes must be unique and sorted by raw bytes"
+    );
+    for (index, hash) in hashes.iter().enumerate() {
+        config.approved_code_hashes[index] = *hash;
+    }
+    config.approved_code_hash_count = u8::try_from(hashes.len())
+        .unwrap_or_else(|_| env::panic_str("approved code hash count overflow"));
+    config.active_code_hash = new_hash;
+}
+
+fn network_context_from(config: &RecoveryConfigV1) -> RecoveryNetworkContextV1 {
+    RecoveryNetworkContextV1 {
+        chain_id: config.chain_id.clone(),
+        genesis_hash: config.genesis_hash,
+        core_account_id: config.core_account_id.to_string(),
+        instance_id: config.instance_id,
+    }
+}
+
+fn code_hash_storage_record_id(instance_id: &[u8; 32], generation: u64) -> [u8; 32] {
+    let mut bytes = Vec::with_capacity(CODE_HASH_STORAGE_BOND_DOMAIN.len() + 40);
+    bytes.extend_from_slice(CODE_HASH_STORAGE_BOND_DOMAIN);
+    bytes.extend_from_slice(instance_id);
+    bytes.extend_from_slice(&generation.to_le_bytes());
+    env::sha256_array(&bytes)
+}
+
+fn code_hash_view(pending: &PendingCodeHashStateV1) -> ReceiptRecoveryCodeHashViewV1 {
+    ReceiptRecoveryCodeHashViewV1 {
+        proposal_generation: U64(pending.proposal.proposal_generation),
+        proposal_digest: crate::receipt_recovery::encode_lower_hex_32(&pending.proposal_digest),
+        new_code_hash: bs58::encode(pending.proposal.new_code_hash).into_string(),
+        proposer: pending.proposer.clone(),
+        activate_at_ns: U64(pending.proposal.activate_at_ns),
+    }
+}
+
+fn pending_code_hash_view() -> Option<ReceiptRecoveryCodeHashViewV1> {
+    read_pending_code_hash().map(|pending| code_hash_view(&pending))
+}
+
+fn read_pending_code_hash() -> Option<PendingCodeHashStateV1> {
+    let bytes = env::storage_read(PENDING_CODE_HASH_KEY)?;
+    Some(
+        borsh::from_slice(&bytes)
+            .unwrap_or_else(|_| env::panic_str("pending USDC code hash change is malformed")),
+    )
+}
+
+fn write_pending_code_hash(pending: &PendingCodeHashStateV1) {
+    let bytes = borsh::to_vec(pending)
+        .unwrap_or_else(|_| env::panic_str("failed to serialize pending USDC code hash change"));
+    env::storage_write(PENDING_CODE_HASH_KEY, &bytes);
+}
+
+fn release_pending_code_hash(pending: &PendingCodeHashStateV1) {
+    let before_remove = env::storage_usage();
+    env::storage_remove(PENDING_CODE_HASH_KEY);
+    crate::recovery_accounting::remove_measured_record(
+        pending.storage_record_id,
+        before_remove,
+        crate::recovery_accounting::StorageBondReleaseV1::Treasury,
+    );
+}
+
 fn usdc_account_for_chain(chain_id: &str) -> AccountId {
     let account = match chain_id {
         "mainnet" => MAINNET_USDC_ACCOUNT,
         "testnet" => TESTNET_USDC_ACCOUNT,
+        // near-sdk's unit-test chain id is the hardcoded string "test" and cannot
+        // be changed from VMContextBuilder. This arm is absent from contract builds.
+        #[cfg(test)]
+        "test" => TESTNET_USDC_ACCOUNT,
         #[cfg(feature = "sandbox-callback-fixture")]
         chain_id if chain_id.starts_with("test-chain-") => "mock-usdc.sandbox",
         _ => env::panic_str("receipt recovery is supported only on NEAR mainnet or testnet"),

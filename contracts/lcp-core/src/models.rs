@@ -854,6 +854,10 @@ pub struct EscrowStatusView {
     pub refunded_raw: U128,
     pub pending_raw: U128,
     pub free_raw: U128,
+    /// Token units removed from free escrow by a certificate `Failure`.
+    /// Callback failures leave this at zero. Native escrow does not use it.
+    pub quarantined_raw: U128,
+    pub quarantined_yocto: U128,
 }
 
 impl From<&TemporalPolicy> for TemporalPolicyView {

@@ -7,6 +7,8 @@ mod native_cash;
 mod receipt_recovery;
 mod recovery_accounting;
 #[cfg(feature = "usdc-receipt-recovery")]
+mod usdc_pool;
+#[cfg(feature = "usdc-receipt-recovery")]
 mod recovery_config;
 mod temporal;
 
@@ -29,7 +31,8 @@ pub use recovery_accounting::RecoveryStorageReserveViewV1;
 pub use recovery_accounting::RevaluationBatchResult;
 #[cfg(feature = "usdc-receipt-recovery")]
 pub use recovery_config::{
-    ReceiptRecoveryConfigViewV1, ReceiptRecoveryRotationViewV1, RecoveryBootstrapArgs,
+    ReceiptRecoveryCodeHashViewV1, ReceiptRecoveryConfigViewV1, ReceiptRecoveryRotationViewV1,
+    RecoveryBootstrapArgs,
 };
 pub use temporal::{
     effective_health, validate_temporal_policy, Health, Lifecycle, TemporalError, TemporalPolicy,

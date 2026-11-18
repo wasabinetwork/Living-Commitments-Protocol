@@ -555,6 +555,8 @@ export interface EscrowStatusView {
   refunded_raw?: DecimalString;
   pending_raw?: DecimalString;
   free_raw?: DecimalString;
+  quarantined_raw?: DecimalString;
+  quarantined_yocto?: YoctoNear;
 }
 
 export interface LcpEvent<TData extends Record<string, unknown> = Record<string, unknown>> {
