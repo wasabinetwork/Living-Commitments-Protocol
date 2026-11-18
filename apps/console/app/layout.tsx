@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 import "./globals.css";
 
 const themeBootstrap = `
@@ -66,7 +65,9 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <Script id="lcp-theme-bootstrap" strategy="beforeInteractive">{themeBootstrap}</Script>
+        {/* This must run during HTML parsing. Next's beforeInteractive script is
+            queued, which lets the light heading rule paint before dark mode. */}
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
       <body suppressHydrationWarning>{children}</body>
     </html>

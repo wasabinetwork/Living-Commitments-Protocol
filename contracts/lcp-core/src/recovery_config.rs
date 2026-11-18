@@ -1285,6 +1285,13 @@ fn read_epoch_keyset(epoch: u32) -> RecoveryEpochKeysetV1 {
     keyset
 }
 
+#[cfg(test)]
+pub(crate) fn test_set_last_rotation_generation(generation: u64) {
+    let mut config = read_config().expect("receipt recovery must be configured");
+    config.last_rotation_generation = generation;
+    write_config(&config);
+}
+
 fn write_config(config: &RecoveryConfigV1) {
     let bytes = borsh::to_vec(config)
         .unwrap_or_else(|_| env::panic_str("failed to serialize receipt recovery configuration"));

@@ -9598,6 +9598,134 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn pending_usdc_callback_storage_is_measured() {
+        // Keep the claim and settlement in one mock environment so the byte
+        // deltas are directly comparable. The promise result is attached before
+        // the claim; claim_tranche does not read promise results.
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+
+        testing_env_with_promise_results(
+            context_at(accounts(3), 10_u128.pow(25), NOW_NS),
+            PromiseResult::Successful(vec![]),
+        );
+        let before_claim = env::storage_usage();
+        let transfer_id = contract.claim_tranche(id);
+        let claim_storage_bytes = env::storage_usage() - before_claim;
+
+        let before_settle = env::storage_usage();
+        contract.on_tranche_transfer(transfer_id);
+        let settlement_delta = env::storage_usage() as i64 - before_settle as i64;
+        eprintln!(
+            "usdc_callback_claim_bytes={claim_storage_bytes} usdc_callback_settlement_delta={settlement_delta}"
+        );
+
+        // Every pending token payout retains the transfer row, the amount and
+        // intent sidecars, the tranche pointer, and the storage bond record.
+        assert!(
+            claim_storage_bytes >= 300,
+            "pending callback storage should include all sidecars"
+        );
+        assert!(
+            claim_storage_bytes <= 8_192,
+            "pending callback storage exceeded the measured envelope"
+        );
+        assert_eq!(
+            contract
+                .get_escrow_status(id)
+                .unwrap()
+                .pending_raw
+                .0,
+            0
+        );
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn refund_usdc_callback_storage_is_measured() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        let mut commitment = contract.commitments.get(&id.0).unwrap().clone();
+        commitment.lifecycle = Lifecycle::Closed;
+        contract.commitments.insert(id.0, commitment);
+        contract.commitments.flush();
+        let mut settlement = read_settlement_state(id.0).unwrap();
+        settlement.funded_raw = 4_500_000;
+        write_settlement_state(id.0, &settlement);
+
+        testing_env_with_promise_results(
+            context_at(accounts(1), 10_u128.pow(25), NOW_NS),
+            PromiseResult::Successful(vec![]),
+        );
+        let before_refund = env::storage_usage();
+        let transfer_id = contract.refund_remaining(id);
+        let refund_storage_bytes = env::storage_usage() - before_refund;
+
+        let before_settle = env::storage_usage();
+        contract.on_refund_transfer(transfer_id);
+        let settlement_delta = env::storage_usage() as i64 - before_settle as i64;
+        eprintln!(
+            "usdc_refund_claim_bytes={refund_storage_bytes} usdc_refund_settlement_delta={settlement_delta}"
+        );
+
+        assert!(
+            refund_storage_bytes >= 300,
+            "pending refund should include all sidecars"
+        );
+        assert!(
+            refund_storage_bytes <= 8_192,
+            "pending refund exceeded the measured envelope"
+        );
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_none());
+        assert_eq!(
+            contract
+                .get_escrow_status(id)
+                .unwrap()
+                .refunded_raw
+                .0,
+            4_500_000
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn failed_usdc_callback_retains_bounded_terminal_storage() {
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+
+        testing_env_with_promise_results(
+            context_at(accounts(3), 10_u128.pow(25), NOW_NS),
+            PromiseResult::Failed,
+        );
+        let before_claim = env::storage_usage();
+        let transfer_id = contract.claim_tranche(id);
+        let claim_storage_bytes = env::storage_usage() - before_claim;
+        contract.on_tranche_transfer(transfer_id);
+        let failed_retained = env::storage_usage() as i64 - before_claim as i64;
+        eprintln!(
+            "usdc_failed_claim_bytes={claim_storage_bytes} usdc_failed_retained_delta={failed_retained}"
+        );
+
+        assert!(
+            failed_retained >= 0,
+            "failed callback must not release storage it still references"
+        );
+        assert!(
+            failed_retained <= 8_192,
+            "failed callback retained more than the measured envelope"
+        );
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_none());
+        assert_eq!(
+            contract
+                .get_tranche(id, U64(u64::from(EPOCH)))
+                .unwrap()
+                .status,
+            TrancheStatus::Failed
+        );
+    }
+
     #[cfg(feature = "usdc-receipt-recovery")]
     fn two_funded_usdc_commitments() -> (Contract, U64, U64) {
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
@@ -10058,6 +10186,8 @@ mod tests {
     }
 
     #[cfg(feature = "usdc-receipt-recovery")]
+    const ROTATION_DOMAIN: &[u8] = b"LCP/NEP141/COMMITTEE-ROTATION/V2\0";
+    #[cfg(feature = "usdc-receipt-recovery")]
     const CODE_HASH_DOMAIN: &[u8] = b"LCP/NEP141/CODE-HASH/V1\0";
     #[cfg(feature = "usdc-receipt-recovery")]
     const CODE_HASH_CANCEL_DOMAIN: &[u8] = b"LCP/NEP141/CODE-HASH-CANCEL/V1\0";
@@ -10137,6 +10267,38 @@ mod tests {
             active_usdc_code_hash: bs58::encode(active).into_string(),
         });
         (contract, instance)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "committee rotation generation overflow")]
+    fn rotation_generation_overflow_is_rejected() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        crate::recovery_config::test_set_last_rotation_generation(u64::MAX);
+
+        let mut new_keys = [6u8, 7, 8, 9, 10].map(|seed| {
+            ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                .verifying_key()
+                .to_bytes()
+        });
+        new_keys.sort_unstable();
+        let proposal = crate::receipt_recovery::CommitteeRotationV2 {
+            schema_version: 2,
+            chain_id: "test".to_string(),
+            genesis_hash: [9u8; 32],
+            core_account_id: accounts(0).to_string(),
+            instance_id: instance,
+            old_epoch: 0,
+            new_epoch: 1,
+            proposal_generation: u64::MAX,
+            new_keys,
+            activate_at_ns: NOW_NS + 604_800_000_000_001,
+        };
+        let message = near_sdk::borsh::to_vec(&proposal).unwrap();
+        let envelope = signed_recovery_envelope(ROTATION_DOMAIN, &message);
+
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        contract.propose_receipt_recovery_rotation(envelope);
     }
 
     #[cfg(feature = "usdc-receipt-recovery")]
@@ -11403,6 +11565,126 @@ mod tests {
                 .pending_transfer_count,
             0
         );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn deleted_recipient_failure_keeps_reservation_recoverable_and_retries_once() {
+        let (mut contract, beneficiary) = contract_with_pending_tranche();
+
+        // NEAR reports a transfer to a deleted named account as a failed promise
+        // result. The mock runtime models that receipt outcome without account
+        // lifecycle operations, which is the only part of the case it cannot show.
+        testing_env_with_promise_results(context(accounts(0), 0), PromiseResult::Failed);
+        contract.on_tranche_transfer(U64(TRANSFER_ID));
+
+        // Recovery is an explicit beneficiary action; the callback must not schedule
+        // an automatic retry to an account that may still be deleted.
+        assert!(near_sdk::test_utils::get_created_receipts().is_empty());
+
+        let after_failure = contract
+            .get_escrow_status(U64(CONTRACT_ID))
+            .expect("escrow view should exist");
+        assert_eq!(after_failure.pending_yocto.0, 0);
+        assert_eq!(after_failure.paid_yocto.0, 0);
+        assert_eq!(after_failure.free_yocto.0, TRANCHE_AMOUNT);
+        let failed_tranche = contract
+            .get_tranche(U64(CONTRACT_ID), U64(u64::from(EPOCH)))
+            .expect("failed tranche should remain recorded");
+        assert_eq!(failed_tranche.status, TrancheStatus::Failed);
+        assert_eq!(failed_tranche.transfer_id, None);
+        assert!(contract.pending_transfers.get(&TRANSFER_ID).is_none());
+        assert_eq!(
+            contract
+                .commitments
+                .get(&CONTRACT_ID)
+                .unwrap()
+                .pending_transfer_count,
+            0
+        );
+
+        // The recipient is recreated, then retries once and settles once.
+        testing_env!(context(beneficiary, 10_u128.pow(23)));
+        let retry_transfer_id = contract.claim_tranche(U64(CONTRACT_ID));
+        assert_eq!(retry_transfer_id.0, TRANSFER_ID + 1);
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_tranche_transfer(retry_transfer_id);
+        contract.on_tranche_transfer(retry_transfer_id);
+
+        let after_retry = contract
+            .get_escrow_status(U64(CONTRACT_ID))
+            .expect("escrow view should exist");
+        assert_eq!(after_retry.pending_yocto.0, 0);
+        assert_eq!(after_retry.paid_yocto.0, TRANCHE_AMOUNT);
+        assert_eq!(after_retry.free_yocto.0, 0);
+        assert_eq!(
+            contract
+                .get_tranche(U64(CONTRACT_ID), U64(u64::from(EPOCH)))
+                .unwrap()
+                .status,
+            TrancheStatus::Paid
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn missing_transfer_result_keeps_reservation_and_schedules_no_retry() {
+        // An absent result is unknown, not failure: it may not clear the pending
+        // liability or start a replacement transfer. The mock runtime exposes no
+        // NotReady result, so the on-chain `Err(_)` arm of the same guard is not
+        // reachable here; the zero-result arm is.
+        let (mut contract, _) = contract_with_pending_tranche();
+
+        testing_env!(context(accounts(0), 0));
+        let storage_before = near_sdk::env::storage_usage();
+        contract.on_tranche_transfer(U64(TRANSFER_ID));
+        contract.on_tranche_transfer(U64(TRANSFER_ID));
+
+        assert!(
+            near_sdk::test_utils::get_created_receipts().is_empty(),
+            "an unknown result must not create a retry receipt"
+        );
+        assert_eq!(
+            near_sdk::env::storage_usage(),
+            storage_before,
+            "an unknown result must not write state"
+        );
+
+        let pending = contract
+            .get_escrow_status(U64(CONTRACT_ID))
+            .expect("escrow view should exist");
+        assert_eq!(pending.pending_yocto.0, TRANCHE_AMOUNT);
+        assert_eq!(pending.paid_yocto.0, 0);
+        assert_eq!(pending.free_yocto.0, 0);
+        let tranche = contract
+            .get_tranche(U64(CONTRACT_ID), U64(u64::from(EPOCH)))
+            .expect("pending tranche should remain recorded");
+        assert_eq!(tranche.status, TrancheStatus::Pending);
+        assert_eq!(tranche.transfer_id, Some(U64(TRANSFER_ID)));
+        assert!(contract.pending_transfers.get(&TRANSFER_ID).is_some());
+        assert_eq!(
+            contract
+                .commitments
+                .get(&CONTRACT_ID)
+                .unwrap()
+                .pending_transfer_count,
+            1
+        );
+
+        // Only an explicit terminal result settles the retained attempt.
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_tranche_transfer(U64(TRANSFER_ID));
+        let settled = contract
+            .get_escrow_status(U64(CONTRACT_ID))
+            .expect("escrow view should exist");
+        assert_eq!(settled.pending_yocto.0, 0);
+        assert_eq!(settled.paid_yocto.0, TRANCHE_AMOUNT);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 "use client";
 
+import { commitmentFlags } from "../lib/commitment-flags.mjs";
 import {
   buildHeartbeatSigningPayload,
   createRandomNonceHex,
@@ -1605,6 +1606,14 @@ export function Dashboard() {
   const retryingFailedPayout = failedTranche && claimAllowed;
   const correctBeneficiary = Boolean(accountId && data?.policy && accountId === data.policy.budget.beneficiary);
   const claimAsset = data ? commitmentSettlementAsset(data.commitment, data.policy) : { kind: "near" as const };
+  const settlementState = data
+    ? commitmentFlags({
+      pendingEvaluationId: data.commitment.pending_evaluation_id,
+      activeChallengeId: data.commitment.active_challenge_id,
+      settlementAssetKind: claimAsset.kind,
+      beneficiaryRegistered: tokenReadiness?.beneficiaryRegistered,
+    })
+    : null;
   const canSubmitClaim = Boolean(data && claimAllowed && correctBeneficiary && !claiming
     && (claimAsset.kind === "near" || tokenReadiness?.beneficiaryRegistered === true));
   const claimableEpoch = data?.eligibility?.claimable_epoch ?? null;
@@ -1634,9 +1643,9 @@ export function Dashboard() {
       ? "setup"
       : data.commitment.lifecycle === "Closed" || data.eligibility?.eligible
         ? "payout"
-        : data.commitment.active_challenge_id
+        : settlementState?.openChallenge
           ? "review"
-          : data.commitment.pending_evaluation_id
+          : settlementState?.pendingEvaluation
             ? "evidence"
             : data.evaluation?.status === "Accepted"
               ? "review"
@@ -1645,14 +1654,14 @@ export function Dashboard() {
   const setupStageStatus = data?.commitment.lifecycle === "Draft"
     ? "Action needed"
     : data?.commitment.lifecycle === "Closed" ? "Closed" : "Ready";
-  const evidenceStageStatus = data?.commitment.pending_evaluation_id
+  const evidenceStageStatus = settlementState?.pendingEvaluation
     ? "Evaluation running"
     : data?.evaluation?.status === "Accepted"
       ? `Accepted · ${data.evaluation?.verdict ?? "No verdict"}`
       : readyInboxReportCount > 0
         ? `${readyInboxReportCount} report${readyInboxReportCount === 1 ? "" : "s"} ready`
         : "Evidence needed";
-  const reviewStageStatus = data?.commitment.active_challenge_id
+  const reviewStageStatus = settlementState?.openChallenge
     ? "Challenge open"
     : data?.challenge?.status ?? (data?.evaluation?.status === "Accepted" ? "Challenge window" : "No challenge");
   const payoutStageStatus = data?.eligibility?.eligible
@@ -2073,7 +2082,7 @@ export function Dashboard() {
                             : data.eligibility?.reason ?? "The contract has no current claim."}</span>
                       </div>
                     </div>
-                    {data.policy && data.eligibility?.eligible && commitmentSettlementAsset(data.commitment, data.policy).kind === "nep141" && tokenReadiness?.beneficiaryRegistered !== true && (
+                    {data.policy && data.eligibility?.eligible && settlementState?.usdcRegistrationShortfall && (
                       <div className="token-registration-note">
                         <small>{tokenReadiness?.loading ? "Checking beneficiary USDC storage…" : `The beneficiary needs sufficient storage with the token contract to receive this payout. Registering or topping up the storage deposit costs NEAR.`}</small>
                         <button className="browser-button" type="button" onClick={() => void registerSettlementAccount(data.policy!.budget.beneficiary, "Beneficiary account")} disabled={!correctBeneficiary || tokenReadiness?.loading === true || registeringTokenAccount !== null}>
