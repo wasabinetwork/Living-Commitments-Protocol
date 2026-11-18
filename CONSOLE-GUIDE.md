@@ -16,6 +16,19 @@ NEXT_PUBLIC_LCP_EVENT_INDEXER_URL=http://127.0.0.1:8787
 
 Run `npm run dev --workspace=@lcp/console` and open `http://localhost:3000`. The LCP Console follows the system color preference and lets you switch between dark and light mode from the top bar. Contract reads and finalized time use the primary RPC, then the configured fallback URLs in order. All endpoints must be for the selected network. Connect a testnet wallet when signing or submitting an action; on reload, the Console restores a saved connector session without opening the wallet prompt again. The recent list, older-page control, wallet connection, and explicit disconnection have been manually checked in Firefox.
 
+### Empty-state local fixture
+
+The shared testnet contract cannot show a truly empty commitment list because its existing commitments are permanent. Use the isolated fixture to inspect that state:
+
+```sh
+npm ci
+npm ci --prefix tests/sandbox-usdc-callbacks
+cargo build -p lcp-core --target wasm32-unknown-unknown --release --locked
+npm run fixture:empty-console
+```
+
+The script requires Docker. On first use it downloads the pinned NEAR Sandbox 2.14.0 binary into a temporary cache, starts a fresh chain, deploys the current `lcp_core.wasm` to `test.near`, initializes it with `new()`, verifies the deployed code hash, and asserts that `list_commitments` returns `[]`. It then serves the Console at `http://localhost:3000` with only the sandbox RPC configured; no testnet wallet or public-network transaction is used. Open **Browse recent commitments** and confirm **No commitments found yet.** The same fixture is the local acceptance path for the narrow and dark states: at 320 CSS px the panel fits without horizontal scrolling, and the empty text meets contrast in both themes. The script stops the Console and sandbox on Ctrl-C. Use `--no-console` for RPC-only fixtures, `--rpc-port` or `--console-port` to avoid port conflicts, or `--wasm` to select another build. The Console runs through `next dev`, so it does not overwrite `apps/console/out`.
+
 ## Follow Existing Testnet Examples
 
 1. Inspect commitment `22` and refresh **Health clock**. It shows evaluation `1`, challenge `4` invalidation, and evaluation `2` recovery, followed by policy-derived evidence expiry and grace deadlines. Its latest snapshot showed the next claim blocked during the challenge window.
