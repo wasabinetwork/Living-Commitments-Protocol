@@ -8,14 +8,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const defaultCapturePath = resolve(
   here,
-  "recovery-acceptance-2026-11-17-18ed543/bootstrap-guard.json",
+  "recovery-acceptance-2026-11-17-689fbf1/bootstrap-guard.json",
 );
 const defaultManifestPath = resolve(
   here,
   "p2-usdc-recovery-local-acceptance-2026-11-17.sha256",
 );
-const EXPECTED_CORE_WASM_SHA256 = "0cd6a24c9ef345a0e8d46d4fffea4361fa72951095fef535809cecb9027d57c1";
-const EXPECTED_CORE_CODE_HASH = "s7iWoJczoZuewPKuDd4PYALr3Zw5HjDBrD1yVQBUkRE";
+const EXPECTED_CORE_WASM_SHA256 = "890daa7778517b949232e62efb1cdb75b3290858f578920758c53d3761e3be80";
+const EXPECTED_CORE_CODE_HASH = "ADzwZkqufSWSr5S3SBYCh885tiFzCeuYoTBHyh9G5yEX";
 const BOOTSTRAP_GUARD_ERROR =
   "receipt recovery must be bootstrapped before commitments or transfers are created";
 

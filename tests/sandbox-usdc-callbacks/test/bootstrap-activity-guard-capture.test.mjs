@@ -9,7 +9,7 @@ import { validateBootstrapActivityGuardCapture } from "../verify-bootstrap-activ
 const here = dirname(fileURLToPath(import.meta.url));
 const capture = JSON.parse(await readFile(resolve(
   here,
-  "../recovery-acceptance-2026-11-17-18ed543/bootstrap-guard.json",
+  "../recovery-acceptance-2026-11-17-689fbf1/bootstrap-guard.json",
 ), "utf8"));
 
 test("accepts the complete bootstrap-after-commitment Sandbox capture", () => {

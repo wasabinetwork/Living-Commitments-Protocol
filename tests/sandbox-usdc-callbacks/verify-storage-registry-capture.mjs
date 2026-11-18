@@ -7,14 +7,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 const defaultCapacityPath = resolve(
   here,
-  "recovery-acceptance-2026-11-17-18ed543/storage-registry-cap.json",
+  "recovery-acceptance-2026-11-17-689fbf1/storage-registry-cap.json",
 );
 const defaultShapePath = resolve(
   here,
-  "recovery-acceptance-2026-11-17-18ed543/storage-shape.json",
+  "recovery-acceptance-2026-11-17-689fbf1/storage-shape.json",
 );
-const EXPECTED_CORE_WASM_SHA256 = "0cd6a24c9ef345a0e8d46d4fffea4361fa72951095fef535809cecb9027d57c1";
-const EXPECTED_CORE_CODE_HASH = "s7iWoJczoZuewPKuDd4PYALr3Zw5HjDBrD1yVQBUkRE";
+const EXPECTED_CORE_WASM_SHA256 = "890daa7778517b949232e62efb1cdb75b3290858f578920758c53d3761e3be80";
+const EXPECTED_CORE_CODE_HASH = "ADzwZkqufSWSr5S3SBYCh885tiFzCeuYoTBHyh9G5yEX";
 const REGISTRY_LIMIT = 2_048;
 const BATCH_LIMIT = 64;
 
@@ -51,7 +51,7 @@ function assertReserveView(view, label, expected) {
 
 export function validateStorageRegistryCaptures(capacityCapture, shapeCapture) {
   assert.equal(capacityCapture.fixture_schema, "lcp.storage-registry-sandbox-acceptance.v1");
-  assert.equal(shapeCapture.fixture_schema, "lcp.storage-registry-sandbox-acceptance.v1");
+  assert.equal(shapeCapture.fixture_schema, "lcp.storage-registry-shape-sandbox-acceptance.v1");
   assertCoreArtifact(capacityCapture, "capacity capture");
   assertCoreArtifact(shapeCapture, "shape capture");
 
@@ -84,7 +84,8 @@ export function validateStorageRegistryCaptures(capacityCapture, shapeCapture) {
 
   assert.equal(capacity.revaluation_batch_limit, BATCH_LIMIT);
   assert.equal(capacity.revaluation_batch_count, REGISTRY_LIMIT / BATCH_LIMIT);
-  assert.equal(capacity.revaluation_batches?.length, REGISTRY_LIMIT / BATCH_LIMIT);
+  assert.equal(capacity.revaluation_batches?.length, REGISTRY_LIMIT / BATCH_LIMIT,
+    "revaluation batch count mismatch");
   let maximumGas = 0n;
   for (const [batchNumber, batch] of capacity.revaluation_batches.entries()) {
     const start = batchNumber * BATCH_LIMIT;
@@ -122,7 +123,8 @@ export function validateStorageRegistryCaptures(capacityCapture, shapeCapture) {
   assert.equal(shape.maximum_payer_id.length, 64);
   assert.equal(shape.rows_added, 64);
   assert.equal(Number(shape.final_record_count), Number(shape.initial_record_count) + 64);
-  assert.equal(shape.measured_credit_storage_bytes, "33728");
+  assert.equal(shape.measured_credit_storage_bytes, "33728",
+    "measured_credit_storage_bytes mismatch");
   assert.equal(Number(shape.measured_credit_storage_bytes) / shape.rows_added, 527,
     "maximum-length payer storage must remain at the measured 527 bytes per row");
   assert.equal(shape.revaluation_batch_limit, BATCH_LIMIT);

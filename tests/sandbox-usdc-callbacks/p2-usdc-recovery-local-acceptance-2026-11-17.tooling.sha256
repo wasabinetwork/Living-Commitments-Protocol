@@ -1,0 +1,9 @@
+b95c55e48615333d92f0ad3c0de3fe762dbd534b6026cfefa08b89b6d7f8204f  tests/sandbox-usdc-callbacks/run.mjs
+165fe37a8637c2244394f8f3c36060381737e030def28ffa074985831e5b2520  tests/sandbox-usdc-callbacks/README.md
+4d2f3801982a1b686a1c080d1fd4b5ff2098fde4a4e3ed6e52148a50c36eba7e  tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs
+2fe74ae905a99d3c5e0056fd4128deac78c714e5a0a3160a10dfd85e3572cb76  tests/sandbox-usdc-callbacks/verify-bootstrap-activity-guard-capture.mjs
+35fab544b3b7825c6e0a237f2002508be13716236d56f11f58d4da607d7b7e00  tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.test.mjs
+651f78567c03ea9221b05b61f3c17d75fc3cfadb0b3f7ad25d0c748e38af2549  tests/sandbox-usdc-callbacks/verify-storage-registry-capture.mjs
+5f6b1fe3308966fb8a7877a8cd1d614a57cee101c215f49d4950794b00fefc79  tests/sandbox-usdc-callbacks/test/storage-registry-capture.test.mjs
+d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548  tests/sandbox-usdc-callbacks/package.json
+c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e  tests/sandbox-usdc-callbacks/package-lock.json

@@ -9,6 +9,91 @@ sidecar, and the native cash gate checks that it is current and solvent. The
 recovery acceptance runner below creates intents and payer credits and
 exercises their lifecycle in Sandbox.
 
+## Current local acceptance candidate — 2026-11-17
+
+The current recovery source candidate is commit
+`689fbf1bc464248b5a6ff019983ef8b415dcd819`. The pinned reproducible build
+used `sourcescan/cargo-near:0.23.0-rust-1.100.0` at image digest
+`sha256:265b662a03642196c8a1b97cb8e1bff9156488b584a9e040e9ef1f264e1049f1`
+and produced WASM SHA-256
+`890daa7778517b949232e62efb1cdb75b3290858f578920758c53d3761e3be80` and
+NEAR code hash `ADzwZkqufSWSr5S3SBYCh885tiFzCeuYoTBHyh9G5yEX`. Eight fresh
+captures were generated with this artifact on isolated Sandbox 2.14.0,
+protocol 88, using the pinned Node runner image documented below. No public
+network or `.env.testnet` credentials were used.
+
+The current capture set is in
+[`recovery-acceptance-2026-11-17-689fbf1/`](recovery-acceptance-2026-11-17-689fbf1/):
+
+- `protocol-88.json` — native callback rollback, token transfer failure and
+  retry, concurrent claims, action ordering, and escrow conservation.
+- `recovery.json` — certificate parsing and rejection cases, committee
+  rotation, callback and certificate races, native cash accounting, and
+  recovery-credit settlement.
+- `bootstrap-guard.json` — bootstrap rejection after commitment activity.
+- `storage-oog.json` — 64-record reserve-revaluation out-of-gas rollback,
+  invalid cursor and batch rejection, then successful retry.
+- `usdc-claim.json` and `usdc-refund.json` — NEP-141 claim/refund cash gates,
+  failed transfer recovery, retry, and excess-deposit credit withdrawal.
+- `storage-registry-cap.json` — admission through 2,048 registry records,
+  rejection of record 2,049, 32 revaluation batches, reserve-view transitions,
+  and idempotent completion. The measured 2,045 short-payer rows used 961,150
+  bytes; the highest 64-record revaluation batch used 11.805 Tgas.
+- `storage-shape.json` — 64 rows with a 64-character payer ID used 33,728
+  bytes (527 bytes per row); its largest revaluation batch used 11.805 Tgas.
+
+These captures validate the contract and accounting paths, not receipt-to-intent
+mapping. They use fixture-signed recovery certificates; the implementation
+does not yet provide a production signer/operator that maps real NEAR receipt
+metadata to an intent. The independent review found eight normative mapping
+cases remain untestable, including multiple origins, batched actions, V4 action
+ordering, failing child receipts, missing ancestry, and unsupported metadata.
+Do not treat these local results as a testnet-canary or deployment approval.
+The false-`Failure` quorum risk for pooled USDC and frozen token/hash settings
+after bootstrap remain explicit design gates.
+
+Regenerate the current capture/source manifest from the repository root after
+changing a capture or its contract/build inputs:
+
+```sh
+shasum -a 256 \
+  tests/sandbox-usdc-callbacks/recovery-acceptance-2026-11-17-689fbf1/*.json \
+  Cargo.toml Cargo.lock rust-toolchain.toml contracts/lcp-core/Cargo.toml \
+  contracts/lcp-core/src/contract.rs contracts/lcp-core/src/lib.rs \
+  contracts/lcp-core/src/models.rs contracts/lcp-core/src/native_cash.rs \
+  contracts/lcp-core/src/recovery_accounting.rs contracts/lcp-core/src/recovery_config.rs \
+  contracts/lcp-core/src/receipt_recovery.rs \
+  contracts/sandbox-mock-ft/Cargo.toml contracts/sandbox-mock-ft/src/lib.rs \
+  > tests/sandbox-usdc-callbacks/p2-usdc-recovery-local-acceptance-2026-11-17.sha256
+```
+
+The separate tooling manifest pins the runner, package lock, verifier tests,
+and README. Regenerate both manifests only after the capture and tooling edits
+are complete:
+
+```sh
+shasum -a 256 tests/sandbox-usdc-callbacks/run.mjs \
+  tests/sandbox-usdc-callbacks/README.md \
+  tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs \
+  tests/sandbox-usdc-callbacks/verify-bootstrap-activity-guard-capture.mjs \
+  tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.test.mjs \
+  tests/sandbox-usdc-callbacks/verify-storage-registry-capture.mjs \
+  tests/sandbox-usdc-callbacks/test/storage-registry-capture.test.mjs \
+  tests/sandbox-usdc-callbacks/package.json tests/sandbox-usdc-callbacks/package-lock.json \
+  > tests/sandbox-usdc-callbacks/p2-usdc-recovery-local-acceptance-2026-11-17.tooling.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/p2-usdc-recovery-local-acceptance-2026-11-17.sha256
+shasum -a 256 -c tests/sandbox-usdc-callbacks/p2-usdc-recovery-local-acceptance-2026-11-17.tooling.sha256
+node tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs
+node tests/sandbox-usdc-callbacks/verify-bootstrap-activity-guard-capture.mjs
+node tests/sandbox-usdc-callbacks/verify-storage-registry-capture.mjs
+node --test tests/sandbox-usdc-callbacks/test/bootstrap-activity-guard-capture.test.mjs \
+  tests/sandbox-usdc-callbacks/test/storage-registry-capture.test.mjs
+```
+
+The source manifest intentionally excludes mutable planning/review documents;
+the Git commit records their revision. Historical captures and their manifests
+remain available below and retain their original dates and artifact identities.
+
 From the repository root, build the optimized fixture core and both mock-token
 artifacts. The local Sandbox RPC rejects the larger unoptimized core artifact.
 

@@ -10,11 +10,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const [capacityCapture, shapeCapture] = await Promise.all([
   readFile(resolve(
     here,
-    "../recovery-acceptance-2026-11-17-18ed543/storage-registry-cap.json",
+    "../recovery-acceptance-2026-11-17-689fbf1/storage-registry-cap.json",
   ), "utf8").then(JSON.parse),
   readFile(resolve(
     here,
-    "../recovery-acceptance-2026-11-17-18ed543/storage-shape.json",
+    "../recovery-acceptance-2026-11-17-689fbf1/storage-shape.json",
   ), "utf8").then(JSON.parse),
 ]);
 
