@@ -28,8 +28,11 @@ Funding-buffer inputs are in
 [`P2-PENDING-CALLBACK-FUNDING-BUFFER.md`](P2-PENDING-CALLBACK-FUNDING-BUFFER.md).
 Operator rules are in
 [`P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md`](P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md).
-The second-operator reproduction procedure is
-[`tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md).
+The second-operator reproduction procedures are
+[`tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md)
+for the pinned capture set and
+[`tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md)
+for the rotation-with-live-intent capture.
 
 ## 1. Scope and current state
 
@@ -345,6 +348,12 @@ token code hashes. Expected to differ: chain IDs/genesis, account IDs, tx/receip
 /block hashes and heights, fresh-chain balances/storage, timestamps. Do not
 byte-compare JSON captures.
 
+The rotation-with-live-intent capture has its own handoff and comparison rules in
+[`tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md).
+An owner rerun on 2026-11-19 matched 28 of 28 non-volatile scenario fields, with
+only transaction hashes, the instance ID, and activation timestamps differing;
+because it ran on the owner's machine it does not close the independence gate.
+
 ## 4. Workstream D — operator and committee readiness checklist
 
 | ID | Requirement | Evidence to produce | Status gate |
@@ -399,6 +408,7 @@ approval:
 - [`P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md`](P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md)
 - [`P2-PENDING-CALLBACK-FUNDING-BUFFER.md`](P2-PENDING-CALLBACK-FUNDING-BUFFER.md)
 - [`tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md)
+- [`tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md)
 - [`tests/sandbox-usdc-callbacks/README.md`](tests/sandbox-usdc-callbacks/README.md)
 - [`P2-USDC-INDEPENDENT-AUDIT-FOLLOWUP.md`](P2-USDC-INDEPENDENT-AUDIT-FOLLOWUP.md)
 - [`TESTNET-E2E-STATUS.md`](TESTNET-E2E-STATUS.md)
