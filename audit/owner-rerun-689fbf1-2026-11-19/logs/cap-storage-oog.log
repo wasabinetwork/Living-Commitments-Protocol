@@ -1,0 +1,40 @@
+
+added 46 packages in 3s
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+PASS create lcp-core-sandbox.sandbox: iKCeCSHD1yZGj44sUrkVEH8mQVXHD7CeWTHdbQEMrv1
+PASS create mock-usdc.sandbox: BLxSF9dSJe3ttMFzB7fKPHehJ11onPSxMdUw25QUscfR
+PASS create no-code-token.sandbox: 4bDcyL6HbaZnyQ3MwyjWDZMJ41uEoXcHMTcFHwaA9JRM
+PASS create order-a.sandbox: 76hhgBCXf9BgPTp4xifbLssrW2jf4qLkL2GzypX8tXRm
+PASS create order-b.sandbox: 48ik4u6fptzwQk7C8134Q5xBFsXtTx1PNG8qtcaFS4tJ
+PASS create cash-recipient.sandbox: 3SaxqRXNxDJRdn4umMTsYP14ST6jmpcyDTaz2k7X8ukV
+PASS create recipient.sandbox: 8EdRhsuDLo7sKAF6NMwkg8Nqy5hf2wVoAQEU1LyjJZ3G
+SUBMITTED deploy fixture core: CrB5pC4WqdCb8nNyzpZagNZ3agVrixUvjyfjybg3VnQi
+PASS deploy fixture core finalized with the expected code hash
+PASS lcp-core-sandbox.sandbox.new: 7HbKnYU1k3Ty2Rk2svtX3UiBGgEWYyN47hGk2W5bAzk
+PASS fund isolated core native liquidity margin: BraU6BFqwcEZe2ED4gnvYLpENdo2TkH9A3xmebMKahxk
+PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call
+SUBMITTED deploy recovery mock USDC: Gn4nk4bhSJA8TwGFvSbuy5ViJR7paH8izEKp7XtfqQjs
+PASS deploy recovery mock USDC finalized with the expected code hash
+PASS mock-usdc.sandbox.new: 7ChrfCuoXRnGtg1mr3NVCSiDLEmAiNfUQ9pPtY63n7jj
+EXPECTED FAILURE RECEIPT lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"transaction_status":{"SuccessReceiptId":"7Ueifa4D7zVwMBGUyL788EtTkQ9krHsYYPMyGMWzjfRi"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"logs":[]},{"status":{"SuccessValue":""},"logs":[]},{"status":{"SuccessValue":""},"logs":[]}]}
+PASS expected failure lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: EjzG2xJNcYRyvp79XHCxMwCXeNPZVUJ5QE1WMnQX6cbo
+PASS lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: 7JUTvdPigc9UQajp1NVsZvtcjuGnQNmZ1qMRopHBFx6q
+PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys
+PASS lcp-core-sandbox.sandbox.sandbox_verify_maximum_recovery_envelope: nakTkcwCjdK9LBVb98BRtjHTKWjyn19psMUGbqxCn2m
+PASS 500-byte intent and 1,202-byte 5-of-5 envelope in the contract VM parser
+PASS seed maximum-length payer rows for revaluation OOG acceptance: CuWNZZSKaDE3Kf4LJokrn6rCimBP3eQERwwnVcgMjPuX
+PASS mark storage reserve price stale before OOG acceptance: A2AiFRcbAZX5MGywSWiRhGjwKz3XECgocwxeW39FzurX
+PASS begin storage reserve revaluation before OOG acceptance: 7Kj6fy2JPN3Y4uPeLF24ju6YgN967KmvaAcirCJtCPkQ
+EXPECTED FAILURE RECEIPT run a maximum-length 64-record revaluation batch with insufficient gas: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Exceeded the prepaid gas."}}}}},"transaction_status":{"SuccessReceiptId":"EQgQgHNyApens5PskzLWDZZ619DkYANisGj9JTQv8tsz"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Exceeded the prepaid gas."}}}}},"logs":[]}]}
+PASS expected failure run a maximum-length 64-record revaluation batch with insufficient gas: ApxmEAMTrGG9AXFoaPLp2a3UDQvv828wo31xXgPyyoWz
+EXPECTED FAILURE RECEIPT reject a revaluation batch that skips the active cursor: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: storage reserve batch is out of sequence"}}}}},"transaction_status":{"SuccessReceiptId":"2QwMYCuMFy3AdE4k7uxq5SVxSxF1SzRxvGJM5i31RvYK"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: storage reserve batch is out of sequence"}}}}},"logs":[]}]}
+PASS expected failure reject a revaluation batch that skips the active cursor: 7d9afsjnppKsvaWBAhgjgZc38LqybBWsZPw4srzBc8Sm
+EXPECTED FAILURE RECEIPT reject a zero-length storage revaluation batch: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: storage reserve revaluation batch size is invalid"}}}}},"transaction_status":{"SuccessReceiptId":"3gBQiidZhJCe67kRiybogCcr2pMDSBVZhc1Vfhxd9pio"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: storage reserve revaluation batch size is invalid"}}}}},"logs":[]}]}
+PASS expected failure reject a zero-length storage revaluation batch: BQLevkSRQv8TC9xegNXUKzTWqES2sivioSdyT8r9QKaj
+PASS retry the same batch from its original cursor after OOG rollback: 4PPSFA45zQ3uZLwjHhTj1c7D9hottu35awa9yyFnVCQb
+PASS finish the registry revaluation after successful retry: 9csBc4oufXzbBromT4cccWjNU4RNtErnEiZYHZpQK1wu
+Isolated storage revaluation OOG rollback and retry acceptance passed; no public network was used.

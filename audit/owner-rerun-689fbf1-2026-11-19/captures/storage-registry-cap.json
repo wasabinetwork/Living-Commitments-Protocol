@@ -1,0 +1,1133 @@
+{
+  "fixture_schema": "lcp.storage-registry-sandbox-acceptance.v1",
+  "captured_at": "2026-11-19T02:27:24.063Z",
+  "node": {
+    "sandbox_version": "2.14.0",
+    "protocol_version": 88,
+    "chain_id": "test-chain-C0N6U",
+    "genesis_hash": "57PP6z4bVDseEmX7m4XbkxWmFtAZKcwVa96tNVZTCJiu",
+    "version": {
+      "build": "2.14.0",
+      "commit": "bc4e9e8cfb03d9e82f027883055624e18576993e",
+      "rustc_version": "1.95.0",
+      "version": "2.14.0"
+    }
+  },
+  "wasm_artifacts": {
+    "lcp_core_fixture": {
+      "wasm_sha256": "890daa7778517b949232e62efb1cdb75b3290858f578920758c53d3761e3be80",
+      "near_code_hash": "ADzwZkqufSWSr5S3SBYCh885tiFzCeuYoTBHyh9G5yEX",
+      "input_mode": "explicit-path"
+    },
+    "mock_ft_variant_a": {
+      "wasm_sha256": "c8669f67957668888767cebb360d34c096e0654684e489377b634ab11c898619",
+      "near_code_hash": "EVHJNjrSMLAbCFmTCtQwbqKdXzmf48HgDwioHo2GAkME"
+    },
+    "mock_ft_variant_b": {
+      "wasm_sha256": "56c46e717bf7b12e41ea848b14a6b58e5c73e2c979c2f4a38cb6910561b7e489",
+      "near_code_hash": "6qhneJTJNrGbxyrp2ZHspsCa8GqX7jD6ZZDRw1jpMQ9n"
+    }
+  },
+  "scenarios": {
+    "token_deploy": {
+      "transaction_hash": "22tT6BdJBTgHqN399LFSkC8oEbqCAPGD2sJuSEFir4Cj",
+      "near_code_hash": "EVHJNjrSMLAbCFmTCtQwbqKdXzmf48HgDwioHo2GAkME"
+    },
+    "weak_committee_bootstrap": {
+      "rejected_transaction_hash": "CTQPuz9884ddVGRDqz3Qornhs5qXEmFMCmg4a51sQ6YN",
+      "configuration_unchanged": true
+    },
+    "bootstrap": {
+      "final_execution_status": "EXECUTED_OPTIMISTIC",
+      "receipts_outcome": [
+        {
+          "block_hash": "j3pAweNN71gge26GdSJATRyfoQi5LgFNHQw4T9GfAzh",
+          "id": "FHuxnqHyF2rK2f9f4gWEdpHB2HNn5ViBrc2Ss1WDGpa8",
+          "outcome": {
+            "executor_id": "lcp-core-sandbox.sandbox",
+            "gas_burnt": 6954507135738,
+            "logs": [],
+            "metadata": {
+              "contracts": [
+                {
+                  "local": "ADzwZkqufSWSr5S3SBYCh885tiFzCeuYoTBHyh9G5yEX"
+                }
+              ],
+              "gas_profile": [
+                {
+                  "cost": "BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "24888202434"
+                },
+                {
+                  "cost": "CONTRACT_LOADING_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "35445963"
+                },
+                {
+                  "cost": "CONTRACT_LOADING_BYTES",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "1280648184765"
+                },
+                {
+                  "cost": "READ_CACHED_TRIE_NODE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "362520000000"
+                },
+                {
+                  "cost": "READ_MEMORY_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "190520013600"
+                },
+                {
+                  "cost": "READ_MEMORY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "15509438640"
+                },
+                {
+                  "cost": "READ_REGISTER_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "50343303720"
+                },
+                {
+                  "cost": "READ_REGISTER_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "186676428"
+                },
+                {
+                  "cost": "SHA256_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "13622910750"
+                },
+                {
+                  "cost": "SHA256_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "6029337750"
+                },
+                {
+                  "cost": "STORAGE_READ_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "958066377733"
+                },
+                {
+                  "cost": "STORAGE_READ_KEY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "17519133678"
+                },
+                {
+                  "cost": "STORAGE_READ_VALUE_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "6390933556"
+                },
+                {
+                  "cost": "STORAGE_REMOVE_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "53473030500"
+                },
+                {
+                  "cost": "STORAGE_REMOVE_KEY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "1643476512"
+                },
+                {
+                  "cost": "STORAGE_REMOVE_RET_VALUE_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "322883568"
+                },
+                {
+                  "cost": "STORAGE_WRITE_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "1669115136000"
+                },
+                {
+                  "cost": "STORAGE_WRITE_EVICTED_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "37063372278"
+                },
+                {
+                  "cost": "STORAGE_WRITE_KEY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "66747275049"
+                },
+                {
+                  "cost": "STORAGE_WRITE_VALUE_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "70536157686"
+                },
+                {
+                  "cost": "TOUCHING_TRIE_NODE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "31920000000"
+                },
+                {
+                  "cost": "WASM_INSTRUCTION",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "1034168913492"
+                },
+                {
+                  "cost": "WRITE_MEMORY_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "61683486942"
+                },
+                {
+                  "cost": "WRITE_MEMORY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "5245984872"
+                },
+                {
+                  "cost": "WRITE_REGISTER_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "97427764524"
+                },
+                {
+                  "cost": "WRITE_REGISTER_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "9431680284"
+                }
+              ],
+              "version": 4
+            },
+            "receipt_ids": [
+              "BkwKPBKXdNwgJLBduYozCCwH3eWVtc4vZ29QZfPgb1Yh"
+            ],
+            "status": {
+              "SuccessValue": ""
+            },
+            "tokens_burnt": "695450713573800000000"
+          },
+          "proof": [
+            {
+              "direction": "Left",
+              "hash": "HMkSNhVcarhexmpEfSu1Nize29nvLdFYuPmLSS5jUqqP"
+            }
+          ]
+        }
+      ],
+      "status": {
+        "SuccessValue": ""
+      },
+      "transaction": {
+        "actions": [
+          {
+            "FunctionCall": {
+              "args": "eyJhcmdzIjp7ImdlbmVzaXNfaGFzaCI6IjU3UFA2ejRiVkRzZUVtWDdtNFhia3hXbUZ0QVpLY3dWYTk2dE5WWlRDSml1IiwiaW5zdGFuY2VfaWQiOiI1OTJiOWNkMDAyMjkyMjBhYmE1MTUyMTAxZTliMmQ5ZjU2NmVhYzY3ODc3Y2ZhZjdmNzExMDhhZmY2OWZhMTk0IiwiY29tbWl0dGVlX2tleXMiOlsiZWQyNTUxOTo1dGRIVFFaTWZzdnJiSzl4RVpqQ29ZOEFOcHp3ZURnN2g3aEg4WXVHdkduNCIsImVkMjU1MTk6OU5WTDY4RUpzWHB2bVhTaGVrNHVwN3V6UGhtNHBGczdlVjJzV3poWE11R3EiLCJlZDI1NTE5OkJReUJ1dkZvU2QzcUYxV0FEeWVLSEZGeVk4TlhOOHFEdzkxNzQyQWlCNHR3IiwiZWQyNTUxOTpEWHcxbTF2MkVQcm9mc00xQUF4eVZ0blBDNGpUS2tDb3lwZnZyN1lpaXVNaCIsImVkMjU1MTk6RWFlWnFVUWVRRVd6SkFqRHg0RDFiYnEyb1lEQ2pFNk05MkJqM2hRcHlnVkYiXSwiYXBwcm92ZWRfdXNkY19jb2RlX2hhc2hlcyI6WyJFVkhKTmpyU01MQWJDRm1UQ3RRd2JxS2RYem1mNDhIZ0R3aW9IbzJHQWtNRSJdLCJhY3RpdmVfdXNkY19jb2RlX2hhc2giOiJFVkhKTmpyU01MQWJDRm1UQ3RRd2JxS2RYem1mNDhIZ0R3aW9IbzJHQWtNRSJ9fQ==",
+              "deposit": "1000000000000000000000000",
+              "gas": 220000000000000,
+              "method_name": "bootstrap_receipt_recovery"
+            }
+          }
+        ],
+        "hash": "7fRv5wC3yhLby8pZhmmyAoThGXaBLuVFCAT9utxncYWi",
+        "nonce": 4000004,
+        "priority_fee": 0,
+        "public_key": "ed25519:AxqxFSi5i8Zaw7pRaiXrtKPJo3TGxuVLE1SE6xACCLpY",
+        "receiver_id": "lcp-core-sandbox.sandbox",
+        "signature": "ed25519:3Do1KjjmryYwTzBvukXU3XHrVWsy8oB6t5F5SKDg7iqoKXAxEfCvCNCA9KKdWeTaKYWd6DP66bbRcmPKY8k5csPp",
+        "signer_id": "lcp-core-sandbox.sandbox"
+      },
+      "transaction_outcome": {
+        "block_hash": "j3pAweNN71gge26GdSJATRyfoQi5LgFNHQw4T9GfAzh",
+        "id": "7fRv5wC3yhLby8pZhmmyAoThGXaBLuVFCAT9utxncYWi",
+        "outcome": {
+          "executor_id": "lcp-core-sandbox.sandbox",
+          "gas_burnt": 309448015014,
+          "logs": [],
+          "metadata": {
+            "gas_profile": null,
+            "version": 1
+          },
+          "receipt_ids": [
+            "FHuxnqHyF2rK2f9f4gWEdpHB2HNn5ViBrc2Ss1WDGpa8"
+          ],
+          "status": {
+            "SuccessReceiptId": "FHuxnqHyF2rK2f9f4gWEdpHB2HNn5ViBrc2Ss1WDGpa8"
+          },
+          "tokens_burnt": "30944801501400000000"
+        },
+        "proof": [
+          {
+            "direction": "Right",
+            "hash": "44BJM6TJCPSZTjXB1pkRNLhNj7goG6nadkb1k4qd89AA"
+          }
+        ]
+      }
+    },
+    "bootstrap_configuration": {
+      "version": 1,
+      "chain_id": "test-chain-C0N6U",
+      "genesis_hash": "57PP6z4bVDseEmX7m4XbkxWmFtAZKcwVa96tNVZTCJiu",
+      "core_account_id": "lcp-core-sandbox.sandbox",
+      "instance_id": "592b9cd00229220aba5152101e9b2d9f566eac67877cfaf7f71108aff69fa194",
+      "token_account_id": "mock-usdc.sandbox",
+      "active_usdc_code_hash": "EVHJNjrSMLAbCFmTCtQwbqKdXzmf48HgDwioHo2GAkME",
+      "approved_usdc_code_hashes": [
+        "EVHJNjrSMLAbCFmTCtQwbqKdXzmf48HgDwioHo2GAkME"
+      ],
+      "current_epoch": 0,
+      "current_committee_keys": [
+        "ed25519:5tdHTQZMfsvrbK9xEZjCoY8ANpzweDg7h7hH8YuGvGn4",
+        "ed25519:9NVL68EJsXpvmXShek4up7uzPhm4pFs7eV2sWzhXMuGq",
+        "ed25519:BQyBuvFoSd3qF1WADyeKHFFyY8NXN8qDw91742AiB4tw",
+        "ed25519:DXw1m1v2EProfsM1AAxyVtnPC4jTKkCoypfvr7YiiuMh",
+        "ed25519:EaeZqUQeQEWzJAjDx4D1bbq2oYDCjE6M92Bj3hQpygVF"
+      ],
+      "current_epoch_pending_intents": "0",
+      "last_rotation_generation": "0",
+      "activated_epoch_count": 1,
+      "used_key_count": 5,
+      "pending_rotation": null
+    },
+    "maximum_size_positive_contract_envelope": {
+      "transaction_hash": "C8tysTVLSa2gN4yzz1BhVWxAnh9furpVGitVUK1SUpB7",
+      "intent_bytes": 500,
+      "certificate_bytes": 714,
+      "decoded_envelope_bytes": 1202,
+      "encoded_base64_characters": 1604,
+      "signature_count": 5,
+      "receipt_gas_burnt": "14109689080050",
+      "synthetic_fixture_only": true,
+      "settlement_state_unchanged": true
+    },
+    "storage_registry_acceptance": {
+      "registry_limit": 2048,
+      "initial_record_count": "3",
+      "initial_reserve_view": {
+        "status": "ready",
+        "version": 1,
+        "stored_byte_cost_yocto": "10000000000000000000",
+        "observed_byte_cost_yocto": "10000000000000000000",
+        "treasury_capital_yocto": "1000000000000000000000000",
+        "total_storage_gap_yocto": "21560000000000000000000",
+        "non_withdrawable_backing_yocto": "978440000000000000000000",
+        "free_treasury_reserve_yocto": "978440000000000000000000",
+        "shortfall_yocto": "0",
+        "record_count": 3,
+        "revaluation_active": false,
+        "revaluation_target_byte_cost_yocto": null,
+        "next_record_index": null,
+        "ready": true
+      },
+      "measured_credit_rows_added": 2045,
+      "final_record_count": "2048",
+      "reserve_view_at_capacity": {
+        "status": "ready",
+        "version": 1,
+        "stored_byte_cost_yocto": "10000000000000000000",
+        "observed_byte_cost_yocto": "10000000000000000000",
+        "treasury_capital_yocto": "1000000000000000000000000",
+        "total_storage_gap_yocto": "21560000000000000000000",
+        "non_withdrawable_backing_yocto": "978440000000000000000000",
+        "free_treasury_reserve_yocto": "978440000000000000000000",
+        "shortfall_yocto": "0",
+        "record_count": 2048,
+        "revaluation_active": false,
+        "revaluation_target_byte_cost_yocto": null,
+        "next_record_index": null,
+        "ready": true
+      },
+      "measured_credit_storage_bytes": "961150",
+      "seed_batch_size": 32,
+      "seed_batch_count": 64,
+      "maximum_seed_batch_gas_burnt": "45304831021389",
+      "overflow_transaction_hash": "G4YbUUCB2UTL39kbgn3cpZCEKMtcYA1jZQUjtTCRrXhu",
+      "overflow_admission_rolled_back": true,
+      "overflow_credit_row_absent": true,
+      "stale_reserve_view": {
+        "status": "stale",
+        "version": 1,
+        "stored_byte_cost_yocto": "9999999999999999999",
+        "observed_byte_cost_yocto": "10000000000000000000",
+        "treasury_capital_yocto": "1000000000000000000000000",
+        "total_storage_gap_yocto": "21560000000000000000000",
+        "non_withdrawable_backing_yocto": "978440000000000000000000",
+        "free_treasury_reserve_yocto": "978440000000000000000000",
+        "shortfall_yocto": "0",
+        "record_count": 2048,
+        "revaluation_active": false,
+        "revaluation_target_byte_cost_yocto": null,
+        "next_record_index": null,
+        "ready": false
+      },
+      "revaluation_batch_limit": 64,
+      "oversized_batch_rejected": true,
+      "revaluation_batch_count": 32,
+      "maximum_revaluation_batch_gas_burnt": "11804817387985",
+      "revaluation_batches": [
+        {
+          "start_index": 0,
+          "end_index": 64,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 64,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 64,
+            "ready": false
+          },
+          "gas_burnt": "11804641577899"
+        },
+        {
+          "start_index": 64,
+          "end_index": 128,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 128,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 128,
+            "ready": false
+          },
+          "gas_burnt": "11804712144200"
+        },
+        {
+          "start_index": 128,
+          "end_index": 192,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 192,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 192,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 192,
+          "end_index": 256,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 256,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 256,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 256,
+          "end_index": 320,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 320,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 320,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 320,
+          "end_index": 384,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 384,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 384,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 384,
+          "end_index": 448,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 448,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 448,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 448,
+          "end_index": 512,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 512,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 512,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 512,
+          "end_index": 576,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 576,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 576,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 576,
+          "end_index": 640,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 640,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 640,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 640,
+          "end_index": 704,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 704,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 704,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 704,
+          "end_index": 768,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 768,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 768,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 768,
+          "end_index": 832,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 832,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 832,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 832,
+          "end_index": 896,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 896,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 896,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 896,
+          "end_index": 960,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 960,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 960,
+            "ready": false
+          },
+          "gas_burnt": "11804745998928"
+        },
+        {
+          "start_index": 960,
+          "end_index": 1024,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1024,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1024,
+            "ready": false
+          },
+          "gas_burnt": "11804747331993"
+        },
+        {
+          "start_index": 1024,
+          "end_index": 1088,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1088,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1088,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1088,
+          "end_index": 1152,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1152,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1152,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1152,
+          "end_index": 1216,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1216,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1216,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1216,
+          "end_index": 1280,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1280,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1280,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1280,
+          "end_index": 1344,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1344,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1344,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1344,
+          "end_index": 1408,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1408,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1408,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1408,
+          "end_index": 1472,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1472,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1472,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1472,
+          "end_index": 1536,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1536,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1536,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1536,
+          "end_index": 1600,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1600,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1600,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1600,
+          "end_index": 1664,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1664,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1664,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1664,
+          "end_index": 1728,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1728,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1728,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1728,
+          "end_index": 1792,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1792,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1792,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1792,
+          "end_index": 1856,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1856,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1856,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1856,
+          "end_index": 1920,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1920,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1920,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1920,
+          "end_index": 1984,
+          "returned_status": "in_progress",
+          "returned_next_record_index": 1984,
+          "reserve_view": {
+            "status": "revaluating",
+            "version": 1,
+            "stored_byte_cost_yocto": "9999999999999999999",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": true,
+            "revaluation_target_byte_cost_yocto": "10000000000000000000",
+            "next_record_index": 1984,
+            "ready": false
+          },
+          "gas_burnt": "11804817387985"
+        },
+        {
+          "start_index": 1984,
+          "end_index": 2048,
+          "returned_status": "complete",
+          "returned_next_record_index": null,
+          "reserve_view": {
+            "status": "ready",
+            "version": 1,
+            "stored_byte_cost_yocto": "10000000000000000000",
+            "observed_byte_cost_yocto": "10000000000000000000",
+            "treasury_capital_yocto": "1000000000000000000000000",
+            "total_storage_gap_yocto": "21560000000000000000000",
+            "non_withdrawable_backing_yocto": "978440000000000000000000",
+            "free_treasury_reserve_yocto": "978440000000000000000000",
+            "shortfall_yocto": "0",
+            "record_count": 2048,
+            "revaluation_active": false,
+            "revaluation_target_byte_cost_yocto": null,
+            "next_record_index": null,
+            "ready": true
+          },
+          "gas_burnt": "11802227302909"
+        }
+      ],
+      "reserve_view_at_revaluation_start": {
+        "status": "revaluating",
+        "version": 1,
+        "stored_byte_cost_yocto": "9999999999999999999",
+        "observed_byte_cost_yocto": "10000000000000000000",
+        "treasury_capital_yocto": "1000000000000000000000000",
+        "total_storage_gap_yocto": "21560000000000000000000",
+        "non_withdrawable_backing_yocto": "978440000000000000000000",
+        "free_treasury_reserve_yocto": "978440000000000000000000",
+        "shortfall_yocto": "0",
+        "record_count": 2048,
+        "revaluation_active": true,
+        "revaluation_target_byte_cost_yocto": "10000000000000000000",
+        "next_record_index": 0,
+        "ready": false
+      },
+      "reserve_view_after_revaluation": {
+        "status": "ready",
+        "version": 1,
+        "stored_byte_cost_yocto": "10000000000000000000",
+        "observed_byte_cost_yocto": "10000000000000000000",
+        "treasury_capital_yocto": "1000000000000000000000000",
+        "total_storage_gap_yocto": "21560000000000000000000",
+        "non_withdrawable_backing_yocto": "978440000000000000000000",
+        "free_treasury_reserve_yocto": "978440000000000000000000",
+        "shortfall_yocto": "0",
+        "record_count": 2048,
+        "revaluation_active": false,
+        "revaluation_target_byte_cost_yocto": null,
+        "next_record_index": null,
+        "ready": true
+      },
+      "repeated_completion_transaction_hash": "EpJX136XhHYvJHr3zwCWEVftXCPsNZX1HKg4RevpVPoF",
+      "repeated_completion_was_idempotent": true,
+      "storage_reserve_ready_before_revaluation": true,
+      "storage_reserve_blocked_during_revaluation": true,
+      "storage_reserve_ready_after_revaluation": true,
+      "no_public_network_used": true
+    }
+  }
+}

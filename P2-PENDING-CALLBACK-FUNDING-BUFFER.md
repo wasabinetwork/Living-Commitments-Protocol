@@ -1,8 +1,18 @@
 # Pending-callback funding buffer
 
-**Status (2026-11-18):** measurement prepared, value not set. The arithmetic
+**Status (2026-11-19):** measurement prepared, value not set. The arithmetic
 model, the measured storage input, and the open policy inputs are recorded here.
 The production buffer stays an owner decision until the policy inputs are fixed.
+
+**Owner decision (2026-11-19):** the closure method below is accepted; no
+numeric buffer or method gas limit is approved yet. Close B2 by fixing the four
+policy inputs, completing the missing measurements, rerunning
+`tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs` with the approved
+inputs, deriving method gas limits from measured worst cases plus margin, and
+recording the approved values in `TODO.md` and the deployment runbook with the
+gas float kept separate. See
+[`P2-OPEN-DECISIONS-REVIEW-PACKAGE.md`](P2-OPEN-DECISIONS-REVIEW-PACKAGE.md)
+for the full decision record and canary guidance.
 
 The design already states the cash rule for a pending payout:
 `C >= H + planned_outflow`, with `H = S + N + Q + F` (storage, native escrow,

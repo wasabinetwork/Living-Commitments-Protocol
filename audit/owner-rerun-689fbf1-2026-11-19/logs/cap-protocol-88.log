@@ -1,0 +1,97 @@
+
+added 46 packages in 4s
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+PASS create lcp-core-sandbox.sandbox: JEGtYERu4GbT5aCDfkkHbFtAnJ3NUaVtMhwgoQmk9oMf
+PASS create mock-usdc.sandbox: 2QgGURAU721NL1yVQoD38M7frvfCuqUhSX5xN3qjHmVD
+PASS create no-code-token.sandbox: 4K9m42BVqvnqgBVdVmP54MNpQhCoui1X5ZZisJHmR67G
+PASS create order-a.sandbox: CNxYYsnk3XdH6L4qeUtdUvsQg5ZQC4nNcSqYkgsdP3tm
+PASS create order-b.sandbox: Gowy87D93fypSjCtzYjf43kGfrTDazjciPFRP8UjvCAR
+PASS create cash-recipient.sandbox: G5c5644HJK1dFgYZZH2SE8oeHSBRLHxQ5Gzsbr7hPqVY
+PASS create recipient.sandbox: CFcTm3RaemLKbsjWH45PQtH914ZGnJ2FjPnLjTsavws8
+SUBMITTED deploy fixture core: 4fQi8XJJf3tQjwryU3cEek21SUfvUktQgcDcLfYxrqbw
+PASS deploy fixture core finalized with the expected code hash
+PASS lcp-core-sandbox.sandbox.new: B8zSw4Ydu7bohx5mrfHYEQxVz55qHqDHBTAYh2rdSKX8
+PASS fund isolated core native liquidity margin: 3mksacWpUXepfX19zWVXfMsDtZYDTtq6pVwt6FNh8S3H
+PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call
+EXPECTED FAILURE RECEIPT lcp-core-sandbox.sandbox.sandbox_probe_native_cash_gate: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"transaction_status":{"SuccessReceiptId":"Ec8KDeHFjvH8SH1fm4EFNYYg6WUfSZLVAk1jttZZ9SFW"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"logs":["SANDBOX_CASH_GATE_FAILED C=30890324524263916500000000 S=11764180000000000000000000 escrow=19126144524263916500000000 operations=0 legacy_refund=0 recovery_credit=0 F=0 X=1 storage_shortfall=0"]}]}
+PASS expected failure lcp-core-sandbox.sandbox.sandbox_probe_native_cash_gate: 5gXwG5g6VnPBfyRqJ9CAhZsQ82tXobRoXnetS1itxUcp
+PASS lcp-core-sandbox.sandbox.sandbox_probe_native_cash_gate: HcSBn58VuMrDezieLM5fDp89jUa576PsStSZVFhvN7jk
+CASH_BOUNDARY_PROBE {"balance_before":"30890009044901687700000000","balance_after_builder":"30890009044901687700000000","balance_after_materialization":"30890009044901687699999999","storage_cost":"11764180000000000000000000","seeded_liability":"19125829044901687699999999","finalized_account_balance":"30990928188278283900000000"}
+PASS protocol-88 cash gate explicitly reserves promise outflows, rejects one yocto short, and settles the exact-balance control
+PASS lcp-core-sandbox.sandbox.sandbox_seed_claimable_commitment: 44Qjf5NfMeBZXjuD1ZZkxm5kfMtUDTrBJNKuu3LhvYjD
+PASS lcp-core-sandbox.sandbox.sandbox_set_next_transfer_recipient: D9YmLXtuhA2mouJLgabBJ9jM5W9427YZgtirBPiTDJhR
+SUBMITTED native tranche claim with missing recipient: 8uDtFhb7k2mVTzcjb4w9HPuPpaKdT7aJrMYhtrTjERP3
+NATIVE_CLAIM_RETRY_PRE_STATE {"cash":["30992066249083636999999999","11775600000000000000000000","10000000000000000000000","0","0","0","0","0","0"],"escrow":{"funded_yocto":"10000000000000000000000","paid_yocto":"0","refunded_yocto":"0","pending_yocto":"0","free_yocto":"10000000000000000000000","settlement_asset":{"kind":"near"},"funded_raw":"10000000000000000000000","paid_raw":"0","refunded_raw":"0","pending_raw":"0","free_raw":"10000000000000000000000"},"tranche_status":"Failed"}
+SUBMITTED native tranche claim retry: AUt3ZXdQ74Gfe4qG5rRH5NZKGcc7DYwkBSuPKyR9PF1i
+PASS production native claim path preserves failed escrow and clears liability after successful retry
+PASS lcp-core-sandbox.sandbox.sandbox_seed_closed_refund_commitment: 3WcPsKyJCFGRHtPUCWaQYuk6wWx6zix7SZb9Jk9F2GCS
+PASS lcp-core-sandbox.sandbox.sandbox_set_next_transfer_recipient: 3B6edxk7v4WwGCJUXZU1B4G9WP2ooNhoW1yjG2gYDDjH
+SUBMITTED set free native cash margin for native escrow refund one-transfer margin gate: H88vLAf3gH7iVBTBjAevrwfsffun841hSFZ9pGiuQM3y
+EXPECTED FAILURE RECEIPT native escrow refund with one-transfer free margin: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"transaction_status":{"SuccessReceiptId":"8HDTMHALw2R87pcC4fPakfjfsTVkNxsyMC8wpNw3MxaV"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"logs":["SANDBOX_CASH_GATE_FAILED C=31982637907526178499999999 S=11784980000000000000000000 escrow=10000000000000000000000 operations=10000000000000000000000 legacy_refund=999060000000000000000000 recovery_credit=19169777907526178499999999 F=0 X=1009060000000000000000000 storage_shortfall=0"]},{"status":{"SuccessValue":""},"logs":[]},{"status":{"SuccessValue":""},"logs":[]}]}
+PASS expected failure native escrow refund with one-transfer free margin: a5PdbDF2iFzcmv4iNDwVutpXkeT8FxNKSuHgwoNHuE3
+SUBMITTED set free native cash margin for native escrow refund failure with callback reserve: C2fGprbQFnxdCxndZ4ectNfr1cyNDD8DPEzFp3TTmVTs
+SUBMITTED native escrow refund with missing recipient: 82TjazdM8S21Ks7RurKpa2EtA4GmTijiRoUEAfq1Jn2H
+SUBMITTED set free native cash margin for native escrow refund retry: 3kYe4rYLz1p29bxmntobVXr7UcFwXhi1mzSZYMirKi8C
+SUBMITTED native escrow refund retry: GJScaj4HnpVDNeGHPWshJZzQtHG9cRyoz3akM4mBRF71
+PASS production native escrow refund preserves liability on failure and releases it on retry
+PASS lcp-core-sandbox.sandbox.sandbox_set_next_transfer_recipient: 3nUXcWKFSMsSio5rfUvTnV6MWfDUAHsRZhzfwzZL8GT2
+SUBMITTED set free native cash margin for native operations refund failure: 8STsA5vRN3LvZTDNstEp1LPnBEVqDA4Uggxg8Akz7PJV
+SUBMITTED native operations refund with missing recipient: DbzYEgiruMnfrz4wF65TVQL1T9YP1TS8KUmcK42H7P7Z
+SUBMITTED set free native cash margin for native operations refund retry: 29tSETn4inVxbeMWeBRoWy7qLW21ML5yRvXqCU6fn3U1
+SUBMITTED native operations refund retry: KPAzShWYvhRxNv6uGtNztMjBe5ewnz9z4oadZtK5FEg
+PASS production native operations refund restores spendable balance on failure and settles on retry
+PASS lcp-core-sandbox.sandbox.sandbox_seed_storage_refund_credit: AG7FieM58sorXMeJNtNPm1YuhukGdPEpXP3kGD2BJQmC
+PASS lcp-core-sandbox.sandbox.sandbox_set_next_storage_refund_recipient: 4yN3W15Guv6u7WjCF4u25NW2fKLDR4UNeZaUBonEKPzZ
+SUBMITTED set free native cash margin for native storage-credit withdrawal one-transfer margin gate: AVAxfUepKDtTKR8r8RPPx6esF58ofPtDoSsVdmS9Y4rS
+EXPECTED FAILURE RECEIPT storage-credit withdrawal with one-transfer free margin: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"transaction_status":{"SuccessReceiptId":"GqJtrYqNwNjC9fv6oyJFTif7kYZ29tZsdwGnfznc9szP"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: native cash solvency check failed"}}}}},"logs":["SANDBOX_CASH_GATE_FAILED C=30965489323387366799999999 S=11785350000000000000000000 escrow=0 operations=0 legacy_refund=5000000000000000000000 recovery_credit=19170399323387366799999999 F=0 X=5000000000000000000000 storage_shortfall=0"]}]}
+PASS expected failure storage-credit withdrawal with one-transfer free margin: 92DDfper7Af5iDESmn7HrrvSZqDGnbV14uSsweNuM4Wq
+SUBMITTED set free native cash margin for native storage-credit withdrawal failure with callback reserve: 415aZHqjQ8ETCkgxSNb6kY6Khhntwb4NkbF3Jqkq8x1p
+SUBMITTED storage credit withdrawal with missing recipient: uXzLS8rfZaXgkRy5KdEdTBE3fvdhZzrYkMCSGDHc9jh
+SUBMITTED set free native cash margin for native storage-credit withdrawal retry: 8Uwe77pkxW9bGRLqnx9M8uWuvZ5saCfjzoXido2m1aKo
+SUBMITTED storage credit withdrawal retry: 12bhsMDYzaX38Bh2h4M3PNHx8kB33B2z59XW4Q2BLjer
+PASS production storage-credit withdrawal restores credit on failure and clears liability on retry
+SUBMITTED set free native cash margin for native storage-credit callback out-of-gas fixture setup: 6SyE9i8wF496qHdidjQ5MiiVXSLCSQ598pjXSAA29n3Q
+PASS lcp-core-sandbox.sandbox.sandbox_seed_storage_refund_credit: 7JhfSeYGe76k5VifoA9KBEEDtnQ3qwy5rTUUNhGKYh6X
+SUBMITTED configure native storage-refund callback out-of-gas fixture: 8BPjGQLhC15DhguMawyL3TbvKv7QPaCg8d6duY6X7UM7
+SUBMITTED set free native cash margin for native storage-credit callback out-of-gas reserve: 9Bfv9AkogEUptZMdHb3rPSBzxckMMojqCdGnLPmsZp97
+SUBMITTED storage-credit withdrawal with deliberately underfunded callback gas: Gdg2mxyHgrYDbihL5AFmjPzY6YWggHYNEVyDviUFHdN5
+PASS native refund transfer can settle while an out-of-gas callback leaves its liability pending and funded
+SUBMITTED set free native cash margin for native callback fixture cleanup: 9Y9HsJ1DsQLGz38Ecf84vQqctRZMSJKVmVA6AYgLfrP
+SUBMITTED deploy mock NEP-141: 2CAaS48eZrTTJ14fXm4L5pURDt9HVLJQ3Gqy6jwadr7i
+PASS deploy mock NEP-141 finalized with the expected code hash
+PASS mock-usdc.sandbox.new: 65TbsiUYxCgsgYRbLUBPamYuZvhTCCbnE2iCyWX3nwcH
+SUBMITTED deploy action-order A: 3HT4FvTmRPpdhHziZm4Vfr9PCJY8jV2AF3M4EnrLHeLg
+PASS deploy action-order A finalized with the expected code hash
+PASS order-a.sandbox.new: DeTtkcoMhuDQCyTrmaNWagyG6fRFv4pLzpJYFUMJzdBA
+SUBMITTED deploy action-order B: 86o7CGVpCawnwskrVisdPddqKK5UZFscCqt8HEyocRmy
+PASS deploy action-order B finalized with the expected code hash
+PASS order-b.sandbox.new: GQ8qfhvh2NDHK7VsS7Evny7ZC6vBsHNgqMBksmJPmT6p
+PASS lcp-core-sandbox.sandbox.sandbox_queue_tranche_transfer: GqujToUjJqm54uAEJZ3ZMqc3YxVeVNGgkHGDPPGxZExP
+PASS callback OOG leaves the token liability reserved (GqujToUjJqm54uAEJZ3ZMqc3YxVeVNGgkHGDPPGxZExP)
+PASS mock-usdc.sandbox.set_fail_transfers: BnveUAazjcVErfddnCB8QWKwJxPXCPainQfY584gRjC6
+PASS lcp-core-sandbox.sandbox.sandbox_queue_tranche_transfer: E74gvhP9BCT8JVvzQe1dTr2CppDym6f1ZJpYYTyEvSXK
+PASS explicit token failure restores free escrow and marks the tranche Failed
+PASS mock-usdc.sandbox.set_fail_transfers: 3jag5eaFsRw6FsKNdwqGn5amBATfaR6mM5pqwCDM1YVY
+PASS lcp-core-sandbox.sandbox.sandbox_queue_tranche_transfer: EUNVAfhX2DszPLR57QWU8TBVaCHtV3xyLPQA6KcHntjt
+PASS successful retry pays once and consumes the reservation
+SUBMITTED queue transfer to account without token code: AmbuPaDFFopsbyu4iDVtpCYAMoeDqWqC8eBJkV4xs6Gb
+PASS missing-code token receipt fails before contract execution with no token balance changes
+PASS mock-usdc.sandbox.set_fail_after_mutation: 4ZBVY1cvqKXFiH7jDFZ7TzpjJqKW1hLjaQZpwqjGJyL8
+PASS lcp-core-sandbox.sandbox.sandbox_queue_tranche_transfer: 5jRdTHx183rprSzX4cigRTbXRLXvYYXaD931Mqhzynki
+PASS mock-usdc.sandbox.set_fail_after_mutation: HTRj1PARVL4KzdhYUtHY6UT7FAMWrat5Z9QH5gZoTyzd
+PASS token receipt panic after balance writes rolls back both token writes
+SUBMITTED action order A transfer then deploy B: 7ak1HKzjLyKzkbdiXWPDQk9rLiYfnUG9xWgvcBQ29hP2
+SUBMITTED action order B deploy then transfer: 8aK1Hi4yhSk8zyRaYrrFWstRFUfRBZxbezYJARUhi7Kv
+PASS protocol-88 V4 metadata binds transfer-before-deploy to A and deploy-before-transfer to B
+SUBMITTED queue concurrent commitment 3: 2sP1Zq89EoMALtyFGBL62Yi33wrBcYvYCi1qPAT8KtEe
+SUBMITTED queue concurrent commitment 4: 8bfdBQm75qbQS1nvkgmXmYfUhG8NpfdYJ96zvkvoRuNc
+SUBMITTED queue concurrent commitment 5: ENVX9abNGFhVwCHf2GegNrayxg14CxfQYgKphGxbcHvs
+SUBMITTED queue concurrent commitment 6: 99JjiwecGwutfADDTFkAjH8Xeb6KGcptNjYpcGq1MHL4
+PASS four concurrent equal-amount transfers settle independently
+PASS final recipient balance equals six successful token transfers (6,000,000 raw units)
+WROTE protocol-88 raw receipt fixture: /sandbox-cache/out/protocol-88.json
+All local NEAR Sandbox callback checks passed; no testnet transaction was sent.

@@ -1,0 +1,37 @@
+
+added 46 packages in 3s
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+PASS create lcp-core-sandbox.sandbox: DpvdLPRNCSo926pfcWiXtXeMkzit71ucYLzMUv6xfptW
+PASS create mock-usdc.sandbox: 9r516jDFqwQNskqZRNBturo75oJFNEb3GNLP4RVyHnpx
+PASS create no-code-token.sandbox: 5hQGTWHj3tJpNVF4W5KJS7jYjwowAhdLuE1ueEGT4cHB
+PASS create order-a.sandbox: 5PWoVpcomiFcYH7dM7cCMQk7f6ZY97mbt9Da6UHht5nj
+PASS create order-b.sandbox: Dy9ZndutfHNYJtms8SU9J3veVMu5YKXQgoMbRT4gpF83
+PASS create cash-recipient.sandbox: EWgNjsAZC32vG6NVwNZgoSGZTfY1xDwbCudbP2d2Hb8T
+PASS create recipient.sandbox: G57YvtQRHrziWGaMyE7SWviLfWMjAHdoG4vWiBvUrSyy
+SUBMITTED deploy fixture core: 14hHioXAZG1JVnCwKaJMRioGStWeWpoGaDfwXvrLgzHS
+PASS deploy fixture core finalized with the expected code hash
+PASS lcp-core-sandbox.sandbox.new: 3Ukj9YJwTKRTMs62Yee5KYdR9qexuzwaFeTdLfLo5v4s
+PASS fund isolated core native liquidity margin: CZ1A3981ZWVrNJhX7mozvDBLUbz6Et7fFYpcXxne43Ci
+PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call
+SUBMITTED deploy recovery mock USDC: DZgx6LCeQt9MTiNJLmekosrtB2MNdMMKNywr7BBx8w9
+PASS deploy recovery mock USDC finalized with the expected code hash
+PASS mock-usdc.sandbox.new: 2GJKbWj8UcBat3fXsgUEMCpXyR6NPuUcSkwktJkrp5gt
+EXPECTED FAILURE RECEIPT lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"transaction_status":{"SuccessReceiptId":"6VqMxkBj6AcCieRANF8QAApVejB2WTftqw4ZW7HXv6fo"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"logs":[]},{"status":{"SuccessValue":""},"logs":[]},{"status":{"SuccessValue":""},"logs":[]}]}
+PASS expected failure lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: 9m736EYT8czch2cjEj4ei2PTDBTeiM5uSop5s9FvRdnM
+PASS lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: ar5kTTksLUUVTgmEdsrjjgFZajGMc3c59MJbMtUF67d
+PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys
+PASS create bootstrap-guard.sandbox: 7dXvLxMomrEcu1gMZQP3Jvnqs8Y7o4mdmb8WeXLDxrhX
+SUBMITTED deploy fresh bootstrap-guard core: FnECxPH4ukE3pxMnz1myJEX2unBgVvmUZbrec5GXx4hm
+PASS deploy fresh bootstrap-guard core finalized with the expected code hash
+PASS bootstrap-guard.sandbox.new: 2KgggtduNn4orXQrfMW9VkAiCJ1R1Lc1BtiXdDapqwho
+EXPECTED FAILURE RECEIPT bootstrap-guard.sandbox.create_commitment: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: attach at least 6680000000000000000000 yoctoNEAR for storage"}}}}},"transaction_status":{"SuccessReceiptId":"FRxjwVuaQRVmXHFBxjV9eAqDD4otsVG28RuqRKroeJBi"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: attach at least 6680000000000000000000 yoctoNEAR for storage"}}}}},"logs":[]}]}
+PASS expected failure bootstrap-guard.sandbox.create_commitment: 8EAtzFc6NpaXigQm1ozrPNnfXZLbTB5QE5tTDpKUUseq
+PASS bootstrap-guard.sandbox.create_commitment: 6KZAxwAWKwsRnwpxBoPcVaS2iAEguYZP8fpmtM5KrAym
+EXPECTED FAILURE RECEIPT bootstrap-guard.sandbox.bootstrap_receipt_recovery: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: receipt recovery must be bootstrapped before commitments or transfers are created"}}}}},"transaction_status":{"SuccessReceiptId":"4kyyCz9A2mLhQvojgSSAWyMu2wA9KTvFycy27HM9VPCz"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: receipt recovery must be bootstrapped before commitments or transfers are created"}}}}},"logs":[]}]}
+PASS expected failure bootstrap-guard.sandbox.bootstrap_receipt_recovery: 57XPyuZ9iKjvLk5swBnHwwFVccEKcFspbEAqcoCjgeTi
+PASS a real commitment prevents recovery bootstrap and remains intact in isolated Sandbox
+Isolated bootstrap-after-commitment guard acceptance passed; no public network was used.

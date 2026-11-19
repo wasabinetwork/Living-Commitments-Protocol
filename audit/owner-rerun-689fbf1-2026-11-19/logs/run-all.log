@@ -1,0 +1,15 @@
+=== START protocol-88 (NONE) 2026-11-19T02:23:51Z ===
+=== END protocol-88 exit=0 2026-11-19T02:24:50Z ===
+=== START bootstrap-guard (LCP_BOOTSTRAP_ACTIVITY_GUARD_ONLY=1) 2026-11-19T02:24:50Z ===
+=== END bootstrap-guard exit=0 2026-11-19T02:25:13Z ===
+=== START storage-oog (LCP_STORAGE_REGISTRY_OOG_ONLY=1) 2026-11-19T02:25:13Z ===
+=== END storage-oog exit=0 2026-11-19T02:26:03Z ===
+=== START storage-registry-cap (LCP_STORAGE_REGISTRY_CAP_ONLY=1) 2026-11-19T02:26:03Z ===
+=== END storage-registry-cap exit=0 2026-11-19T02:27:32Z ===
+=== START storage-shape (LCP_STORAGE_REGISTRY_SHAPE_ONLY=1) 2026-11-19T02:27:32Z ===
+=== END storage-shape exit=0 2026-11-19T02:27:54Z ===
+=== START usdc-claim (LCP_USDC_CLAIM_ONLY=1) 2026-11-19T02:27:55Z ===
+=== END usdc-claim exit=0 2026-11-19T02:28:31Z ===
+=== START usdc-refund (LCP_USDC_REFUND_ONLY=1) 2026-11-19T02:28:31Z ===
+=== END usdc-refund exit=0 2026-11-19T02:28:48Z ===
+ALL DONE

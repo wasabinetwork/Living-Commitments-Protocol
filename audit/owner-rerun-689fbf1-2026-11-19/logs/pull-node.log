@@ -1,0 +1,4 @@
+26-trixie-slim: Pulling from library/node
+Digest: sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
+Status: Image is up to date for node:26-trixie-slim
+docker.io/library/node:26-trixie-slim

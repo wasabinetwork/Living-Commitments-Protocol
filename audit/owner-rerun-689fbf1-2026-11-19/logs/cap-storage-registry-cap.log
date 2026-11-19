@@ -1,0 +1,132 @@
+
+added 46 packages in 3s
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+PASS create lcp-core-sandbox.sandbox: E3vYjwSojNAuVLwREBcL4gBDUSx6Z8AiBBCRjYZDgFm6
+PASS create mock-usdc.sandbox: 9W9QHj9z5bLmMLzHDZCg8xx3TPN8yxUabuxe8onCuXAa
+PASS create no-code-token.sandbox: Ba4TQte1UL3KwRptBHwWfoZunSqZXWuNgEctyYwgpZG
+PASS create order-a.sandbox: G8uXq4ZRUWkkwpTxPRQ8M1BpYeBFyk5p5zVjfHGME1uy
+PASS create order-b.sandbox: 5mMrouTvbgoG3CHM1oTcPzKtfpHknJ446kAJGLhFXgxu
+PASS create cash-recipient.sandbox: FSVtjn94KoQ8WqU31JhQkPUBbFSfZ77WSASAas76Eb1B
+PASS create recipient.sandbox: 2Fb5JhEXxUzJQUP3dX5KejEbZJmihupt5WgUjZdicQ85
+SUBMITTED deploy fixture core: 6HfTRSCSUFAfw4ztgCatnviEtnK2drK7Hv3YtizdQ6Uh
+PASS deploy fixture core finalized with the expected code hash
+PASS lcp-core-sandbox.sandbox.new: 8ePdTkdN3AGND7R1xAPBfyXH5J9BeFBtmKFpHwzJCNx4
+PASS fund isolated core native liquidity margin: EsdxSeKmKc3ekYSsj5QTJoWvJRLH8wLMYcoV72w5Ms1T
+PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call
+SUBMITTED deploy recovery mock USDC: 22tT6BdJBTgHqN399LFSkC8oEbqCAPGD2sJuSEFir4Cj
+PASS deploy recovery mock USDC finalized with the expected code hash
+PASS mock-usdc.sandbox.new: 7sfwgtKDhQPE2BFWH7b9VKjSHHH2LWhNEfL2iRttv5Zo
+EXPECTED FAILURE RECEIPT lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"transaction_status":{"SuccessReceiptId":"9vxk3H9BiGLGYy6GxpoZo5sWz3hoB67zxNkH7UbeJvJA"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"logs":[]},{"status":{"SuccessValue":""},"logs":[]},{"status":{"SuccessValue":""},"logs":[]}]}
+PASS expected failure lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: CTQPuz9884ddVGRDqz3Qornhs5qXEmFMCmg4a51sQ6YN
+PASS lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: 7fRv5wC3yhLby8pZhmmyAoThGXaBLuVFCAT9utxncYWi
+PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys
+PASS lcp-core-sandbox.sandbox.sandbox_verify_maximum_recovery_envelope: C8tysTVLSa2gN4yzz1BhVWxAnh9furpVGitVUK1SUpB7
+PASS 500-byte intent and 1,202-byte 5-of-5 envelope in the contract VM parser
+PASS seed 32 measured storage rows: EUHDWrUiBD34SYNP4XnucusvMvRpwVJkBdsKfZ7VADgT
+PASS seed 32 measured storage rows: BucFzdB7JadZinuATqE5fVieqzkDBV1YURn1dDaN8rw4
+PASS seed 32 measured storage rows: EdFPrtfk16AeEt194cAJCVxTf8B9xkdtP499zyD2WZ7W
+PASS seed 32 measured storage rows: DdpZfY8qZcGqhCDuPGBpwC8xBzDtQBmPwA66kaMckuP5
+PASS seed 32 measured storage rows: 3sFoA4zzQE5PoDp83775SVQfaQZ93xDfQ6awXdw7SWNx
+PASS seed 32 measured storage rows: 4wLKujYQLvFBLJxjVKTiAbQ2yD2hCJi6Cb8kgE9nJk3n
+PASS seed 32 measured storage rows: 8hjMZ6oNMhnHJFjR2fk9mfTPyjvN1NDDJRXGAZ5KPmVp
+PASS seed 32 measured storage rows: CvxtMd8TQaiYskmCTWpRwbxpg9Lh35v4xK1QcFKP3Ljk
+PASS seed 32 measured storage rows: GWyqdHzJYL6211pkzXaMLpxuW4QjRQsFBLjmsqefsNA1
+PASS seed 32 measured storage rows: DsoFy13cJw7fFqL4eoMGTXVsxWTqXLvbU4JjjECsC4CP
+PASS seed 32 measured storage rows: E1VYWswK2BGdEs18tci7cFqvkNWSu3K1tUTEzj7qLjY
+PASS seed 32 measured storage rows: AD7vKJdCNbXWXpDm3Qh9HX3bw758RftbPwXPY1kufWnu
+PASS seed 32 measured storage rows: jf4a8XGK1hFyNgB2jGvkwsop41efUweks2C4ntyLewR
+PASS seed 32 measured storage rows: 7tsHshjW5BgVPoTtv9kGFabe567VkoPZiN1L485nRBUR
+PASS seed 32 measured storage rows: 7UN2WGeWFQa6sNAvRZeMJcoZFKZFtWvcRWkkPZZtQ76p
+PASS seed 32 measured storage rows: 8hmXAcRftjQGK3mbFcvibuumvGQkPp3UwtV99sBH4bxP
+PASS seed 32 measured storage rows: AbbrzbWn9AAsaDMqrJSK1Mqt5DNeQmyNPjAweBRVaFXY
+PASS seed 32 measured storage rows: 3azvigqY7Hc5KesMUoojxL1p7ozUPRCqG9KCuxe1Uhug
+PASS seed 32 measured storage rows: 6G8K9g6ofS8GRvPqNc9YD9PGavdfwcpYBQS3iofhv7A6
+PASS seed 32 measured storage rows: 7AoqKAG5PXKVgkXThAXp6qb3rS81yDofMWVK7Ku5HLyF
+PASS seed 32 measured storage rows: 3swTbq79aHKQ7EqVmhh4JuL9MXK4w3532BZpAmkvAv7V
+PASS seed 32 measured storage rows: 9r3Jd7DsUbDUH5eokmaPM18Hz2FuspEEhNTq2qAnnSio
+PASS seed 32 measured storage rows: 7dYUM9hwkycRugdVqbcfU69FSXweQXhHUMXjAp5rpwbR
+PASS seed 32 measured storage rows: 48ik9aFt9RnDpU7ncCbBrWgMLoZFBq534PHPsn5nft5K
+PASS seed 32 measured storage rows: 5MAT9AQaTM2xK1TMNPpGc21o6bYKza6gugsyPRHmmXbG
+PASS seed 32 measured storage rows: HhWMw5xHuVqXeuN1vsfWCUHfbJuvCBg9NhSsyNdC6DC5
+PASS seed 32 measured storage rows: 5528jTHRNxLhM93BVKaBN71dnXYLLx4qn6c6iLGK3y1E
+PASS seed 32 measured storage rows: 7EdcajvMkz3pXpsCoB5WjJdL4Sy5NbpHmAtVj926ZS5H
+PASS seed 32 measured storage rows: ESDLVqSydN2xHPtkqHisyohNbfZsjuf37BfTaLJbvvmV
+PASS seed 32 measured storage rows: BL1MHGnxV9qJGYesWTScmrgdn98HgrYzMGQuiezDFLfG
+PASS seed 32 measured storage rows: 6Lb9g7URR8r8AchvEEbyD72ywvW5uD1CSRAWtDJFGMhK
+PASS seed 32 measured storage rows: 8dTUEciFeUV6V8RK6sBpfm7A8ZdUVs4Xm58eJVdVbu8D
+PASS seed 32 measured storage rows: 6sz4m3YvCrDnhuzEUWH4Ff8fGp3BEv7P84xyssTZB8k3
+PASS seed 32 measured storage rows: F85S2p1dCDsmCHM7oyZfknaFvLdTCb51YSVvhMdfKNuK
+PASS seed 32 measured storage rows: BED6qj9dSg8BACdNpYh5GoFuzU1WYcGoF5SbG7riYs9D
+PASS seed 32 measured storage rows: 5CR5UWDLbgtrsJ2fBqXm6iqJsgDgBJie5xgacLM211Go
+PASS seed 32 measured storage rows: FY2qwRdk3NEeL4fuNHfj5Pf3wEFQuptXjZP5fyNwNp3T
+PASS seed 32 measured storage rows: DAq9DTv5ZTNnQxFvWWedc14fSEETaTvwCTgqC9wgSeD5
+PASS seed 32 measured storage rows: 31b4yGWYTMoBDv2yJP3UQjrhNydZ8EiwbkGpeEdFxcKR
+PASS seed 32 measured storage rows: DJabV9P64ZPhwQRDCPzUmDiLmn3zyESFi48rB8V3Hzxn
+PASS seed 32 measured storage rows: DB4D9FjZCb3ZxmevkUGEi1TQNV4ZFazYdM4eshSTht8g
+PASS seed 32 measured storage rows: HwAKYgNMM1BtkNhYUyinmh89EwHcqmW1ivYRNfDtQdJh
+PASS seed 32 measured storage rows: AG9tE58g9ndYFipKAvLhDWXg4gubogbS3sUfUWRKJGiU
+PASS seed 32 measured storage rows: 4CWuQDZEq6bb8dY685N43BMeHX11hDgUCVN4xV3vcjuW
+PASS seed 32 measured storage rows: 936beiAvZwrBuPtSmPYAMZtx6RxfhUPN75mJiW7p7Wyx
+PASS seed 32 measured storage rows: 2bxq8hWHj8HbQQwmLRgzdswwEo7qGBHHDFkR7kNL2FYX
+PASS seed 32 measured storage rows: 4DC3QEUythdqYqcah3SYCxydVXhCxKDraJ9KnueL3odQ
+PASS seed 32 measured storage rows: 8MW2XnZSKZHuiTdjNVCPdjyXMHS73VJ5tznfor6EC1TE
+PASS seed 32 measured storage rows: 9zSDr8jVK6UEag1LGDbGxVUkeoGkU4KwrRNvPxDPSFPu
+PASS seed 32 measured storage rows: 6QtiWBrMmbjU5o5Y6HFGstdtBhwUAdkVmS8no8WX6dJD
+PASS seed 32 measured storage rows: 4EA4gdt88doRgTNvEE3pHMgajN37AnKW6K3Ld53komzg
+PASS seed 32 measured storage rows: 3KwozugQUYwvj5C3hLzGozNKooqVTbuJQDVi9MAcwNQu
+PASS seed 32 measured storage rows: 8eEMe2sVg1HbN4bD17EHDrvkSanXvzu913yL8qoq1phq
+PASS seed 32 measured storage rows: GdPuqLBbcfhKBKvWzH7WuLcdLCne8AetGk5cMaZA43Up
+PASS seed 32 measured storage rows: A9tSrcjrhfi4DgsYYepUwoG3u9dVfd4toDaT3Ksmi7D8
+PASS seed 32 measured storage rows: E1ywS4qKm7kAB9XHsWKUijUwGpw8qTC2fwmrXe8JyNBZ
+PASS seed 32 measured storage rows: 7qpdtt8zZxhCFSo13QL2bo6ZxUjbCE7NUUSZdjCcDW6i
+PASS seed 32 measured storage rows: HHUZ6w4i7fTcwqyLccyWjV1xD3BZCCgMSAQnzwwZjme9
+PASS seed 32 measured storage rows: 7BoDX5PPoLDcRJUz6Q6iAS4nRpAGVqpBJ86S54UcQsSz
+PASS seed 32 measured storage rows: HPni8EdQ1hivvT7mkJ46nyhzaJiFYH5T29CCEfCUsRNG
+PASS seed 32 measured storage rows: 8VuyW2LDFinT1xJdp69dEKDrcQX8uNcUtt8yJj1mbU3C
+PASS seed 32 measured storage rows: 9mFdjyM8RF2PdUHqGBKqZnrfc1jKfrfjBjzYKWpdL4ie
+PASS seed 32 measured storage rows: F9NjDWeSX3363F8QgNu8y1roJnjA6FzTUWpHtfUv2vLC
+PASS seed 29 measured storage rows: BBujwaF7TY2WtuNNVBqZFbBQwK2eUeebmccZX5kAp3yU
+EXPECTED FAILURE RECEIPT reject storage bond record 2049: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: storage bond registry is full"}}}}},"transaction_status":{"SuccessReceiptId":"7n7im6RVAx4Nfrtwj1Na3bchdJSxxF9fPe1TnjkngcQA"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: storage bond registry is full"}}}}},"logs":[]}]}
+PASS expected failure reject storage bond record 2049: G4YbUUCB2UTL39kbgn3cpZCEKMtcYA1jZQUjtTCRrXhu
+PASS mark storage reserve stale for bounded registry revaluation: ioNna5UGhBTdX7oTUqDxaFKnMLAt2FbhjS248G2tKjK
+PASS begin storage reserve revaluation after stale-price fixture: G2sPWjM4SfZeTKPmmFAu46asFbHxMNPmN1rbftLx52Qh
+EXPECTED FAILURE RECEIPT reject revaluation batch larger than 64 records: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: storage reserve revaluation batch size is invalid"}}}}},"transaction_status":{"SuccessReceiptId":"2gFNN7KXNQNieY7Vdv2fJqVucwokGgjWHMs3D8WYdTmG"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: storage reserve revaluation batch size is invalid"}}}}},"logs":[]}]}
+PASS expected failure reject revaluation batch larger than 64 records: FJKSAmzKTJ9W55wmbKc1L1uvmL3gznBENRUhtA2rnRdq
+PASS revalue storage records 0–64: 6yY5tnoM81LYDLrcjBW29UbxFtrRPFQwNMmtMyiFFRgz
+PASS revalue storage records 64–128: 2mYwGk3XjE8BambKCzDfWy7m3aAZvd665S1c3grCUjr1
+PASS revalue storage records 128–192: 6CK5iAfq72U7J92RsWd8PLwxghpdXZKgQVYVAU9QHqpt
+PASS revalue storage records 192–256: BTCznAPZmFtnPL51Rd8s7YZf3S46MXY9gehbFS6MDRLn
+PASS revalue storage records 256–320: 5rZqgdWjD6ReEPnK59gCB7c9wv6AuLUVg8HGmMAPnkkK
+PASS revalue storage records 320–384: A8Nvk1HLPzk46D6ooYeV8VqFej5qsB7TBvaD7qCyMGeH
+PASS revalue storage records 384–448: Goijjuv3g5auUESXoFfUq1CHxNs7FWmxActZdnRiXEci
+PASS revalue storage records 448–512: DRaHFvZchUf6uBdSTwc8Src2vrscXJgruXdwTWK48UQa
+PASS revalue storage records 512–576: 9K3PoDGba13cpoFjgtVZFFMPd39h5jkA2kCDcz4vEC7b
+PASS revalue storage records 576–640: 7eLKRZCtejETp2swc7RCDgh9LjViCLksf9ukbzJyjAnU
+PASS revalue storage records 640–704: D3aX72KRKaSMcD9fghvJrMYUdK69wThm64mvoKtVRaaM
+PASS revalue storage records 704–768: 3oKkQGP4qH3VEgz6AhG1iac6gEQqETFNQa1GcTHmoG81
+PASS revalue storage records 768–832: CfriWMXcVKVrSE2tGDDfLVrHCYBTHkyLxdkg5nuw2B8m
+PASS revalue storage records 832–896: 5roi9cwmikWH8VASjbBVYcoe77GFzFehxdScVFXDMWN3
+PASS revalue storage records 896–960: 5E2KdCbWrYMx6RMAkk7UpQ43cUkY3QVLrLspnjdzHQji
+PASS revalue storage records 960–1024: GDC3w7spgwsuYdrK9itfhT6FrNTYcqk9MAecgBnCkTB3
+PASS revalue storage records 1024–1088: E3B3YDfDi4TwLFegGay4sH7as7tLkDuHGK78whPTJupH
+PASS revalue storage records 1088–1152: HVs6D5YgpLzoxPgEBKJej5LhUoVnCBQXXS66Pe4edMAJ
+PASS revalue storage records 1152–1216: 9zto6WSN3ogRigDxYYKFFUfdWLq6QiesTiSUEXMiRnTc
+PASS revalue storage records 1216–1280: 5D3dj4eSpWuENtBuaAdUndYVBSqZLRYD4cV7vfJYVf4u
+PASS revalue storage records 1280–1344: Gf3AV6EZbtfxFKAoXAuAVpjRmorbUtBcEPMC6rBUrmfT
+PASS revalue storage records 1344–1408: 6scNTq9vjkxVNs55QDW6xhYDZePAp5UWWSADcWkVVped
+PASS revalue storage records 1408–1472: 8nkBUdFrKDocmc3svZ8y7SR6X78SjrG48pzCEosuokzS
+PASS revalue storage records 1472–1536: 9PoyyJ89RbSVin5BY9KS1z8DKatbXfTyQ3sW4H4YuaTc
+PASS revalue storage records 1536–1600: AjsfYB86xEVX5cRCGLyNofuqZ73mwr2QJvMWaKXJkX2c
+PASS revalue storage records 1600–1664: DPnDZkzjar9v2232WYdZjKfvzv4FamPw6HCNzxZ86DMs
+PASS revalue storage records 1664–1728: Eztjh1DQmp5EuH4jiyjg5mSTxAVaC9qiuV4kwedGKEPF
+PASS revalue storage records 1728–1792: 6zgDh1otgBr5K9penyC7yyVBZai9zTrt1UrjaQD8s6ig
+PASS revalue storage records 1792–1856: DwYxbxattCmfKGR5jXtsMWNHJuZ1Wn5cU485tnguff2q
+PASS revalue storage records 1856–1920: 6hiqdHR3aERqSxVeik6eSfejUVqNNeVY51bw8ouPJBZB
+PASS revalue storage records 1920–1984: BNbSZmrw4qUXhyChUU4XqA35eqjpLPcbV66eYz1Jfufr
+PASS revalue storage records 1984–2048: EKcZsjc5MUHGFYjekwB5wpG5XTkouAKobkpYAuBC7a9H
+PASS confirm an already-complete reserve revaluation: EpJX136XhHYvJHr3zwCWEVftXCPsNZX1HKg4RevpVPoF
+Isolated storage registry cap acceptance passed; no public network was used.

@@ -275,11 +275,24 @@ matrix; close rows, not bullet counts.
 
 The operator handoff is
 [`tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md).
+It was corrected on 2026-11-19 from the owner dry run: the two source trees
+(`689fbf1` for contract sources/core WASM, `9e08339` for runner/verifiers/
+manifests), the mock-token build and its host-dependent digests, the verifier
+defaults, and the in-repository output/manifest location are now stated
+explicitly.
 
 A1's source question is resolved: `9e08339` is the commit "test: pin 689fbf1
 local recovery acceptance captures", so `689fbf1` is the normative source and
-`9e08339` adds only the manifests. Reproduction can start; existing manifests
-must not be regenerated.
+`9e08339` adds only the manifests. On 2026-11-19 an owner-machine rerun
+executed the handoff procedure end-to-end and recorded evidence in
+[`audit/owner-rerun-689fbf1-2026-11-19/`](audit/owner-rerun-689fbf1-2026-11-19/report.md):
+pinned inputs/artifacts were re-derived, all eight captures regenerated, all
+verifiers passed, and 65/65 non-volatile scenario payloads matched the committed
+set. This is **not** independent reproduction (same operator/workstation/Docker
+daemon) and the run found handoff defects (manifest availability at `689fbf1`,
+pinned verifiers targeting older captures, undocumented/host-dependent mock-token
+artifacts) that a second operator must resolve. A1 remains open for a different
+operator on different infrastructure. Existing manifests must not be regenerated.
 
 ### Workstream B: cash gate and liquidity
 
@@ -388,15 +401,52 @@ P2  A1/A2 reproduce and rebuild ---------+
 
 ## Open decisions
 
+Full evidence and required gates for each decision are in
+[`P2-OPEN-DECISIONS-REVIEW-PACKAGE.md`](P2-OPEN-DECISIONS-REVIEW-PACKAGE.md).
+
 1. ~~Which commit is normative for the reproduction: `689fbf1` or `9e08339`?~~
    Resolved 2026-11-18: `689fbf1` is the source; `9e08339` only pins its captures.
-2. Run the real seven-day rotation delay, or record it as an accepted
-   operational gap?
-3. Is a full state restore that deletes the consumed marker in scope, or should
-   it remain rejected?
-4. What is the accepted canary risk for a false `Failure` locking all quarantines
-   until the shared token balance covers gross units?
-5. What buffer value and method gas limits does the owner accept from B2?
+2. **Seven-day rotation delay (owner accepted 2026-11-19):** treat the 10-second
+   sandbox fixture as logic/boundary evidence only and require one real 7-day
+   elapsed run on the isolated recovery-enabled instance (propose, verify no
+   early activation, complete the cancel-or-activate path, activate only after
+   the real delay) as a pre-canary acceptance gate. Record chain/instance,
+   proposal generation/digest, `activate_at_ns`, observed activation
+   time/block, operator actions, and tx hashes. Not an accepted gap for
+   canary/production; until completed, status remains not elapsed/open.
+3. **Full state restore that deletes the consumed marker (owner accepted
+   2026-11-19):** prohibited and out of scope for recovery-enabled or
+   recovery-candidate instances. Do not restore snapshots that can resurrect
+   finalized financial obligations; require forward-only upgrades from finalized
+   live state and pre-upgrade/pre-enable consumed-marker/counter/ledger
+   continuity checks. If a restore is ever unavoidable, treat as a new instance
+   or require owner-approved incident reconciliation proving no finalized intent
+   is reintroduced before re-enabling recovery. Record as a runbook/policy
+   prohibition (on-chain detection of a whole-state rollback is not generally
+   possible without external anchoring/redesign).
+4. **False `Failure` locking certificate quarantines (owner accepted 2026-11-19
+   as bounded canary risk):** accept the liveness tradeoff for a limited canary
+   with explicit controls rather than an override/timeout/split-balance escape
+   hatch. Controls: disposable low-value fresh instance, strict exposure limits,
+   named independently administered 4-of-5 sign-once operators with
+   abstain-on-uncertainty (Workstream D), monitoring/alerting on quarantine and
+   backing shortfall, documented response runbook, and an owner acceptance
+   record stating "a false certificate Failure can lock all certificate
+   quarantines until full backing is restored; no timeout/admin override exists"
+   with maximum accepted exposure. Do not expand beyond canary until A3/D3 and
+   any incidents are reviewed.
+5. **Buffer value and method gas limits (owner accepted recommendation framework
+   2026-11-19):** do not fix a final numeric buffer/gas value yet. Close B2 by
+   fixing owner policy inputs (max concurrent pending payouts per commitment,
+   stuck-callback allowance in hours converted to a count with stated
+   correlation assumption, largest single authorized payout/refund, margin),
+   completing remaining measurements (recovery-credit withdrawal and
+   callback-OOG retention storage, real policy max outflow), rerunning
+   `node tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs` with approved
+   inputs, deriving method gas limits from measured worst cases plus margin, and
+   recording approved values in `TODO.md`/deployment runbook (gas float
+   separate). Conservative canary starting posture is guidance only, pending
+   owner-approved numbers.
 
 ## Definition of done
 

@@ -1,0 +1,22 @@
+### verify-protocol-88-fixture
+PASS protocol-88 capture integrity: 8 source hashes, 24 receipt records, code digests, rollback, conservation, and action order
+LIMITATION: validates captured artifact consistency; it does not independently recreate the Sandbox run or verify Merkle proofs against block headers.
+exit=0
+### verify-bootstrap-activity-guard-capture
+PASS bootstrap-guard capture: 8 source hashes, finalized commitment, rejected bootstrap, preserved state
+LIMITATION: validates saved local Sandbox records; it is not a testnet or receipt-proof verification.
+exit=0
+### verify-storage-registry-capture
+PASS full registry and maximum-payer captures: {"core_wasm_sha256":"890daa7778517b949232e62efb1cdb75b3290858f578920758c53d3761e3be80","registry_limit":2048,"revaluation_batches":32,"max_payer_bytes_per_row":527}
+LIMITATION: validates saved Sandbox evidence; it does not independently rerun Sandbox or verify receipt proofs against block headers.
+exit=0
+### node --test suites
+✔ rejects a changed maximum-payer storage measurement (0.92863ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 359.09531

@@ -1,0 +1,42 @@
+
+added 46 packages in 3s
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+PASS create lcp-core-sandbox.sandbox: 7sXtE2nuHdiDeBdqcpKaaTBNsWhjTBkbax5tumRjb9gx
+PASS create mock-usdc.sandbox: BLNAs8nXfvZtyH3LnhtNrskTUtCFtSMsHojATZYo2MNU
+PASS create no-code-token.sandbox: EqC9omz1RvHWKGYTiUKxWdPWkUPoUwPd5PKaZ9fJUVxV
+PASS create order-a.sandbox: FJnh1JW9KVqK5Ta2c5Ux5xmL3qxZMVduCNYJzNmWdvkf
+PASS create order-b.sandbox: 4h5oRnvE4uHySJQqFCk2gYhCWs9zdN91sLqtRTntNRsc
+PASS create cash-recipient.sandbox: CEcurht8u6aXoee82mmRgKmyHYokuhfUSjh8fZbD4S3P
+PASS create recipient.sandbox: DVraAKdcBPXiyz6V2CJszdLtubChhnHvvFCgym3D4eJL
+SUBMITTED deploy fixture core: Gj2scc2vFniBLa4RA8rSmB4CGFjDxv4dJ7UQdmrWgiNq
+PASS deploy fixture core finalized with the expected code hash
+PASS lcp-core-sandbox.sandbox.new: GgUinAvREp97rTuB6q2AWAmYXuCXvYEfBgJpvznpcqxo
+PASS fund isolated core native liquidity margin: 3YHNdhma2x7C3Nm1J69XDr3H7QJSYhRfPyADSMiFsCm7
+PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call
+SUBMITTED deploy recovery mock USDC: 7j5JCq6KGWeeB1vLZp5hj4guKGuVG4hCUkHUhrwrY6J
+PASS deploy recovery mock USDC finalized with the expected code hash
+PASS mock-usdc.sandbox.new: ENz8RYATtbWKF5PXPD7XUwJzTYCrsoLD92k47GJTT7jY
+EXPECTED FAILURE RECEIPT lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"transaction_status":{"SuccessReceiptId":"CPdu8cUPxqxgrHDE8ggbViASE6be616cHg7LMUzmEuLk"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"logs":[]},{"status":{"SuccessValue":""},"logs":[]},{"status":{"SuccessValue":""},"logs":[]}]}
+PASS expected failure lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: CgeZUDZwC47eAtUpK5e1UHwq2Adz2xEiHibkV1QqWtoY
+PASS lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: DSpgEnG9ctURmmhXykJvFPufb4dsUH3PchwtHcLC4m6f
+PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys
+PASS lcp-core-sandbox.sandbox.sandbox_seed_closed_refund_commitment: 77gCvTg5ppcBHH3i271ZALbsgcupSrSKfXgLLxo7REKB
+SUBMITTED set free native cash margin for NEP-141 escrow refund transfer-deposit boundary: 2W2EDVmF7k4BXKPxg6yDFc6qb3dQimkWFZY9c2SDTT2A
+EXPECTED FAILURE RECEIPT discover NEP-141 refund storage and transfer deposit: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: attach at least 16320000000000000000001 yoctoNEAR for refund storage and transfer"}}}}},"transaction_status":{"SuccessReceiptId":"HuGrfUfRQg4KCEVvRupBAAFR8sDsTr9hz4xi8XZEQ6T6"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: attach at least 16320000000000000000001 yoctoNEAR for refund storage and transfer"}}}}},"logs":["EVENT_JSON:{\"standard\":\"lcp\",\"version\":\"1.0.0\",\"event\":\"token_transfer_intent\",\"data\":[{\"schema_version\":1,\"transfer_id\":\"1\",\"intent_hash\":\"8c440d0af0ef0cc8f57f180037afaa2889ce30fead8c8d98761646b2de670930\"}]}"]}]}
+PASS expected failure discover NEP-141 refund storage and transfer deposit: EM8erKcCmskwHAohp8KWchncpjLFdFGxk8GFaCAqYLSU
+PASS mock-usdc.sandbox.set_fail_transfers: 8DSzAnMEQ5gAHfE3hQpx6Htr3ndfDe7nWmtBP75yHQPe
+PASS production NEP-141 escrow refund with token failure: 7pKrwK1J6MLMtCh7wKkDkhjsRCbGCM41CAaik84vciqA
+PASS mock-usdc.sandbox.set_fail_transfers: FzJfDxUXGh47cwqpa21m6md9YEsAP6QU14VzVakK3M2U
+SUBMITTED set free native cash margin for NEP-141 escrow refund retry: 2ZXr6LetBaiERu5PKw1rE5odCw714A4wcDd6dnXJSQsU
+EXPECTED FAILURE RECEIPT discover NEP-141 refund retry storage deposit: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: attach at least 16320000000000000000001 yoctoNEAR for refund storage and transfer"}}}}},"transaction_status":{"SuccessReceiptId":"9o8tUTqceuh3GUZ1AgFT6BaSRjk79wqBHvczmZY5b7pn"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: attach at least 16320000000000000000001 yoctoNEAR for refund storage and transfer"}}}}},"logs":["EVENT_JSON:{\"standard\":\"lcp\",\"version\":\"1.0.0\",\"event\":\"token_transfer_intent\",\"data\":[{\"schema_version\":1,\"transfer_id\":\"2\",\"intent_hash\":\"e47b36e04e1823605ef7470aba7937a4e4cbe510c7cde0ff991b7c647dccaf57\"}]}"]}]}
+PASS expected failure discover NEP-141 refund retry storage deposit: 3rta9nfiKHwQdJuFkyBx9rJxnoZ8dmHVEDP7BcTF8Q5L
+PASS production NEP-141 escrow refund retry: 6ZgHiajMxWTtZLrbA3DXaNGCQwfLq9dwR2egEHt2SUtH
+PASS finalize NEP-141 refund intent and release its storage bond: 9xfDDFzjUvgxaKrPeRWJyU43ZCu8Dqi6EpM9s9pGunWP
+SUBMITTED set free native cash margin for NEP-141 refund excess-credit withdrawal: 5p4Duai7vBDAfjRj2DvdyvZTX8buAN7HJMZsaiTqMv2r
+PASS withdraw NEP-141 refund excess credit at its exact cash margin: EiAZqnBmH5U7EyaSj9xVpSEPfteRsetysLEcdqFCCmLP
+PASS failed production NEP-141 refund preserves escrow; retry returns escrow and the exact-margin excess-deposit credit to the sponsor
+Isolated NEP-141 refund cash-gate acceptance passed; no public network was used.

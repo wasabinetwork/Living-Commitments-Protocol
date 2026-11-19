@@ -1,0 +1,9 @@
+protocol-88.json: schema=true wasm_artifacts=true scenario_names=true (15) nonvolatile_scenarios_equal=15/15
+recovery.json: schema=true wasm_artifacts=true scenario_names=true (17) nonvolatile_scenarios_equal=17/17
+bootstrap-guard.json: schema=true wasm_artifacts=true scenario_names=true (5) nonvolatile_scenarios_equal=5/5
+storage-oog.json: schema=true wasm_artifacts=true scenario_names=true (6) nonvolatile_scenarios_equal=6/6
+storage-registry-cap.json: schema=true wasm_artifacts=true scenario_names=true (6) nonvolatile_scenarios_equal=6/6
+storage-shape.json: schema=true wasm_artifacts=true scenario_names=true (6) nonvolatile_scenarios_equal=6/6
+usdc-claim.json: schema=true wasm_artifacts=true scenario_names=true (5) nonvolatile_scenarios_equal=5/5
+usdc-refund.json: schema=true wasm_artifacts=true scenario_names=true (5) nonvolatile_scenarios_equal=5/5
+TOTAL non-volatile scenario payloads equal: 65/65

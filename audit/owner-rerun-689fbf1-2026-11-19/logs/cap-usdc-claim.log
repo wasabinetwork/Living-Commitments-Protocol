@@ -1,0 +1,33 @@
+
+added 46 packages in 3s
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+PASS create lcp-core-sandbox.sandbox: AXdP3dpEKmKEPwvK8CcW8m5oyjiUtWKRGuZJszFcZJL4
+PASS create mock-usdc.sandbox: 8yScuUxHJkHv8kBnVFVgMtrTH3DYTNoQSkBRjBGfxtcm
+PASS create no-code-token.sandbox: ChwhMuLKbKrYweAGjKkgp3NJGkpVCAhXMT6CG4s6KFJv
+PASS create order-a.sandbox: 32wDG6ND64YQpDoaATctKP11ewq5Qj8jyb9NayRmFZGt
+PASS create order-b.sandbox: 4WSA9XaFE6hXJduBztqur2cbxwyRicmxvwJWszY45iin
+PASS create cash-recipient.sandbox: CmzLi1yZKWhmiW57gkU7UB4fb3TNn3MCcEHysXApTQgV
+PASS create recipient.sandbox: HcHv2xeHXqVzKCW1ZUSijxG5wVLiawXSuwHx3cfL1J6L
+SUBMITTED deploy fixture core: 7GDB3FZZ2QyGr8k94oiKNYXZkBE69cgebaQCdpoTWMdq
+PASS deploy fixture core finalized with the expected code hash
+PASS lcp-core-sandbox.sandbox.new: 7CEmAYdcVMZcUihUH47KQ9dFePRqFb7ixFJarSfspL5x
+PASS fund isolated core native liquidity margin: 13VVxa5wgZyc6yfVeEYxUoBk8RYYkrJa8sVTTCU8wXLZ
+PASS a plain NEAR transfer funds isolated-instance liquidity margin without a contract call
+SUBMITTED deploy recovery mock USDC: 7UgkEADeh93LxdjKCJ7tm7frvo5CwovZ8Ahh6rdAPjtC
+PASS deploy recovery mock USDC finalized with the expected code hash
+PASS mock-usdc.sandbox.new: BWbHMKPjaM2zvNj6mYsgWpeRxQHAuPFPEucoZyfUSSc9
+EXPECTED FAILURE RECEIPT lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"transaction_status":{"SuccessReceiptId":"8qwG2Anov37mJ3mq4Sj3e8vedhuBFNr1fXQSem6Cj7Fg"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: recovery committee contains a weak Ed25519 key"}}}}},"logs":[]},{"status":{"SuccessValue":""},"logs":[]},{"status":{"SuccessValue":""},"logs":[]}]}
+PASS expected failure lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: Ba4Gjn4EJXHRFqgipbFTXNnyQUynv89bEyAnSNuKdSCg
+PASS lcp-core-sandbox.sandbox.bootstrap_receipt_recovery: JoeqKGaLfSG4QCxWjEozqppebXiNVckz2SPCGQ2egwG
+PASS local Sandbox bootstrap pins the mock token and five sorted recovery keys
+PASS lcp-core-sandbox.sandbox.sandbox_seed_claimable_commitment: 9nKmMdk4AZxNVmYGaNjANWaaNcZizBNSHoqKxENJrFWS
+SUBMITTED set free native cash margin for NEP-141 claim transfer-deposit boundary: 6c5ADcSAAbG3pJqexbHi8Ug8P5bMYm9gq7dptMfxs3F9
+EXPECTED FAILURE RECEIPT discover NEP-141 claim storage and transfer deposit: {"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: attach at least 17600000000000000000001 yoctoNEAR for tranche storage and transfer"}}}}},"transaction_status":{"SuccessReceiptId":"Cv6mJ6632jx1VGj5hXKwFhbjmNynLfsaDH6gyLHRKqa7"},"receipt_statuses":[{"status":{"Failure":{"ActionError":{"index":0,"kind":{"FunctionCallError":{"ExecutionError":"Smart contract panicked: attach at least 17600000000000000000001 yoctoNEAR for tranche storage and transfer"}}}}},"logs":["EVENT_JSON:{\"standard\":\"lcp\",\"version\":\"1.0.0\",\"event\":\"token_transfer_intent\",\"data\":[{\"schema_version\":1,\"transfer_id\":\"1\",\"intent_hash\":\"c3e1a0827f21d3a3298cc3c9cf6bdbda0bccb3e540baee62f6e5a903f95586eb\"}]}"]}]}
+PASS expected failure discover NEP-141 claim storage and transfer deposit: bJgKFhfY9Ho75tqdBgkkNHPK8wbc32CNR48ahKYSDhY
+PASS production NEP-141 tranche claim: CzWq2eZmMuU1f3c5DUhX9E9zi7u7Xpt4mrFrkA5sqTm5
+PASS production NEP-141 claim sends its 1 yoctoNEAR action deposit with zero starting free margin
+Isolated NEP-141 claim cash-gate acceptance passed; no public network was used.
