@@ -19,6 +19,7 @@ captures are historical and were not regenerated.
 | Sandbox | `2.14.0`, protocol 88, nearcore commit `bc4e9e8cfb03d9e82f027883055624e18576993e` |
 | Capture | `recovery.json`, SHA-256 listed in `../gate5-method-gas-2026-11-19.sha256` |
 | Network | none; `test-chain-` Sandbox only, no public RPC and no testnet funds |
+| Reproduction check | 2026-11-19: core artifact rebuilt to the same digest from `a1d4fdc` and the suite re-ran green (159 `PASS`) against the committed runner — see [Reproduction check](#reproduction-check-2026-11-19) |
 
 Run command (from the repository root):
 
@@ -73,3 +74,43 @@ their own gas allocations and are not summed.
   later activation only affects intents created afterwards.
 - Gas figures are Sandbox measurements, not worst-case guarantees. Apply the
   margin with `node tests/sandbox-usdc-callbacks/derive-method-gas.mjs`.
+
+## Reproduction check, 2026-11-19
+
+The pinned core artifact was rebuilt from the recorded source commit in a fresh
+worktree, which reproduces the digest in the provenance table rather than
+trusting the cache:
+
+```sh
+git worktree add --detach /tmp/lcp-p2-repro-a1d4fdc a1d4fdc
+cd /tmp/lcp-p2-repro-a1d4fdc
+cargo near build reproducible-wasm \
+  --manifest-path contracts/lcp-core/Cargo.toml \
+  --variant sandbox-recovery --out-dir /tmp/lcp-near-sandbox-cache/head-core
+```
+
+The build reported 1,226,309 bytes, SHA-256
+`e1ed579097c82e212d2d5b75cbaf7253657c602210118ccbf9d0c1225dc19cef`, and NEAR code
+hash `GCve2wgGAyuMLRvCzgkPTaN7kR6iRkvRaPjATAET4UfG` — the same artifact the
+primary capture pinned, rebuilt from the same commit through the digest-pinned
+`sourcescan/cargo-near` image.
+
+The recovery-only suite was then re-run against that artifact with the run
+command above (only `LCP_FIXTURE_OUTPUT` pointed at a scratch path). It exited
+0, printed 159 `PASS` lines plus `All isolated receipt-recovery Sandbox checks
+passed; no public network was used.`, and wrote
+[`reproduction-recovery.json`](reproduction-recovery.json) (SHA-256
+`639388e424ff7531d43617e483342ecb6441937f9c7928ce1e0f535ac538f3e7`, listed in
+`../gate5-method-gas-2026-11-19.reproduction.sha256`). The run covers the tail:
+`recovery_credit_tombstone_finalize` passed with its existing assertions
+unchanged, so the tail-margin rule in `../README.md` still applies to any new
+cash-asserting call added there.
+
+Gas is not bit-identical across runs. All 14 `*_gas_burnt` fields were compared:
+3 match the primary capture exactly and the other 11 differ by 0.03%–0.48%
+(largest: `code_hash_change.propose_receipt_gas_burnt`), with account balances
+tracking those differences. That spread is an order of magnitude below the 1.5×
+floors in `derive-method-gas.mjs`, and the values quoted above still come from
+the primary capture, which remains the authoritative measurement sample. Use
+this second capture to check that a change did not move a method, not as a
+replacement sample.

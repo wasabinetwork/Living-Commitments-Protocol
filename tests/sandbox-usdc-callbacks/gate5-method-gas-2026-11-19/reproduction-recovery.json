@@ -1,0 +1,827 @@
+{
+  "fixture_schema": "lcp.receipt-recovery-sandbox-acceptance.v1",
+  "captured_at": "2026-11-19T16:29:23.772Z",
+  "node": {
+    "sandbox_version": "2.14.0",
+    "protocol_version": 88,
+    "chain_id": "test-chain-nRgco",
+    "genesis_hash": "7iSg8fpR2HeUPbTMT3yj1k3iH5yEi7PPshVL8nhCbVUD",
+    "version": {
+      "build": "2.14.0",
+      "commit": "bc4e9e8cfb03d9e82f027883055624e18576993e",
+      "rustc_version": "1.95.0",
+      "version": "2.14.0"
+    }
+  },
+  "wasm_artifacts": {
+    "lcp_core_fixture": {
+      "wasm_sha256": "e1ed579097c82e212d2d5b75cbaf7253657c602210118ccbf9d0c1225dc19cef",
+      "near_code_hash": "GCve2wgGAyuMLRvCzgkPTaN7kR6iRkvRaPjATAET4UfG",
+      "input_mode": "explicit-path"
+    },
+    "mock_ft_variant_a": {
+      "wasm_sha256": "d01d4434643ebc9a240abe9d4522408dc7f6636d38f07bd809713d9255a178ad",
+      "near_code_hash": "F1PghgpN3UQmRhjm6hmoB9na3dfW9NNaW7cTKAoDdTfA"
+    },
+    "mock_ft_variant_b": {
+      "wasm_sha256": "91c7ba424c9ca159a4e5117aae3211864c289eff0d695b5fe750c0f1711e4848",
+      "near_code_hash": "Ap4ks3KUK5Dm93SacgHEEbZRgZ78bRmjuNHXppttiBUB"
+    }
+  },
+  "scenarios": {
+    "token_deploy": {
+      "transaction_hash": "1jAf1rTBK2sU4v6GTdhbUZTgPfMe2XSUwJmZQSEGopD",
+      "near_code_hash": "F1PghgpN3UQmRhjm6hmoB9na3dfW9NNaW7cTKAoDdTfA"
+    },
+    "weak_committee_bootstrap": {
+      "rejected_transaction_hash": "HCWQM1VbXj8mTQt1r1zcinD4bGDPZ73YP7hahA54BV4Y",
+      "configuration_unchanged": true
+    },
+    "bootstrap": {
+      "final_execution_status": "EXECUTED_OPTIMISTIC",
+      "receipts_outcome": [
+        {
+          "block_hash": "CfxFRh2QusavkuReH3fbpZsSQueQ5ur6a6uJLbiTTGvg",
+          "id": "7YW2iR72QYvG8F8X9tG6VTEemd2TYBiNwGXGZvPohn9P",
+          "outcome": {
+            "executor_id": "lcp-core-sandbox.sandbox",
+            "gas_burnt": 7009967049980,
+            "logs": [],
+            "metadata": {
+              "contracts": [
+                {
+                  "local": "GCve2wgGAyuMLRvCzgkPTaN7kR6iRkvRaPjATAET4UfG"
+                }
+              ],
+              "gas_profile": [
+                {
+                  "cost": "BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "24888202434"
+                },
+                {
+                  "cost": "CONTRACT_LOADING_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "35445963"
+                },
+                {
+                  "cost": "CONTRACT_LOADING_BYTES",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "1335812262155"
+                },
+                {
+                  "cost": "READ_CACHED_TRIE_NODE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "362520000000"
+                },
+                {
+                  "cost": "READ_MEMORY_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "190520013600"
+                },
+                {
+                  "cost": "READ_MEMORY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "15539849304"
+                },
+                {
+                  "cost": "READ_REGISTER_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "50343303720"
+                },
+                {
+                  "cost": "READ_REGISTER_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "186676428"
+                },
+                {
+                  "cost": "SHA256_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "13622910750"
+                },
+                {
+                  "cost": "SHA256_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "6029337750"
+                },
+                {
+                  "cost": "STORAGE_READ_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "958066377733"
+                },
+                {
+                  "cost": "STORAGE_READ_KEY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "17519133678"
+                },
+                {
+                  "cost": "STORAGE_READ_VALUE_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "6390933556"
+                },
+                {
+                  "cost": "STORAGE_REMOVE_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "53473030500"
+                },
+                {
+                  "cost": "STORAGE_REMOVE_KEY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "1643476512"
+                },
+                {
+                  "cost": "STORAGE_REMOVE_RET_VALUE_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "322883568"
+                },
+                {
+                  "cost": "STORAGE_WRITE_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "1669115136000"
+                },
+                {
+                  "cost": "STORAGE_WRITE_EVICTED_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "37063372278"
+                },
+                {
+                  "cost": "STORAGE_WRITE_KEY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "66747275049"
+                },
+                {
+                  "cost": "STORAGE_WRITE_VALUE_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "70784305998"
+                },
+                {
+                  "cost": "TOUCHING_TRIE_NODE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "31920000000"
+                },
+                {
+                  "cost": "WASM_INSTRUCTION",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "1034186191368"
+                },
+                {
+                  "cost": "WRITE_MEMORY_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "61683486942"
+                },
+                {
+                  "cost": "WRITE_MEMORY_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "5245984872"
+                },
+                {
+                  "cost": "WRITE_REGISTER_BASE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "97427764524"
+                },
+                {
+                  "cost": "WRITE_REGISTER_BYTE",
+                  "cost_category": "WASM_HOST_COST",
+                  "gas_used": "9431680284"
+                }
+              ],
+              "version": 4
+            },
+            "receipt_ids": [
+              "E41TdLo8nsHBXVMdPidjnjambMF9GnUoJ5T8JN6vp7vp"
+            ],
+            "status": {
+              "SuccessValue": ""
+            },
+            "tokens_burnt": "700996704998000000000"
+          },
+          "proof": [
+            {
+              "direction": "Left",
+              "hash": "G1nHTXbcisizNb4K2PhnW5WkdurbPK1BGQXDZcqBpaLw"
+            }
+          ]
+        }
+      ],
+      "status": {
+        "SuccessValue": ""
+      },
+      "transaction": {
+        "actions": [
+          {
+            "FunctionCall": {
+              "args": "eyJhcmdzIjp7ImdlbmVzaXNfaGFzaCI6IjdpU2c4ZnBSMkhlVVBiVE1UM3lqMWszaUg1eUVpN1BQc2hWTDhuaENiVlVEIiwiaW5zdGFuY2VfaWQiOiI4ZjM2OGExYmQ5ZmM0ZTZhNTBhYzQ4MjZjMzcyZTg1NTM2OTZjY2I2MWFiY2NkZDk2MzkyYzkwYjIzZjFjNGI2IiwiY29tbWl0dGVlX2tleXMiOlsiZWQyNTUxOTozVmRYSjJ4NDJmQXY3UVRwNmFDcU1HOEJiVVBTcURhcEhVZm85RHdCTEFkSiIsImVkMjU1MTk6NHJkZE5qa25iS005dnk1YUI2TXQ2d0ppSm1QN0ZUZXlERUF0ZDJSVHg4QjciLCJlZDI1NTE5OkNjeWpFejdvV3lNQjlIWGRWbldrVjRZaDVMaHk5cFBQbjNtalJ3dzlDQnlYIiwiZWQyNTUxOTpIb3FRRktCM1JTVTRURFJXRm9jZ1ZjMW56TDJuQjM1aWlrdHBKWnloR1ZMaiIsImVkMjU1MTk6SHNtbm1DUlZWWDlYdjlIV0E5Q2t0ZmhlRXhnQk4xMlVuSmFGaEJvZUo0c04iXSwiYXBwcm92ZWRfdXNkY19jb2RlX2hhc2hlcyI6WyJGMVBnaGdwTjNVUW1SaGptNmhtb0I5bmEzZGZXOU5OYVc3Y1RLQW9EZFRmQSJdLCJhY3RpdmVfdXNkY19jb2RlX2hhc2giOiJGMVBnaGdwTjNVUW1SaGptNmhtb0I5bmEzZGZXOU5OYVc3Y1RLQW9EZFRmQSJ9fQ==",
+              "deposit": "1000000000000000000000000",
+              "gas": 220000000000000,
+              "method_name": "bootstrap_receipt_recovery"
+            }
+          }
+        ],
+        "hash": "HqUWSoRtgRWJCK8SVWoWiyVEaa4PTxbNMt6XKSJEzMzR",
+        "nonce": 2000004,
+        "priority_fee": 0,
+        "public_key": "ed25519:EKdvFVEWyjqVgv1QfhGd8JPiCpQcwP8PeaedZ4THhCCi",
+        "receiver_id": "lcp-core-sandbox.sandbox",
+        "signature": "ed25519:5kCb75bE9WD3cxKNyZnnTaqvgacwjy5zfCgBkrRvqx1fDTFB5fyyGv26HfiXaGzXQfFnysjFi4LFnAT8sK4snTXH",
+        "signer_id": "lcp-core-sandbox.sandbox"
+      },
+      "transaction_outcome": {
+        "block_hash": "CfxFRh2QusavkuReH3fbpZsSQueQ5ur6a6uJLbiTTGvg",
+        "id": "HqUWSoRtgRWJCK8SVWoWiyVEaa4PTxbNMt6XKSJEzMzR",
+        "outcome": {
+          "executor_id": "lcp-core-sandbox.sandbox",
+          "gas_burnt": 309448015014,
+          "logs": [],
+          "metadata": {
+            "gas_profile": null,
+            "version": 1
+          },
+          "receipt_ids": [
+            "7YW2iR72QYvG8F8X9tG6VTEemd2TYBiNwGXGZvPohn9P"
+          ],
+          "status": {
+            "SuccessReceiptId": "7YW2iR72QYvG8F8X9tG6VTEemd2TYBiNwGXGZvPohn9P"
+          },
+          "tokens_burnt": "30944801501400000000"
+        },
+        "proof": [
+          {
+            "direction": "Right",
+            "hash": "7f8WvHUu1YnJXSAZZjygwvaQ3dzbpFWxr9TuZQU572i3"
+          }
+        ]
+      }
+    },
+    "bootstrap_configuration": {
+      "version": 1,
+      "chain_id": "test-chain-nRgco",
+      "genesis_hash": "7iSg8fpR2HeUPbTMT3yj1k3iH5yEi7PPshVL8nhCbVUD",
+      "core_account_id": "lcp-core-sandbox.sandbox",
+      "instance_id": "8f368a1bd9fc4e6a50ac4826c372e8553696ccb61abccdd96392c90b23f1c4b6",
+      "token_account_id": "mock-usdc.sandbox",
+      "active_usdc_code_hash": "F1PghgpN3UQmRhjm6hmoB9na3dfW9NNaW7cTKAoDdTfA",
+      "approved_usdc_code_hashes": [
+        "F1PghgpN3UQmRhjm6hmoB9na3dfW9NNaW7cTKAoDdTfA"
+      ],
+      "current_epoch": 0,
+      "current_committee_keys": [
+        "ed25519:3VdXJ2x42fAv7QTp6aCqMG8BbUPSqDapHUfo9DwBLAdJ",
+        "ed25519:4rddNjknbKM9vy5aB6Mt6wJiJmP7FTeyDEAtd2RTx8B7",
+        "ed25519:CcyjEz7oWyMB9HXdVnWkV4Yh5Lhy9pPPn3mjRww9CByX",
+        "ed25519:HoqQFKB3RSU4TDRWFocgVc1nzL2nB35iiktpJZyhGVLj",
+        "ed25519:HsmnmCRVVX9Xv9HWA9CktfheExgBN12UnJaFhBoeJ4sN"
+      ],
+      "current_epoch_pending_intents": "0",
+      "last_rotation_generation": "0",
+      "activated_epoch_count": 1,
+      "used_key_count": 5,
+      "pending_rotation": null,
+      "last_code_hash_generation": "0",
+      "pending_code_hash_change": null
+    },
+    "maximum_size_positive_contract_envelope": {
+      "transaction_hash": "AJ4zf1XBFEHiNaTJb9U8Q1FQDyASgGirumtJ9U2uCDt5",
+      "intent_bytes": 500,
+      "certificate_bytes": 714,
+      "decoded_envelope_bytes": 1202,
+      "encoded_base64_characters": 1604,
+      "signature_count": 5,
+      "receipt_gas_burnt": "14305515101706",
+      "synthetic_fixture_only": true,
+      "settlement_state_unchanged": true
+    },
+    "callback_first": {
+      "transaction_hash": "7JweXbtj5WciXqwgsj4xvjMRu3iB7tu75eMCwtivmd62",
+      "transfer_id": "1",
+      "escrow": {
+        "funded_yocto": "0",
+        "paid_yocto": "0",
+        "refunded_yocto": "0",
+        "pending_yocto": "0",
+        "free_yocto": "0",
+        "settlement_asset": {
+          "kind": "nep141",
+          "token_account_id": "mock-usdc.sandbox",
+          "decimals": 6
+        },
+        "funded_raw": "1000000",
+        "paid_raw": "1000000",
+        "refunded_raw": "0",
+        "pending_raw": "0",
+        "free_raw": "0",
+        "quarantined_raw": "0",
+        "quarantined_yocto": "0"
+      },
+      "duplicate_recovery_rejected": true,
+      "recipient_token_balance": "1000000"
+    },
+    "certificate_first": {
+      "transaction_hash": "9MGnvxK18XgqUiw5j7UMYCQ8KBfa2KgUQH7X3ZJXAtKx",
+      "recovery_transaction_hash": "6ad8sRK8cjzz2th2coTzUGXLkWH5QJTWYDXVFFxMTPx8",
+      "transfer_id": "2",
+      "rejected_certificates": [
+        "zero signatures",
+        "one signature",
+        "two signatures",
+        "three signatures",
+        "five invalid signatures",
+        "wrong signing domain",
+        "mismatched intent digest",
+        "mutated signature",
+        "mutated certificate_schema_version",
+        "mutated intent_schema_version",
+        "mutated intent_chain_id",
+        "mutated intent_genesis_hash",
+        "mutated intent_core_account_id",
+        "mutated intent_instance_id",
+        "mutated intent_committee_epoch",
+        "mutated intent_transfer_id",
+        "mutated intent_commitment_id",
+        "mutated intent_kind",
+        "mutated intent_tranche_epoch",
+        "mutated intent_token_account_id",
+        "mutated intent_recipient_id",
+        "mutated intent_amount_raw",
+        "mutated intent_origin_method",
+        "mutated intent_token_code_hash",
+        "mutated intent_ft_transfer_deposit",
+        "mutated intent_ft_transfer_gas",
+        "mutated intent_hash",
+        "mutated origin_transaction_hash",
+        "mutated origin_receipt_id",
+        "mutated origin_block_hash",
+        "mutated origin_block_height",
+        "mutated token_receipt_id",
+        "mutated token_action_index",
+        "mutated outcome_block_hash",
+        "mutated outcome_block_height",
+        "mutated outcome",
+        "duplicate signer key",
+        "unsorted signer keys",
+        "unpinned signer key",
+        "noncanonical Ed25519 S scalar",
+        "small-order Ed25519 R point",
+        "malformed Base64 alphabet",
+        "noncanonical Base64 padding bits",
+        "truncated Borsh envelope",
+        "trailing Borsh envelope byte",
+        "invalid certificate length field",
+        "invalid signature count",
+        "certificate with trailing Borsh byte",
+        "oversized certificate body",
+        "invalid Borsh chain string length",
+        "invalid Borsh option tag",
+        "invalid Borsh transfer kind",
+        "noncanonical intent account ID",
+        "decoded envelope at maximum byte bound",
+        "decoded envelope above byte bound",
+        "Base64 above encoded byte bound"
+      ],
+      "replay_rejected": true,
+      "conflicting_terminal_outcome_rejected": true,
+      "escrow": {
+        "funded_yocto": "0",
+        "paid_yocto": "0",
+        "refunded_yocto": "0",
+        "pending_yocto": "0",
+        "free_yocto": "0",
+        "settlement_asset": {
+          "kind": "nep141",
+          "token_account_id": "mock-usdc.sandbox",
+          "decimals": 6
+        },
+        "funded_raw": "1000000",
+        "paid_raw": "1000000",
+        "refunded_raw": "0",
+        "pending_raw": "0",
+        "free_raw": "0",
+        "quarantined_raw": "0",
+        "quarantined_yocto": "0"
+      },
+      "recovery_receipt_gas_burnt": "15443714354833",
+      "recipient_token_balance": "2000000"
+    },
+    "cross_transfer_certificate": {
+      "source_transfer_id": "3",
+      "target_transfer_id": "4",
+      "rejected_cross_transfer_transaction_hash": "CT6qSkagE8nPrWWWhTia1zExUKqkdGz2pSuh1omzaEEd",
+      "source_recovery_transaction_hash": "D1HWhMgmaQEcu5sdFwQwZxi9zMWwq6e8zxGjVzXuNpLP",
+      "target_recovery_transaction_hash": "ESHf64qERX9EELAFkNCgdvwbQHui27VC8wm7ZMjU5ixn",
+      "both_pending_intents_unchanged_on_rejection": true,
+      "both_transfers_later_settled_with_own_certificate": true,
+      "no_duplicate_token_transfer": true
+    },
+    "five_of_five_certificate": {
+      "transfer_transaction_hash": "9jPEGmSenxpyMz4EzexShNJLAMMkJ1tfLKArgEDnNsrn",
+      "recovery_transaction_hash": "3iKeXix8fwHqgqjm2UVkYk4ANE9f4TLXiV2YxNhqp6xW",
+      "transfer_id": "5",
+      "signature_count": 5,
+      "envelope_bytes": 961,
+      "recovery_receipt_gas_burnt": "17437053807969",
+      "escrow": {
+        "funded_yocto": "0",
+        "paid_yocto": "0",
+        "refunded_yocto": "0",
+        "pending_yocto": "0",
+        "free_yocto": "0",
+        "settlement_asset": {
+          "kind": "nep141",
+          "token_account_id": "mock-usdc.sandbox",
+          "decimals": 6
+        },
+        "funded_raw": "1000000",
+        "paid_raw": "1000000",
+        "refunded_raw": "0",
+        "pending_raw": "0",
+        "free_raw": "0",
+        "quarantined_raw": "0",
+        "quarantined_yocto": "0"
+      },
+      "token_balance": "5000000"
+    },
+    "callback_certificate_race": {
+      "transfer_transaction_hash": "FVkA9GZNif3uUTUbresX2tmzpoNTp949eGzfX7aP7oVY",
+      "recovery_transaction_hash": "6UCwsKLTe5nSUvipN1FKUGqmzhMy1nXUEzhwiX2X6s8p",
+      "transfer_transaction_succeeded": true,
+      "recovery_transaction_succeeded": false,
+      "transfer_id": "3",
+      "terminal_outcome": "success",
+      "certificate_digest": "7a1dad6650849014ebc9923578d3aecdd8f886416b81e95bb2775d29450fbb5a",
+      "escrow": {
+        "funded_yocto": "0",
+        "paid_yocto": "0",
+        "refunded_yocto": "0",
+        "pending_yocto": "0",
+        "free_yocto": "0",
+        "settlement_asset": {
+          "kind": "nep141",
+          "token_account_id": "mock-usdc.sandbox",
+          "decimals": 6
+        },
+        "funded_raw": "1000000",
+        "paid_raw": "1000000",
+        "refunded_raw": "0",
+        "pending_raw": "0",
+        "free_raw": "0",
+        "quarantined_raw": "0",
+        "quarantined_yocto": "0"
+      },
+      "token_balance": "6000000"
+    },
+    "failed_transfer_recovery": {
+      "initial_transaction_hash": "7PVsS2cNchaSvWFKaSh5F1riDEMEYaebRemPtPuJ5c6",
+      "recovery_transaction_hash": "SRugfMPuVp8Gk6j7MNWqS9nGdLPo8c5k5irELZm2Gub",
+      "retry_transaction_hash": "B9ibi53Tsb7soPZmuPPU3ABVceHrZfdknxojGsfiPwVq",
+      "transfer_id": "7",
+      "failed_escrow": {
+        "funded_yocto": "0",
+        "paid_yocto": "0",
+        "refunded_yocto": "0",
+        "pending_yocto": "0",
+        "free_yocto": "0",
+        "settlement_asset": {
+          "kind": "nep141",
+          "token_account_id": "mock-usdc.sandbox",
+          "decimals": 6
+        },
+        "funded_raw": "1000000",
+        "paid_raw": "0",
+        "refunded_raw": "0",
+        "pending_raw": "0",
+        "free_raw": "0",
+        "quarantined_raw": "1000000",
+        "quarantined_yocto": "0"
+      },
+      "released_escrow": {
+        "funded_yocto": "0",
+        "paid_yocto": "0",
+        "refunded_yocto": "0",
+        "pending_yocto": "0",
+        "free_yocto": "0",
+        "settlement_asset": {
+          "kind": "nep141",
+          "token_account_id": "mock-usdc.sandbox",
+          "decimals": 6
+        },
+        "funded_raw": "1000000",
+        "paid_raw": "0",
+        "refunded_raw": "0",
+        "pending_raw": "0",
+        "free_raw": "1000000",
+        "quarantined_raw": "0",
+        "quarantined_yocto": "0"
+      },
+      "quarantine_release_transaction_hash": "4t1n9VyWUXdngwWnjPNEVyvqszg1hYZFvyaxtdo3B6Mm",
+      "quarantine_release_receipt_gas_burnt": "3479453540115",
+      "retry_escrow": {
+        "funded_yocto": "0",
+        "paid_yocto": "0",
+        "refunded_yocto": "0",
+        "pending_yocto": "0",
+        "free_yocto": "0",
+        "settlement_asset": {
+          "kind": "nep141",
+          "token_account_id": "mock-usdc.sandbox",
+          "decimals": 6
+        },
+        "funded_raw": "1000000",
+        "paid_raw": "1000000",
+        "refunded_raw": "0",
+        "pending_raw": "0",
+        "free_raw": "0",
+        "quarantined_raw": "0",
+        "quarantined_yocto": "0"
+      },
+      "final_token_balance": "7000000"
+    },
+    "recovery_credit": {
+      "credit_id": "3d7be7489cb0bd09dea4e79a1176aede6227e4d478a979d81ded38b358b0a292",
+      "initial_credit": {
+        "payer": "cash-recipient.sandbox",
+        "state": "available",
+        "accrued_yocto": "7560000000000000000000",
+        "withdrawable_yocto": "7560000000000000000000",
+        "in_flight_yocto": "0",
+        "withdrawal_available": true,
+        "storage_reserve_ready": true,
+        "cash_solvency_ready": true,
+        "withdrawal_cash_margin_ready": true,
+        "withdrawal_outflow_yocto": "7560000000000000000000",
+        "sealed": true,
+        "live_bond_records": 0,
+        "settled": false
+      },
+      "storage_release_low_gas_failure_transaction_hash": "DPa33M41CV4FiHQ7V8LhzM2ErjvPDdp2PN693WF2K1Uf",
+      "storage_release_retry_transaction_hash": "BzTEAq64RFCzQKEfGhzga6v1ct3REiNHFWEKhAZnbaJf",
+      "storage_release_receipt_gas_burnt": "4967736526216",
+      "permissionless_storage_release_retry": true,
+      "direct_callback_transaction_hash": "B3Vf3pQipu2t25D3NX1skH5TLh2FNVSJcbWfGFsXsz6D",
+      "direct_callback_rejected_without_mutation": true,
+      "unauthorized_withdrawal_transaction_hash": "2jvFxRbiUAckamZ93MY3jTWxFz3ehUHYgma8BtXWMAzq",
+      "unauthorized_withdrawal_preserved_credit": true,
+      "attached_deposit_rejection_transaction_hash": "B4AJzB4UQUrTPhHVBWGFiRxUpjnmwkykZbF1D9WwzwM6",
+      "attached_deposit_rejection_preserved_credit": true,
+      "callback_attempt_transaction_hash": "B9DjKJdy7Xwdtwy8BVEQVobTB7zkgdHfqZKuz9iQzbRS",
+      "callback_attempt_amount_yocto": "7560000000000000000000",
+      "callback_attempt_nonce": "1",
+      "mismatched_amount_callback_transaction_hash": "8jc18yGgNnLPBm8hZmBd4NMEiEQhYjEfgoQvAHpJh77c",
+      "mismatched_amount_callback_preserved_withdrawing_credit": true,
+      "mismatched_nonce_callback_transaction_hash": "2FNetnnurSZ8tMJ41BPDBYdQSzYpg6GUujfUwo6wgNo7",
+      "mismatched_nonce_callback_preserved_withdrawing_credit": true,
+      "zero_result_callback_transaction_hash": "6sFTDbvmEQ7jdhWS2HPy9odS8sESPGY1LipETfTcxa8q",
+      "zero_result_callback_preserved_withdrawing_credit": true,
+      "multiple_result_callback_transaction_hash": "97eue9TVYLS7M7V8veECYsEEKXFdFF695RrL8ARWhoU1",
+      "multiple_result_callback_preserved_withdrawing_credit": true,
+      "nonempty_result_callback_transaction_hash": "8nCg5Lk1XZUU7WXo1x94M2bK2rPFEARDMnmD1FhCxhuD",
+      "nonempty_result_callback_preserved_withdrawing_credit": true,
+      "exact_failed_callback_transaction_hash": "BYtuFXRTjpDocJbZKoQJEG6oX9sfah7KtEF9tjtyDKA3",
+      "exact_failed_callback_restored_refund_pending_credit": true,
+      "retry_callback_attempt_transaction_hash": "DW8Lg7vHLt42wbsQtQipmqwKkpu6Unuj1fadj1j7okPP",
+      "retry_callback_attempt_nonce": "2",
+      "stale_callback_transaction_hash": "2VtEEZJNRssSyuwj4XPz7GWFv4pYw91KCx8hSu1yZEad",
+      "stale_callback_preserved_newer_withdrawing_credit": true,
+      "failed_retry_callback_transaction_hash": "J6af4CKkADDs76kUWnMzoZX2iFwh737j47P8AV4VJ2wn",
+      "failed_retry_callback_restored_refund_pending_credit": true,
+      "duplicate_callback_transaction_hash": "6GmxvN3twFmsgEZgEK8VbHUbksgoFfHuWSukBRFF2Y2P",
+      "duplicate_callback_preserved_refund_pending_credit": true,
+      "revaluation_batches": [
+        {
+          "status": "in_progress",
+          "next_record_index": 16
+        },
+        {
+          "status": "complete"
+        }
+      ],
+      "blocked_during_revaluation": true,
+      "one_yocto_short_rejected": true,
+      "exact_withdrawal_transaction_hash": "C3BrbJkNq5hx5ybyfKjYv92zjZ8Q5h2hVPRBsWKu5ZFX",
+      "exact_withdrawal_receipt_gas_burnt": "7594328792657",
+      "delayed_callback_configuration_transaction_hash": "3qNYR2E8b7zRiGdeivj4RHBbNauzgkCJQWCG3RvuQtLP",
+      "delayed_callback_steps": 8,
+      "delayed_callback_receipts": [
+        {
+          "step": 1,
+          "receipt_id": "DAwDYwDxnHCBJwnX2xwff11B2a47fChT8vVpmdtjoMeb",
+          "block_height": 400,
+          "account_balance_yocto": "30980809478968660099999993",
+          "required_balance_yocto": "30980809478968660099999993",
+          "free_cash_yocto": "0",
+          "recovery_credit_liability_yocto": "17553899478968660099999993",
+          "scheduled_outflow_yocto": "0"
+        },
+        {
+          "step": 2,
+          "receipt_id": "DyjFyGvnkdJzWadFzU1gnsV2jpvMQTvyc4Z478xfjhRF",
+          "block_height": 401,
+          "account_balance_yocto": "30980809478968660099999993",
+          "required_balance_yocto": "30980809478968660099999993",
+          "free_cash_yocto": "0",
+          "recovery_credit_liability_yocto": "17553899478968660099999993",
+          "scheduled_outflow_yocto": "0"
+        },
+        {
+          "step": 3,
+          "receipt_id": "8DHptRwtp8oyA6WiuB2pDoQU76q2oYh5sG1L3wBGJYy9",
+          "block_height": 402,
+          "account_balance_yocto": "30980809478968660099999993",
+          "required_balance_yocto": "30980809478968660099999993",
+          "free_cash_yocto": "0",
+          "recovery_credit_liability_yocto": "17553899478968660099999993",
+          "scheduled_outflow_yocto": "0"
+        },
+        {
+          "step": 4,
+          "receipt_id": "Dc7LrrNdUERv7heY1B2CqS2mC1jggdnVJktuchLXVCM2",
+          "block_height": 403,
+          "account_balance_yocto": "30980809478968660099999993",
+          "required_balance_yocto": "30980809478968660099999993",
+          "free_cash_yocto": "0",
+          "recovery_credit_liability_yocto": "17553899478968660099999993",
+          "scheduled_outflow_yocto": "0"
+        },
+        {
+          "step": 5,
+          "receipt_id": "9zAmzMwLsTacBL4KDNSMHZiNmCfEuNSEKvTq5Q3QpyF1",
+          "block_height": 404,
+          "account_balance_yocto": "30980809478968660099999993",
+          "required_balance_yocto": "30980809478968660099999993",
+          "free_cash_yocto": "0",
+          "recovery_credit_liability_yocto": "17553899478968660099999993",
+          "scheduled_outflow_yocto": "0"
+        },
+        {
+          "step": 6,
+          "receipt_id": "GHMNJix9WTkSN6vwyFxb1XGtGuVgUHhBDjPmkD9Anzzw",
+          "block_height": 405,
+          "account_balance_yocto": "30980809478968660099999993",
+          "required_balance_yocto": "30980809478968660099999993",
+          "free_cash_yocto": "0",
+          "recovery_credit_liability_yocto": "17553899478968660099999993",
+          "scheduled_outflow_yocto": "0"
+        },
+        {
+          "step": 7,
+          "receipt_id": "8fTMnVBtLUkUjjLxu2PzyzVSQwyj1D2cM7Gg5w43fGDE",
+          "block_height": 406,
+          "account_balance_yocto": "30980809478968660099999993",
+          "required_balance_yocto": "30980809478968660099999993",
+          "free_cash_yocto": "0",
+          "recovery_credit_liability_yocto": "17553899478968660099999993",
+          "scheduled_outflow_yocto": "0"
+        },
+        {
+          "step": 8,
+          "receipt_id": "Eccw4nwoZk2DRFWprSisikxPHJkZ4E6arZpbyFP5BmTm",
+          "block_height": 407,
+          "account_balance_yocto": "30980809478968660099999993",
+          "required_balance_yocto": "30980809478968660099999993",
+          "free_cash_yocto": "0",
+          "recovery_credit_liability_yocto": "17553899478968660099999993",
+          "scheduled_outflow_yocto": "0"
+        }
+      ],
+      "transfer_block_height": 399,
+      "callback_block_height": 408,
+      "callback_delay_blocks": 9,
+      "duplicate_settled_callback_transaction_hash": "CQE4U6tCZh7jVfmdyute2ikjDczs3vjasrS913QhB7Do",
+      "duplicate_settled_callback_did_not_recreate_credit": true,
+      "payer_balance_before": "29987519327653680400000000",
+      "payer_balance_after": "29991574673290633200000000",
+      "payer_transaction_gas_fee_yocto": "3504654363047200000000",
+      "replayed_withdrawal_transaction_hash": "GzF1vRgMQHyirnP2WsboCBq8RiTKNHJK3KNc7Kgqxvcq",
+      "replayed_withdrawal_rejected": true,
+      "replayed_withdrawal_receipt_count": 1,
+      "payer_balance_after_replay": "29991574673290633200000000",
+      "credit_after_callback": null,
+      "tombstone_cleanup": "successful callback removed the settled zero-credit row"
+    },
+    "staged_native_outflows": {
+      "balance_before": "30859890146208454099999993",
+      "balance_after_builders": "30859890146208454099999993",
+      "balance_after_materialization": "30859890146208454099999965",
+      "total_outflow": "28",
+      "underfunded_gate_rejected_before_promises": true,
+      "fixture_margin_cleanup": {
+        "target_free_margin_yocto": "17553466595810029999999965",
+        "account_balance_yocto": "30980376595810029999999965",
+        "storage_cost_yocto": "12443700000000000000000000",
+        "required_without_fixture_yocto": "13426910000000000000000000",
+        "available_without_fixture_yocto": "17553466595810029999999965",
+        "previous_fixture_liability_yocto": "17432980146208454099999965",
+        "fixture_liability_yocto": "0",
+        "free_after_fixture_yocto": "17553466595810029999999965",
+        "cash_snapshot": [
+          "30980376595810029999999965",
+          "12443700000000000000000000",
+          "0",
+          "0",
+          "0",
+          "0",
+          "0",
+          "983210000000000000000000",
+          "0"
+        ]
+      }
+    },
+    "failed_refund_aggregation": {
+      "transaction_hash": "HXWxDdQ41kDrxveizBPqBKCRan73t7Xxy3gg6N7ex42v",
+      "attempt_ids": [
+        "1",
+        "2"
+      ],
+      "prior_credit_yocto": "5000000000000000000000",
+      "first_failure_yocto": "7000000000000000000000",
+      "second_failure_yocto": "9000000000000000000000",
+      "final_credit_yocto": "21000000000000000000000",
+      "aggregate_liability_yocto": "21000000000000000000000",
+      "stale_duplicate_callbacks_ignored": true
+    },
+    "governance": {
+      "proposal_cancel_transaction_hash": "GKmUHvtXTJKBSyxJNyVuiFJKex2kAorDEgpcLeNCabzf",
+      "activation_proposal_transaction_hash": "AivYepKfgGCNhLS3eZnnVjmidf8fsTf9aLoKhYTNDLGN",
+      "activation_transaction_hash": "7TkKyu5H4dqNLUULMrARZhTvRt5LxyrtcwR1ZNFQgdVT",
+      "canceled_proposal_replay_rejected": true,
+      "historical_key_reuse_after_retirement_rejected": true,
+      "early_activation_rejected": true,
+      "canceled_generation": "1",
+      "activated_generation": "2",
+      "fast_forward_calls": 1,
+      "activation_at_ns": "1795105770647070369",
+      "observed_activation_time_ns": "1795105777836774978",
+      "active_epoch": 1,
+      "retired_epoch_zero": true,
+      "retire_epoch_receipt_gas_burnt": "4354869967826",
+      "old_committee_replay_rejected": true
+    },
+    "code_hash_change": {
+      "margin_top_up_transaction_hash": "yadrSBaNWpjS4ZXhDwT5Y45vfqNdorQ6KTXT55cKgP5",
+      "margin_top_up_yocto": "2000000000000000000000000",
+      "free_native_cash_before_yocto": "15523859081031629799999965",
+      "free_native_cash_after_yocto": "17523859081031629799999965",
+      "propose_transaction_hash": "2jYAt2rvmmfYPvM2YbZP9yzVnhdCwCS1TfDu7AvgM1oP",
+      "propose_receipt_gas_burnt": "13031144787431",
+      "cancel_transaction_hash": "G6TyAYFZxacGQ5Y4h8RtrVPd8QnaV86XtoqCAoyYFyNL",
+      "cancel_receipt_gas_burnt": "12560459127237",
+      "activation_proposal_transaction_hash": "954m779uxrJ9cqRc6iweyqqZWymvFYzTNbB4KaBjR9V8",
+      "activation_propose_receipt_gas_burnt": "13032909599051",
+      "activation_transaction_hash": "363M6Y9do5khSJBFZkc2nT8yXZxoANrG7LvLKvFFqZEs",
+      "activate_receipt_gas_burnt": "4071792202510",
+      "proposed_generation": "1",
+      "activated_generation": "2",
+      "fast_forward_calls": 1,
+      "activation_at_ns": "1795105821193973745",
+      "observed_activation_time_ns": "1795105825481272011",
+      "new_code_hash": "zCPiwQoZKs4kWz6bKcCfE8y93dKFsviTdemBGciNEoV",
+      "cancellation_preserved_active_hash": true,
+      "pending_change_cleared": true
+    },
+    "overflow_receipt_rollback": {
+      "setup_transaction_hash": "8fVG2KDoaPfaKWyaqxzCntb6ArG5yHmYywtYHDgsCJjo",
+      "callback_attempt_id": "3",
+      "callback_failed_on_credit_overflow": true,
+      "attempt_present_after_receipt_failure": true,
+      "refund_credit_remains_u128_max": true,
+      "receipt_status": null
+    },
+    "recovery_credit_callback_oog": {
+      "source_transfer_transaction_hash": "9zRo94Q3G5CQzmt4C5g2kBvkyUPpK4nmwvcgQT3KK4CT",
+      "intent_finalization_transaction_hash": "8Eup3DtSFuLwAVRZU2QTGTtEKDBmSMw4EvLC51X5xm42",
+      "callback_oog_withdrawal_transaction_hash": "9GR813F44eJnNaZYKhzc2x2997H68LXT2jjh2xasXsfE",
+      "callback_oog_receipt_id": "6NHQw9b4DhyCA8soWfXkGmvSgQRjtDjGNXgZ3GqEePNV",
+      "callback_oog_gas_burnt": "1888432900978",
+      "callback_oog_failure": "{\"ActionError\":{\"index\":0,\"kind\":{\"FunctionCallError\":{\"ExecutionError\":\"Exceeded the prepaid gas.\"}}}}",
+      "transfer_receipt_id": "8iBpwimuqRug6DZCcyBA9nYmbTZriXh47CBCYk8nerPu",
+      "amount_yocto": "7560000000000000000000",
+      "payer_balance_before": "29989664099093884000000000",
+      "payer_balance_after": "29996580186658092600000000",
+      "total_transaction_gas_fee_yocto": "643912435791400000000",
+      "successful_transfer_callback_failed": true,
+      "credit_remains_withdrawing_and_reserved": true,
+      "replay_transaction_hash": "37T1PwqF5Uh9Ucj2xJPtBPuT8AXNPVqRAZFACxT7DTov",
+      "replay_rejected_without_state_change": true
+    },
+    "recovery_credit_tombstone_finalize": {
+      "source_transfer_transaction_hash": "AG2BbQdad5Mun3koHhmKaF2Nco7Wr2wBzyv1NgxCobcS",
+      "intent_finalization_transaction_hash": "4jXG11hJNqqxMWy8KjjbcwYH2HyMNos5maJ4ffutyWJ1",
+      "intent_finalization_receipt_gas_burnt": "4603376891428",
+      "withdrawal_attempt_transaction_hash": "HnAk41uzEDutkZ4xJLvnTF5pxRXJCysrYo11BScw2n2C",
+      "stale_reserve_transaction_hash": "4LnJSZzNobXGKjTvwgmsATG3Kx3JwossQKLnXPZQiw6W",
+      "settlement_callback_transaction_hash": "BtEbj7SNPHbrKZ9vKuwW14qeTb5tvNSdV3JoVWBNW1VC",
+      "blocked_finalize_transaction_hash": "6E38L5jHG47ne1sgwATEJAfLUEHC5UwxKXVqStzoZsFR",
+      "blocked_finalize_returned_false": true,
+      "revaluation_batches": [
+        {
+          "status": "in_progress",
+          "next_record_index": 16
+        },
+        {
+          "status": "complete"
+        }
+      ],
+      "finalize_transaction_hash": "4XymwUXXq9WCtRYpNzzmvRF3wCn2SQan3vjN7b6ScUq2",
+      "finalize_receipt_gas_burnt": "3501893051308",
+      "settled_tombstone_removed": true
+    }
+  }
+}
