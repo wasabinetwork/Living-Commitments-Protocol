@@ -66,7 +66,57 @@ The testnet cross-check used finalized claim transaction `4SDsWMiWTtCaYhFi4MHXtM
 
 At transfer creation, the contract selects a code hash from its reviewed, network-specific recovery registry and writes that exact hash into the immutable intent. Recovery compares V4/replay evidence to the intent's hash. Later registry changes do not affect existing intents. A code upgrade is not automatically approved: add a new hash through the delayed 4-of-5 code-hash proposal only after verifying its provenance and synchronous atomic `ft_transfer` behavior. Activation can also point the active hash at one that is already approved. Old intents may be recovered under an older hash only while that hash equals the hash stored in the intent and remains in the retained allowlist. Removing a hash is impossible. A hash that is no longer retained makes a successful result `Unknown`; it does not rewrite the intent.
 
-When `finalize_receipt_recovery_intent` removes a terminal intent, it keeps a permanent marker for that transfer ID. The key is `lcp:receipt-recovery-consumed:v1:` plus the ID as 8 little-endian bytes, and the value is a single byte `1`. There is no view method. `recover_nep141_transfer` rejects that ID before reading a certificate, with `recovery transfer id is already consumed`. A later claim, escrow refund, operations refund, or fixture allocation of the same ID fails the same way, before it writes settlement or a pending transfer. Restoring only the pending-intent bytes does not clear the marker or move the counter. If finalization has not succeeded, including when the storage reserve is not ready, the intent is still present and the ID is not marked consumed. Do not sign another outcome for that `(instance_id, transfer_id)` after it has left pending. A full state restore that removes the marker with the ledger can make the ID usable again; the contract cannot detect that restore. Do not use a restored snapshot to retry a finalized transfer. **Owner decision 2026-11-19:** a full state restore that removes the consumed marker together with the ledger is prohibited and out of scope for recovery-enabled or recovery-candidate instances. Upgrade forward-only from finalized live state, verify consumed-marker/counter/ledger continuity before bootstrap or upgrade, and treat an unavoidable restore as a new instance or an owner-approved incident reconciliation proving no finalized intent is reintroduced before recovery or cash movement is re-enabled. See [`P2-OPEN-DECISIONS-REVIEW-PACKAGE.md`](P2-OPEN-DECISIONS-REVIEW-PACKAGE.md).
+When `finalize_receipt_recovery_intent` removes a terminal intent, it keeps a permanent marker for that transfer ID. The key is `lcp:receipt-recovery-consumed:v1:` plus the ID as 8 little-endian bytes, and the value is a single byte `1`. There is no view method. `recover_nep141_transfer` rejects that ID before reading a certificate, with `recovery transfer id is already consumed`. A later claim, escrow refund, operations refund, or fixture allocation of the same ID fails the same way, before it writes settlement or a pending transfer. Restoring only the pending-intent bytes does not clear the marker or move the counter. If finalization has not succeeded, including when the storage reserve is not ready, the intent is still present and the ID is not marked consumed. Do not sign another outcome for that `(instance_id, transfer_id)` after it has left pending. A full state restore that removes the marker with the ledger can make the ID usable again; the contract cannot detect that restore. Do not use a restored snapshot to retry a finalized transfer. **Owner decision 2026-11-19:** a full state restore that removes the consumed marker together with the ledger is prohibited and out of scope for recovery-enabled or recovery-candidate instances. Upgrade forward-only from finalized live state, verify consumed-marker/counter/ledger continuity before bootstrap or upgrade, and treat an unavoidable restore as a new instance or an owner-approved incident reconciliation proving no finalized intent is reintroduced before recovery or cash movement is re-enabled. See the [deployment continuity preconditions](#deployment-continuity-preconditions) below and [`P2-OPEN-DECISIONS-REVIEW-PACKAGE.md`](P2-OPEN-DECISIONS-REVIEW-PACKAGE.md).
+
+## Deployment continuity preconditions
+
+These are runbook gates, not contract checks. Run them in order and attach the
+evidence to the change record and the canary acceptance record. The state
+export is the RPC `view_state` result at a finalized block; record the block
+hash and height, the exported key count, and a SHA-256 of the canonical
+`(key, value)` list grouped by the `lcp:receipt-recovery-*`, `lcp:refund-credit:*`,
+`lcp:storage-bond-*`, `lcp:recovery-storage-reserve:*`, and `lcp:native-cash-*`
+prefixes. The consumed markers (`lcp:receipt-recovery-consumed:v1:`), the
+recovery counters, and the native cash ledger (`lcp:native-cash-ledger:v1`) are
+the gating rows; the remaining prefixes are exported so an unexpected addition
+or deletion is visible.
+
+**Before bootstrap**
+
+1. Confirm the account has no recovery history: zero consumed markers, zero
+   intent and credit rows, zero storage-bond rows, and no refund attempts. If a
+   native-cash ledger key exists, record it and confirm every liability class is
+   zero; bootstrap is only for a fresh instance.
+2. Confirm `next_commitment_id`, `next_challenge_id`, and `next_transfer_id` are
+   zero. The contract rejects bootstrap otherwise; record the observed values.
+3. Record the pre-bootstrap export hash and the deployed code hash.
+
+**Before an upgrade**
+
+1. Export and hash the state at a finalized block; record the highest finalized
+   transfer ID and every pending intent.
+2. Confirm the new code hash is the reviewed hash, and that no migration,
+   snapshot, or state surgery deletes or rewrites consumed markers, intent rows,
+   credit rows, bond records, the native cash ledger, or refund-attempt rows.
+3. Never deploy from a snapshot or restore, and never bootstrap over existing
+   recovery state.
+
+**After the upgrade, before re-enabling recovery or cash movement**
+
+1. Export at a finalized block and prove set inclusion: every consumed marker
+   present before is present after with the same value.
+2. Prove the counters (`next_commitment_id`, `next_challenge_id`,
+   `next_transfer_id`, and the recovery rotation generation) did not decrease,
+   and that pending intents are unchanged except for finalized activity.
+3. Prove the ledger liability components are unchanged except for finalized
+   activity, and that `recovery_storage_reserve_view` reports `ready` with the
+   current byte cost and no shortfall or revaluation in flight. Record the
+   post-upgrade export hash.
+4. Any missing marker, decreased counter, unexplained ledger or reserve change,
+   or non-finalized source block stops the run: do not enable recovery or cash
+   movement, do not repair by restoring state, and escalate to the owner
+   incident reconciliation path or redeploy as a new instance that reuses no
+   recovered transfer IDs.
 
 Do not initialize a network's recovery registry from an unverified RPC result at runtime. Before enabling testnet, independently review the candidate testnet code hash and validate local nearcore 2.14.0 replay on the required fixtures. Mainnet additionally requires its own code provenance review and V4 receipt fixture. Any code representation other than `Local(hash)` for a successful transfer remains unsupported pending separate review.
 

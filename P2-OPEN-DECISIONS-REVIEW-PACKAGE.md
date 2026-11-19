@@ -244,15 +244,18 @@ B2?
 is the complete B2 working note. It provides the model and measured inputs but
 explicitly leaves the production buffer unset pending policy choices.
 
-Measured inputs (2026-11-18, comparable mock probes, 300–8,192 byte envelope
-assertion):
+Measured inputs (comparable mock probes, 8,192-byte envelope assertion):
 - USDC tranche claim pending: 617 bytes; success settlement delta −418; retained
   199 bytes.
 - USDC tranche claim failure: 617 bytes pending; 199 bytes net retained.
 - USDC residual refund pending: 512 bytes; success delta −398; retained 114 bytes.
-- Conservative peak used by the model: 617 pending / 199 retained (refund path is
-  smaller). Recovery-credit withdrawal and callback-OOG retention are not yet
-  measured as comparable deltas.
+- Native credit withdrawal pending: 26 bytes; success delta −114; failure delta
+  −26 with the payer credit restored (measured 2026-11-19).
+- Token callback with an unresolved (OOG) receipt: 617 bytes pending, 0 bytes
+  committed delta, 617 bytes retained, because a failed receipt reverts its
+  writes (measured 2026-11-19).
+- Worst case used by the model: 617 pending / 617 retained; the 199-byte terminal
+  record is the settled case, not the stuck case.
 
 Model: `subtotal = (largest_outflow × max_pending) + (largest_outflow ×
 stuck_callbacks) + 10^19 yocto × (pending_bytes × max_pending + retained_bytes ×
@@ -260,7 +263,7 @@ stuck_callbacks)`; `recommended_buffer = subtotal × (1 + margin)`. Gas is a
 separate prepaid float, not solvency capital.
 
 Illustrative sample only (not a recommendation): `max_pending=64`,
-`max_outflow=1 NEAR`, `stuck_callbacks=4`, `margin=25%` => 85.50355 NEAR buffer
+`max_outflow=1 NEAR`, `stuck_callbacks=4`, `margin=25%` => 85.52445 NEAR buffer
 + 0.128 NEAR gas float.
 
 **Recommendation:** do not publish a final buffer/gas-limit value from this
@@ -280,8 +283,10 @@ canary's actual maximum authorized outflow.
 4. **Margin** (percentage or flat) above subtotal, with rationale.
 
 **Technical closure needed before finalizing values/gas limits**
-- Measure recovery-credit withdrawal and OOG-retention storage with the same
-  comparable probe and add to the table.
+- ~~Measure recovery-credit withdrawal and OOG-retention storage with the same
+  comparable probe and add to the table.~~ Measured 2026-11-19: credit
+  withdrawal 26 pending / −114 success / −26 failure; unresolved token callback
+  617 pending / 0 committed delta / 617 retained.
 - Replace fixture outflow with the largest policy-authorized single payout/refund.
 - Re-run `node tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs` with
   approved inputs and record JSON/artifact.
@@ -343,6 +348,11 @@ byte-compare JSON captures.
 
 ## 5. Canary preconditions (Workstream E)
 
+Record the acceptance in
+[`P2-USDC-RECEIPT-RECOVERY-CANARY-ACCEPTANCE.md`](P2-USDC-RECEIPT-RECOVERY-CANARY-ACCEPTANCE.md),
+which carries the false-`Failure` exposure limits, the seven-day delay evidence
+fields, the buffer/gas approval fields, and the stop conditions.
+
 Start only after A–D pass and the open decisions above are recorded with owner
 approval:
 
@@ -377,6 +387,7 @@ approval:
 - [`TODO.md`](TODO.md)
 - [`P2-USDC-RECEIPT-RECOVERY-DESIGN.md`](P2-USDC-RECEIPT-RECOVERY-DESIGN.md)
 - [`P2-USDC-RECEIPT-RECOVERY-TRACEABILITY.md`](P2-USDC-RECEIPT-RECOVERY-TRACEABILITY.md)
+- [`P2-USDC-RECEIPT-RECOVERY-CANARY-ACCEPTANCE.md`](P2-USDC-RECEIPT-RECOVERY-CANARY-ACCEPTANCE.md)
 - [`P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md`](P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md)
 - [`P2-PENDING-CALLBACK-FUNDING-BUFFER.md`](P2-PENDING-CALLBACK-FUNDING-BUFFER.md)
 - [`tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md)

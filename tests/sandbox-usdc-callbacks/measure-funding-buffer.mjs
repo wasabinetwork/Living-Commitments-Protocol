@@ -80,8 +80,8 @@ const recommended = subtotal + marginYocto;
 const inputs = [
   { name: "max simultaneous pending payouts", value: maxPending, unit: "callbacks", provenance: "policy input" },
   { name: "largest single outgoing transfer", value: maxOutflowNear, unit: "NEAR", provenance: "measured fixture (largest refund attach)" },
-  { name: "bytes while a callback is pending", value: storageBytes, unit: "bytes", provenance: "caller-supplied measurement; the local USDC claim probe records 617 bytes" },
-  { name: "bytes retained after settlement", value: retainedBytes, unit: "bytes", provenance: "caller-supplied measurement; the local success probe records 199 bytes" },
+  { name: "bytes while a callback is pending", value: storageBytes, unit: "bytes", provenance: "measured worst case: USDC tranche claim 617, residual refund 512, native credit withdrawal 26" },
+  { name: "bytes retained after settlement", value: retainedBytes, unit: "bytes", provenance: "measured worst case: an unresolved (OOG) callback retains 617; a settled transfer retains 199" },
   { name: "indefinitely unresolved callbacks", value: stuckCallbacks, unit: "callbacks", provenance: "policy input" },
   { name: "safety margin", value: margin, unit: "fraction", provenance: "policy input" },
 ];
@@ -91,7 +91,7 @@ const result = {
   generated_at: new Date().toISOString(),
   status: "PRELIMINARY",
   status_reason:
-    "pending-count, stuck-callback, and margin inputs are policy decisions; only the pending-callback storage byte count is measured",
+    "all storage byte counts are measured in mock probes; pending-count, stuck-callback, outflow, and margin inputs are policy decisions",
   formula: "buffer = outflow*maxPending + outflow*stuckCallbacks + storagePrice*(pendingBytes*maxPending + retainedBytes*stuckCallbacks), plus margin",
   inputs,
   components: {

@@ -9726,6 +9726,104 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn credit_withdrawal_storage_is_measured() {
+        // The native credit path removes the payer credit key and persists a
+        // refund attempt while the transfer callback is unresolved.
+        let payer = accounts(1);
+        let credit_yocto = 50_000_000_000_000_000_000_000_u128; // 0.05 NEAR
+        testing_env!(context_at(payer.clone(), 0, NOW_NS));
+        let mut contract = new_contract();
+        increase_service_report_refund_credit(&payer, credit_yocto);
+
+        testing_env_with_promise_results(
+            context_at(payer.clone(), 0, NOW_NS),
+            PromiseResult::Successful(vec![]),
+        );
+        let before_withdrawal = env::storage_usage();
+        contract.withdraw_storage_refund();
+        let withdrawal_bytes = env::storage_usage() as i64 - before_withdrawal as i64;
+        let attempt_id = native_cash::load().next_attempt_id;
+        assert!(native_cash::read_refund_attempt(attempt_id).is_some());
+        assert_eq!(contract.get_storage_refund_balance(payer.clone()).0, 0);
+
+        let before_settle = env::storage_usage();
+        contract.on_storage_refund_attempt(U64(attempt_id));
+        let success_settlement_delta = env::storage_usage() as i64 - before_settle as i64;
+        eprintln!(
+            "credit_withdrawal_pending_bytes={withdrawal_bytes} credit_withdrawal_success_delta={success_settlement_delta}"
+        );
+
+        // A failed payout restores the payer credit rather than retaining an
+        // unresolved attempt, so the retained delta returns to the baseline.
+        testing_env!(context_at(payer.clone(), 0, NOW_NS));
+        increase_service_report_refund_credit(&payer, credit_yocto);
+        testing_env_with_promise_results(
+            context_at(payer.clone(), 0, NOW_NS),
+            PromiseResult::Failed,
+        );
+        let before_failed_withdrawal = env::storage_usage();
+        contract.withdraw_storage_refund();
+        let failed_withdrawal_bytes = env::storage_usage() as i64 - before_failed_withdrawal as i64;
+        let failed_attempt_id = native_cash::load().next_attempt_id;
+        let before_failed_settle = env::storage_usage();
+        contract.on_storage_refund_attempt(U64(failed_attempt_id));
+        let failure_settlement_delta = env::storage_usage() as i64 - before_failed_settle as i64;
+        eprintln!(
+            "credit_withdrawal_failed_pending_bytes={failed_withdrawal_bytes} credit_withdrawal_failure_delta={failure_settlement_delta}"
+        );
+
+        assert_eq!(
+            contract.get_storage_refund_balance(payer.clone()).0,
+            credit_yocto
+        );
+        assert!(
+            withdrawal_bytes.abs() <= 8_192,
+            "credit withdrawal storage escaped the measured envelope"
+        );
+        assert!(native_cash::read_refund_attempt(failed_attempt_id).is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn token_callback_oog_retains_the_pending_footprint() {
+        // An out-of-gas callback receipt reverts its own writes, so the
+        // committed state equals the pending state. NotReady exercises the same
+        // no-settlement branch that an OOG callback leaves behind.
+        let (mut contract, id) = create_usdc_service_commitment();
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+
+        // No promise result is attached, so the callback takes the same
+        // no-settlement branch an out-of-gas callback receipt leaves behind.
+        // The beneficiary is also the current account so the private callback
+        // can run in the same mock environment that made the claim.
+        let mut claim_context = context_at(accounts(3), 10_u128.pow(25), NOW_NS);
+        claim_context.current_account_id = accounts(3);
+        testing_env!(claim_context);
+        let before_claim = env::storage_usage();
+        let transfer_id = contract.claim_tranche(id);
+        let pending_bytes = env::storage_usage() - before_claim;
+
+        let before_callback = env::storage_usage();
+        contract.on_tranche_transfer(transfer_id);
+        let oog_delta = env::storage_usage() as i64 - before_callback as i64;
+        eprintln!(
+            "usdc_callback_oog_pending_bytes={pending_bytes} usdc_callback_oog_retained_delta={oog_delta}"
+        );
+
+        assert_eq!(
+            oog_delta, 0,
+            "an unresolved callback must not change committed storage"
+        );
+        assert_eq!(env::storage_usage() - before_claim, pending_bytes);
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_some());
+        assert_eq!(
+            contract.get_escrow_status(id).unwrap().pending_raw.0,
+            1_500_000
+        );
+    }
+
     #[cfg(feature = "usdc-receipt-recovery")]
     fn two_funded_usdc_commitments() -> (Contract, U64, U64) {
         testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));

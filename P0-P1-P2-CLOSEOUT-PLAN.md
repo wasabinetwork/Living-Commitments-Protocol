@@ -440,8 +440,9 @@ Full evidence and required gates for each decision are in
    fixing owner policy inputs (max concurrent pending payouts per commitment,
    stuck-callback allowance in hours converted to a count with stated
    correlation assumption, largest single authorized payout/refund, margin),
-   completing remaining measurements (recovery-credit withdrawal and
-   callback-OOG retention storage, real policy max outflow), rerunning
+   using the completed storage measurements (617-byte pending and retained
+   worst case, 512/114 refund, 26-byte native credit withdrawal) and fixing the
+   real policy max outflow, then rerunning
    `node tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs` with approved
    inputs, deriving method gas limits from measured worst cases plus margin, and
    recording approved values in `TODO.md`/deployment runbook (gas float
