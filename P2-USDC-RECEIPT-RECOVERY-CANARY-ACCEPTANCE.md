@@ -91,18 +91,34 @@ canary and no production enablement is approved.
 
 ## 4. Buffer, gas, and pending-callback limits (Decision 5)
 
+The values below are owner-approved inputs. **Do not cite the buffer or gas
+float as satisfied for this canary until the funding and enforcement evidence
+rows are complete:** the 40.2468 NEAR buffer must be funded on the canary
+instance as solvency capital, the 16-pending / 1 NEAR / 24 h stuck operational
+limits must be enforced by named controls, and the 0.064 NEAR gas float must be
+available to authorized signers and monitored separately. Approved arithmetic
+alone is not funding evidence. Execute
+[`P2-USDC-RECEIPT-RECOVERY-CANARY-FUNDING-RUNBOOK.md`](P2-USDC-RECEIPT-RECOVERY-CANARY-FUNDING-RUNBOOK.md),
+record the evidence in `tests/canary-funding/funding-evidence.template.json`, and
+attach a `PASS` from `node tests/canary-funding/verify-funding-evidence.mjs <evidence.json>`
+before filling these rows.
+
 | Field | Approved value | Evidence |
 | --- | --- | --- |
 | Buffer (NEAR) and component subtotal | 40.2468 NEAR (subtotal 32.19744: 16 in-flight + 16 retained + 0.19744 storage) | `measure-funding-buffer.mjs` with 617/617 bytes, 16/16 callbacks, 1 NEAR, 25% |
+| Buffer funded on the canary instance | ≥ 40.2468 NEAR available as solvency capital above existing liabilities, dedicated to this instance | TBD: finalized funding tx hash(es), block, funded account, and a post-funding balance/liability snapshot showing headroom (e.g. `recovery_storage_reserve_view` ready with no shortfall plus a native-cash/liability export proving the buffer is uncommitted). Do not count the gas float. |
 | Largest authorized single payout/refund | 1 NEAR per commitment | owner-approved 2026-11-19 (fixture ceiling) |
-| Stuck-callback allowance (hours → count, correlation assumption) | 24 h → 16 callbacks; shared-incident stalls all in-flight callbacks at once | owner-approved 2026-11-19 |
+| Maximum simultaneous pending payouts and stuck-callback allowance (operational limits) | 16 pending per instance; 24 h → 16 callbacks (shared-incident stalls all in-flight callbacks at once) | TBD: named runbook control/monitor that pauses new token outflows at 16 outstanding, alert owner, and the operator acknowledgment that the contract does not enforce these caps |
+| Operational limits enforced before citing | 16-pending cap, 1 NEAR payout/refund ceiling, and 24 h / 16 stuck allowance enforced for this canary | TBD: control configuration, alerting, and operator sign-off evidence |
 | Margin (percentage or flat, with rationale) | 25% of subtotal (percentage, tracks outflow) | owner-approved 2026-11-19 |
-| Separate gas float (NEAR), monitored separately | 0.064 NEAR (16 × 40 Tgas) | prepaid signer gas, not solvency capital |
+| Separate gas float (NEAR), monitored separately | 0.064 NEAR (16 × 40 Tgas) | TBD: signer account(s), available balance evidence, and monitoring/alerting. Prepaid signer gas, not contract solvency capital and never netted against the buffer. |
 | Method gas limits derived from measured worst case + margin | Complete: every policy method has a 1.5× floor and the derivation reports no unmeasured method — `recover_nep141_transfer` 26, `bootstrap_receipt_recovery` 11, `revalue_recovery_storage_batch` 18 Tgas from `689fbf1`; finalize intent 8, finalize credit 6, code-hash propose/cancel/activate 20/19/7, quarantine release 6, credit withdrawal 12, epoch retirement 7 Tgas from the local `gate5-method-gas-2026-11-19` capture | `derive-method-gas.mjs`, traceability Gate 5 |
 | Approved values recorded in `TODO.md` and deployment runbook | Owner-approved 2026-11-19 | `TODO.md`, `P2-PENDING-CALLBACK-FUNDING-BUFFER.md`, `P2-OPEN-DECISIONS-REVIEW-PACKAGE.md` |
 
-The buffer is solvency capital; the gas float is not. Neither may be counted
-twice or netted against the other.
+The buffer is solvency capital; the gas float is prepaid signer gas. Neither may
+be counted twice or netted against the other. A canary acceptance record that
+leaves the funding or enforcement evidence rows as TBD has not satisfied this
+section, even if the approved values are filled in.
 
 ## 5. Gate evidence
 

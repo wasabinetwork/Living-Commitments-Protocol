@@ -142,8 +142,9 @@ node tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs \
   --json target/funding-buffer-proposed.json
 ```
 
-The canary acceptance record should cite these values only when the buffer is
-actually funded and the operational pending-count limit is enforced.
+The canary acceptance record must not cite these values as satisfied until the
+buffer is actually funded and the operational pending-count limit is enforced,
+with evidence recorded in the canary acceptance record.
 
 ## Limits and conditions
 
@@ -176,4 +177,33 @@ network measurement. They remain valid only while these conditions hold:
    this document (40.2468 NEAR, separate 0.064 NEAR gas float).
 5. Keep the gas float separate and monitored; it is not solvency capital. The
    canary acceptance record must cite the buffer only when it is funded and the
-   limits are enforced.
+   limits are enforced, with recorded evidence.
+
+## Funding and enforcement evidence
+
+Procedure: [`P2-USDC-RECEIPT-RECOVERY-CANARY-FUNDING-RUNBOOK.md`](P2-USDC-RECEIPT-RECOVERY-CANARY-FUNDING-RUNBOOK.md).
+Fill [`tests/canary-funding/funding-evidence.template.json`](tests/canary-funding/funding-evidence.template.json)
+and verify it with `node tests/canary-funding/verify-funding-evidence.mjs
+<evidence.json>`; the verifier recomputes the approved buffer and gas float,
+rejects headroom below the buffer, and returns `UNKNOWN` for incomplete records.
+
+Before a canary acceptance record cites the approved buffer or gas float as
+satisfied, record evidence that:
+
+- **Buffer funded:** the canary instance holds at least 40.2468 NEAR of
+  uncommitted solvency capital above its current native liabilities for the
+  canary scope. Evidence should include finalized funding transfer transaction
+  hash(es), the funded account, and a post-funding view/export showing the
+  recovery storage reserve is `ready` with no shortfall and the native-cash
+  ledger has headroom for the approved outflow/stuck allowance (the contract has
+  no single "buffer funded" view, so record the underlying balance and liability
+  inputs). Do not count the signer gas float as part of this balance.
+- **Operational limits enforced:** the 16-pending cap, 1 NEAR largest authorized
+  payout/refund, and 24-hour / 16-callback stuck allowance are enforced by named
+  runbook controls and monitoring that pause new token outflows at the cap and
+  alert operators. The contract does not enforce these caps; enforcement is an
+  operator responsibility and must be documented.
+- **Gas float available and monitored:** 0.064 NEAR is available to the
+  authorized signer account(s) that will prepay recovery gas, with monitoring
+  separate from contract solvency. It is prepaid signer gas, never netted
+  against the buffer.

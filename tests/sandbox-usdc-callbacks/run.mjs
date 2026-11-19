@@ -3548,6 +3548,10 @@ async function main() {
     };
     console.log("PASS successful recovery-credit transfer plus callback OOG leaves its liability reserved and blocks replay");
 
+    // Late scenarios intentionally exercise near-solvency boundaries. If a
+    // future cash-asserting call is added below, fund a plain root-to-core
+    // transfer and assert the resulting free native cash first, the way the
+    // code_hash_change scenario does above; do not assume headroom remains.
     // Gate 5 measurement: settle a credit while the storage reserve needs
     // revaluation so a zero-credit tombstone remains, then close it through
     // the permissionless finalize method.

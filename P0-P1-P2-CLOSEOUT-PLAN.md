@@ -299,7 +299,7 @@ operator on different infrastructure. Existing manifests must not be regenerated
 | ID | Task | Exit criteria |
 | --- | --- | --- |
 | B1 | Complete the cash-gate matrix | Every gate row passes at its exact threshold, one yocto short, and after materialization |
-| B2 | Establish a production-safe funding buffer | A measured buffer formula and recommended values replace the 1.07 NEAR and 0.06 NEAR test margins. Formula, measured 617-byte pending-callback storage, and calculator are in [P2-PENDING-CALLBACK-FUNDING-BUFFER.md](P2-PENDING-CALLBACK-FUNDING-BUFFER.md); policy inputs and failed/refund storage remain |
+| B2 | Establish a production-safe funding buffer | Owner-approved: 40.2468 NEAR buffer and a separate 0.064 NEAR gas float (16 pending, 24 h → 16 stuck, 1 NEAR, 25%). Formula, measurements, and calculator are in [P2-PENDING-CALLBACK-FUNDING-BUFFER.md](P2-PENDING-CALLBACK-FUNDING-BUFFER.md). Remaining: fund the buffer on the canary instance, enforce the operational limits, and verify the evidence with [the funding runbook](P2-USDC-RECEIPT-RECOVERY-CANARY-FUNDING-RUNBOOK.md) and `tests/canary-funding/verify-funding-evidence.mjs` before the canary record cites them |
 | B3 | Close the remaining callback semantics | Deleted recipient and unknown result with no retry now have unit evidence (`deleted_recipient_failure_keeps_reservation_recoverable_and_retries_once`, `missing_transfer_result_keeps_reservation_and_schedules_no_retry`); a deleted-account Sandbox capture, duplicate non-restoration, no redirection, and no double payment still need named assertions |
 
 B1 rows still to exercise: native `claim_tranche`, `refund_remaining`,
@@ -435,19 +435,17 @@ Full evidence and required gates for each decision are in
    quarantines until full backing is restored; no timeout/admin override exists"
    with maximum accepted exposure. Do not expand beyond canary until A3/D3 and
    any incidents are reviewed.
-5. **Buffer value and method gas limits (owner accepted recommendation framework
-   2026-11-19):** do not fix a final numeric buffer/gas value yet. Close B2 by
-   fixing owner policy inputs (max concurrent pending payouts per commitment,
-   stuck-callback allowance in hours converted to a count with stated
-   correlation assumption, largest single authorized payout/refund, margin),
-   using the completed storage measurements (617-byte pending and retained
-   worst case, 512/114 refund, 26-byte native credit withdrawal) and fixing the
-   real policy max outflow, then rerunning
-   `node tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs` with approved
-   inputs, deriving method gas limits from measured worst cases plus margin, and
-   recording approved values in `TODO.md`/deployment runbook (gas float
-   separate). Conservative canary starting posture is guidance only, pending
-   owner-approved numbers.
+5. **Buffer value and method gas limits (owner approved 2026-11-19):** the four
+   policy inputs are fixed (16 simultaneous pending payouts, 24 h → 16 callbacks
+   under a shared-incident assumption, 1 NEAR largest payout/refund, 25% margin),
+   which computes a 40.2468 NEAR buffer with a separate 0.064 NEAR gas float.
+   Method gas limits are derived from committed and local worst-case captures
+   with a 1.5× margin. Close B2 by funding the buffer on the canary instance,
+   enforcing the operational limits (the contract does not enforce them), and
+   recording verified evidence with
+   [P2-USDC-RECEIPT-RECOVERY-CANARY-FUNDING-RUNBOOK.md](P2-USDC-RECEIPT-RECOVERY-CANARY-FUNDING-RUNBOOK.md)
+   and `tests/canary-funding/verify-funding-evidence.mjs`. The canary record must
+   not cite the values until that evidence passes.
 
 ## Definition of done
 

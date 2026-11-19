@@ -1050,3 +1050,21 @@ shasum -a 256 tests/sandbox-usdc-callbacks/receipt-recovery-sandbox-acceptance-2
 
 From this directory, `npm audit --audit-level=high` currently reports zero
 vulnerabilities.
+
+### Native-cash margin for late cash-asserting scenarios
+
+The recovery-only fixture deliberately drives the native ledger to its solvency
+edge in the scenarios after governance. That is intentional for those
+measurements. A future cash-asserting scenario added at the tail (or after any
+scenario that consumes the margin) must fund and assert its own native-cash
+margin first; do not assume free headroom remains. The Gate 5 `code_hash_change`
+scenario is the pattern: it runs before the solvency-edge scenarios and records
+its own plain root-to-core margin top-up (`margin_top_up_transaction_hash`,
+`margin_top_up_yocto`) plus the free native cash before and after
+(`free_native_cash_before_yocto`, `free_native_cash_after_yocto`).
+
+Use a plain NEAR transfer for that margin, not
+`sandbox_set_native_free_margin`: the fixture setter rebalances synthetic
+liabilities and does not add real account cash, so a cash-gated call measured
+against it would not exercise the same balance path as a funded deploy.
+

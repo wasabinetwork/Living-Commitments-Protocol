@@ -1,4 +1,4 @@
-7d22b13e242324b718db0d4a600fc5b428f17687e9ea82536873a646b72c552b  tests/sandbox-usdc-callbacks/run.mjs
+165263fb4717ef7b2d0541ce26ec5d58cb8bb0aeb9ad87f1ac4a27a29ac32730  tests/sandbox-usdc-callbacks/run.mjs
 218c75cd99d1f97093b86fcec73a37248a8f19fd16e9c23401a82991ca3a442d  tests/sandbox-usdc-callbacks/derive-method-gas.mjs
 5b35866d55f967b746e9d65e7e97cdff81b4ef168b7a650b1b905bcce9c63fe7  tests/sandbox-usdc-callbacks/gate5-method-gas-2026-11-19/README.md
 d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548  tests/sandbox-usdc-callbacks/package.json

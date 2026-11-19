@@ -1,0 +1,75 @@
+{
+  "schema": "lcp.canary_funding_evidence.v1",
+  "_instructions": "Copy to the canary record location, replace every TBD with recorded evidence, and run: node tests/canary-funding/verify-funding-evidence.mjs <this-file> [--json out.json]. The verifier exits 0 (PASS), 1 (FAIL: inconsistent record), or 2 (UNKNOWN: evidence incomplete). Procedure: P2-USDC-RECEIPT-RECOVERY-CANARY-FUNDING-RUNBOOK.md. Do not paste private keys or signing secrets in this file.",
+  "network": "TBD",
+  "chain_id": "TBD",
+  "contract_account": "TBD",
+  "recorded_at": "TBD",
+  "approved_inputs": {
+    "max_pending": 16,
+    "stuck_callbacks": 16,
+    "stuck_allowance_hours": 24,
+    "largest_payout_near": "1",
+    "storage_bytes": 617,
+    "retained_bytes": 617,
+    "margin_percent": 25,
+    "gas_tgas_per_callback": 40
+  },
+  "cited": {
+    "buffer_near": "40.2468",
+    "gas_float_near": "0.064"
+  },
+  "buffer": {
+    "snapshot_block": {
+      "height": "TBD",
+      "hash": "TBD"
+    },
+    "state_export_sha256": "TBD",
+    "liquid_balance_yocto": "TBD",
+    "headroom_yocto": "TBD",
+    "funding_transactions": [
+      {
+        "hash": "TBD",
+        "amount_yocto": "TBD",
+        "finalized_block_height": "TBD"
+      }
+    ],
+    "reserve": {
+      "status": "TBD",
+      "ready": "TBD",
+      "shortfall_yocto": "TBD"
+    },
+    "native_liabilities": {
+      "escrow_yocto": "TBD",
+      "credits_yocto": "TBD",
+      "storage_backing_yocto": "TBD",
+      "complete": "TBD"
+    },
+    "gas_float_excluded": true
+  },
+  "enforcement": {
+    "pending_cap": {
+      "limit": 16,
+      "control": "TBD",
+      "alert_owner": "TBD"
+    },
+    "payout_ceiling_near": "1",
+    "stuck_allowance": {
+      "hours": 24,
+      "callbacks": 16,
+      "correlation_assumption": "one shared token-contract or RPC incident stalls every in-flight callback at once"
+    },
+    "operator_acknowledged_by": "TBD",
+    "contract_caps_pending_count": false
+  },
+  "gas_float": {
+    "monitored_separately": true,
+    "monitoring": "TBD",
+    "signers": [
+      {
+        "account": "TBD",
+        "balance_yocto": "TBD"
+      }
+    ]
+  }
+}

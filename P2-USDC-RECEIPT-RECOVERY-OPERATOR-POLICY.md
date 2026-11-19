@@ -41,6 +41,34 @@ Every method above now has a floor derived with a 1.5× margin, and the script r
 
 The current 2,048-record registry cap is a provisional implementation limit. At the observed maximum-payer row size of 527 bytes, filling it would account for about 1,079,296 bytes of record storage, or approximately 0.0108 NEAR at the present `10^19 yoctoNEAR/byte` storage price. This is a planning estimate from the measured row shape, not a reserve funding guarantee; configuration, indexes, other state, runtime price changes, and the fresh capacity run must also be included before any canary.
 
+## Pending-callback buffer and gas float
+
+Before a canary acceptance record cites the approved buffer or gas float as
+satisfied, fund and evidence the buffer and enforce the operational limits
+recorded in [`P2-PENDING-CALLBACK-FUNDING-BUFFER.md`](P2-PENDING-CALLBACK-FUNDING-BUFFER.md)
+and [`P2-USDC-RECEIPT-RECOVERY-CANARY-ACCEPTANCE.md`](P2-USDC-RECEIPT-RECOVERY-CANARY-ACCEPTANCE.md).
+The owner-approved canary inputs (2026-11-19) are 40.2468 NEAR buffer, 0.064 NEAR
+gas float, 16 simultaneous pending payouts, a 24-hour stuck allowance converted
+to 16 callbacks under a shared-incident assumption, a 1 NEAR largest authorized
+payout/refund, and a 25% margin.
+
+- **Buffer (solvency capital):** fund at least 40.2468 NEAR on the canary
+  instance as uncommitted headroom above current native liabilities for the
+  canary scope. Record finalized funding transaction hash(es), the funded
+  account, and a post-funding export showing `recovery_storage_reserve_view`
+  `ready` with no shortfall together with the native-cash/liability inputs that
+  prove the buffer is not committed. There is no single "buffer funded" contract
+  view. Do not count the signer gas float.
+- **Operational limits (not contract-enforced):** enforce a 16-pending cap, the
+  1 NEAR payout/refund ceiling, and the 24-hour / 16-callback stuck allowance
+  with named runbook controls and monitoring that pause new token outflows at
+  the cap and alert operators. Document the controls and operator acknowledgment
+  in the canary record.
+- **Gas float (separate):** keep 0.064 NEAR available to authorized signer
+  account(s) for prepaid recovery gas and monitor it separately from contract
+  solvency. It is not payout liquidity and must never be netted against the
+  buffer.
+
 ## Callback payload policy
 
 The generic transfer callback treats `Ok(_)` and `TooLong(_)` from a zero-byte-bounded result read as successful value movement. A completed transfer must not be retried merely because its response payload is unexpectedly large. Persisted storage-credit withdrawals use the stricter native-transfer contract: a successful result is expected to have no payload, and `TooLong(_)` leaves the credit in `Withdrawing` as unknown, preventing a second payment. The two policies are deliberate; the stricter path favors avoiding double payment over automatic liveness when the callback response is malformed.
