@@ -1728,6 +1728,16 @@ async function main() {
     const creditPayerCall = (method, args, description, gas = 150n * TERA, expectFailure = false) =>
       sendTransaction(CASH_RECIPIENT_ID, cashRecipientKey, CORE_ID, [actionFunctionCall(method, args, gas)], description,
         expectFailure ? { expectFailure: true } : {});
+    // Gate 5 method floors are prepaid for the outer contract call receipt, so
+    // record that receipt directly instead of summing later callback receipts.
+    const outerReceiptGas = (transaction) => {
+      const outer = (transaction.receipts_outcome ?? [])[0];
+      assert.equal(outer?.outcome?.executor_id, CORE_ID,
+        "expected the outer contract-call receipt for measured method gas");
+      assert.ok(outer.outcome.gas_burnt !== undefined,
+        "expected the outer contract-call receipt to record gas_burnt");
+      return String(outer.outcome.gas_burnt);
+    };
     const runStorageRegistryAcceptance = async () => {
       const gasBurnt = (transaction) => (transaction.receipts_outcome ?? [])
         .reduce((sum, receipt) => sum + BigInt(receipt.outcome?.gas_burnt ?? 0), 0n);
@@ -2638,6 +2648,7 @@ async function main() {
       failed_escrow: failedRecovered,
       released_escrow: releasedEscrow,
       quarantine_release_transaction_hash: quarantineRelease.transaction.hash,
+      quarantine_release_receipt_gas_burnt: outerReceiptGas(quarantineRelease),
       retry_escrow: retriedState,
       final_token_balance: (await tokenBalance(CASH_RECIPIENT_ID)).toString(),
     };
@@ -2988,6 +2999,7 @@ async function main() {
       initial_credit: creditBeforeRevaluation,
       storage_release_low_gas_failure_transaction_hash: lowGasFinalize.transaction.hash,
       storage_release_retry_transaction_hash: finalizedIntentTx.transaction.hash,
+      storage_release_receipt_gas_burnt: outerReceiptGas(finalizedIntentTx),
       permissionless_storage_release_retry: true,
       direct_callback_transaction_hash: directCreditCallback.transaction.hash,
       direct_callback_rejected_without_mutation: true,
@@ -3022,6 +3034,7 @@ async function main() {
       blocked_during_revaluation: true,
       one_yocto_short_rejected: true,
       exact_withdrawal_transaction_hash: exactWithdrawalHash,
+      exact_withdrawal_receipt_gas_burnt: outerReceiptGas(exactWithdrawal),
       delayed_callback_configuration_transaction_hash: delayConfiguration.transaction.hash,
       delayed_callback_steps: delayedCallbackSteps,
       delayed_callback_receipts: delayedCashPhases,
@@ -3282,9 +3295,135 @@ async function main() {
       observed_activation_time_ns: observedTimestamp.toString(),
       active_epoch: activeConfig.current_epoch,
       retired_epoch_zero: returnedJson(retireTx),
+      retire_epoch_receipt_gas_burnt: outerReceiptGas(retireTx),
       old_committee_replay_rejected: true,
     };
     console.log("PASS signed rotation proposal/cancellation, delayed Sandbox activation, old-key rejection, and epoch retirement");
+
+    // Gate 5 measurement: the committed governance capture records no gas for
+    // the signed USDC code-hash methods. Exercise propose, cancel, and a
+    // delayed activation with the currently active committee here, before the
+    // scenarios below that deliberately run the native ledger at its solvency
+    // floor: a proposal's attached deposit enters the storage reserve backing
+    // during the call. Existing intents copy the active hash at creation, so
+    // the later activation only affects intents created after it.
+    const codeHashMarginBefore = await nativeCashSnapshot();
+    const codeHashMarginTopUp = 2n * ONE_NEAR;
+    const codeHashMarginTx = await sendTransaction("sandbox", rootKey, CORE_ID, [
+      actionTransfer(codeHashMarginTopUp),
+    ], "fund a native cash margin for the code-hash measurement");
+    const codeHashMarginAfter = await nativeCashSnapshot();
+    assert.ok(nativeFreeMargin(codeHashMarginAfter) > ONE_NEAR,
+      "the code-hash measurement needs a free native cash margin above one NEAR");
+    const codeHashConfigBefore = await view(CORE_ID, "receipt_recovery_configuration", {});
+    const newCodeHash = createHash("sha256").update("lcp-sandbox-code-hash-change-measurement-v1").digest();
+    const newCodeHashBase58 = base58Encode(newCodeHash);
+    assert.ok(!codeHashConfigBefore.approved_usdc_code_hashes.includes(newCodeHashBase58));
+    assert.notEqual(newCodeHashBase58, codeHashConfigBefore.active_usdc_code_hash);
+    const codeHashGenesis = base58Decode(codeHashConfigBefore.genesis_hash);
+    const codeHashInstance = Buffer.from(codeHashConfigBefore.instance_id, "hex");
+    const firstCodeHashGeneration = BigInt(codeHashConfigBefore.last_code_hash_generation) + 1n;
+    const firstCodeHashMessage = Buffer.concat([
+      u8(1),
+      borshString(nodeStatus.chain_id),
+      codeHashGenesis,
+      borshString(CORE_ID),
+      codeHashInstance,
+      u64(firstCodeHashGeneration),
+      newCodeHash,
+      u64(BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec)
+        + minDelay + activationSlack),
+    ]);
+    const firstCodeHashEnvelope = signedEnvelope(
+      firstCodeHashMessage, "LCP/NEP141/CODE-HASH/V1\0", rotationKeys,
+    );
+    const codeHashProposeTx = await functionCall(CORE_ID, coreKey, "propose_usdc_code_hash_change", {
+      signed_proposal_base64: firstCodeHashEnvelope,
+    }, 220n * TERA, ONE_NEAR);
+    const codeHashProposal = returnedJson(codeHashProposeTx);
+    assert.equal(codeHashProposal.proposal_generation, firstCodeHashGeneration.toString());
+    assert.equal(codeHashProposal.new_code_hash, newCodeHashBase58);
+    const codeHashCancellationMessage = Buffer.concat([
+      u8(1),
+      borshString(nodeStatus.chain_id),
+      codeHashGenesis,
+      borshString(CORE_ID),
+      codeHashInstance,
+      u64(firstCodeHashGeneration),
+      hexBytes(codeHashProposal.proposal_digest),
+    ]);
+    const codeHashCancellationEnvelope = signedEnvelope(
+      codeHashCancellationMessage, "LCP/NEP141/CODE-HASH-CANCEL/V1\0", rotationKeys,
+    );
+    const codeHashCancelTx = await functionCall(CORE_ID, coreKey, "cancel_usdc_code_hash_change", {
+      signed_cancellation_base64: codeHashCancellationEnvelope,
+    }, 180n * TERA);
+    assert.equal(returnedJson(codeHashCancelTx).proposal_generation, firstCodeHashGeneration.toString());
+    const codeHashConfigAfterCancel = await view(CORE_ID, "receipt_recovery_configuration", {});
+    assert.equal(codeHashConfigAfterCancel.pending_code_hash_change, null);
+    assert.equal(codeHashConfigAfterCancel.active_usdc_code_hash, codeHashConfigBefore.active_usdc_code_hash);
+
+    const secondCodeHashGeneration = BigInt(codeHashConfigAfterCancel.last_code_hash_generation) + 1n;
+    const codeHashActivateAt = BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec)
+      + minDelay + activationSlack;
+    const secondCodeHashMessage = Buffer.concat([
+      u8(1),
+      borshString(nodeStatus.chain_id),
+      codeHashGenesis,
+      borshString(CORE_ID),
+      codeHashInstance,
+      u64(secondCodeHashGeneration),
+      newCodeHash,
+      u64(codeHashActivateAt),
+    ]);
+    const secondCodeHashEnvelope = signedEnvelope(
+      secondCodeHashMessage, "LCP/NEP141/CODE-HASH/V1\0", rotationKeys,
+    );
+    const codeHashActivationProposeTx = await functionCall(CORE_ID, coreKey, "propose_usdc_code_hash_change", {
+      signed_proposal_base64: secondCodeHashEnvelope,
+    }, 220n * TERA, ONE_NEAR);
+    assert.equal(returnedJson(codeHashActivationProposeTx).proposal_generation, secondCodeHashGeneration.toString());
+    let codeHashObserved = BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec);
+    let codeHashFastForwardCalls = 0;
+    while (codeHashObserved < codeHashActivateAt && codeHashFastForwardCalls < 12) {
+      const remainingNs = codeHashActivateAt - codeHashObserved;
+      const deltaHeight = Number((remainingNs + 299_999_999n) / 300_000_000n + 2n);
+      await rpc("sandbox_fast_forward", { delta_height: deltaHeight });
+      codeHashFastForwardCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      codeHashObserved = BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec);
+    }
+    assert.ok(codeHashObserved >= codeHashActivateAt,
+      `Sandbox time did not reach code-hash activation ${codeHashActivateAt}; observed ${codeHashObserved}`);
+    const codeHashActivateTx = await rootCall("activate_usdc_code_hash_change", {},
+      "activate the delayed USDC code hash change", 220n * TERA);
+    const codeHashConfigAfter = await view(CORE_ID, "receipt_recovery_configuration", {});
+    assert.equal(codeHashConfigAfter.active_usdc_code_hash, newCodeHashBase58);
+    assert.ok(codeHashConfigAfter.approved_usdc_code_hashes.includes(newCodeHashBase58));
+    assert.equal(codeHashConfigAfter.pending_code_hash_change, null);
+    results.code_hash_change = {
+      margin_top_up_transaction_hash: codeHashMarginTx.transaction.hash,
+      margin_top_up_yocto: codeHashMarginTopUp.toString(),
+      free_native_cash_before_yocto: nativeFreeMargin(codeHashMarginBefore).toString(),
+      free_native_cash_after_yocto: nativeFreeMargin(codeHashMarginAfter).toString(),
+      propose_transaction_hash: codeHashProposeTx.transaction.hash,
+      propose_receipt_gas_burnt: outerReceiptGas(codeHashProposeTx),
+      cancel_transaction_hash: codeHashCancelTx.transaction.hash,
+      cancel_receipt_gas_burnt: outerReceiptGas(codeHashCancelTx),
+      activation_proposal_transaction_hash: codeHashActivationProposeTx.transaction.hash,
+      activation_propose_receipt_gas_burnt: outerReceiptGas(codeHashActivationProposeTx),
+      activation_transaction_hash: codeHashActivateTx.transaction.hash,
+      activate_receipt_gas_burnt: outerReceiptGas(codeHashActivateTx),
+      proposed_generation: firstCodeHashGeneration.toString(),
+      activated_generation: secondCodeHashGeneration.toString(),
+      fast_forward_calls: codeHashFastForwardCalls,
+      activation_at_ns: codeHashActivateAt.toString(),
+      observed_activation_time_ns: codeHashObserved.toString(),
+      new_code_hash: newCodeHashBase58,
+      cancellation_preserved_active_hash: true,
+      pending_change_cleared: true,
+    };
+    console.log("PASS signed USDC code-hash propose, cancel, and delayed Sandbox activation");
 
     const overflowPayer = RECIPIENT_ID;
     const overflowIdTx = await functionCall(CORE_ID, coreKey, "sandbox_queue_refund_credit_overflow_callback", {
@@ -3408,6 +3547,97 @@ async function main() {
       replay_rejected_without_state_change: true,
     };
     console.log("PASS successful recovery-credit transfer plus callback OOG leaves its liability reserved and blocks replay");
+
+    // Gate 5 measurement: settle a credit while the storage reserve needs
+    // revaluation so a zero-credit tombstone remains, then close it through
+    // the permissionless finalize method.
+    const tombstoneSource = await queueRecovery(109, 20, "create a recovery credit for settled-tombstone finalization");
+    const tombstoneTerminal = await waitFor("settled-tombstone source transfer settlement", async () => {
+      const [state, intent] = await Promise.all([
+        escrow(109), recoveryIntent(tombstoneSource.transferId),
+      ]);
+      return state && intent?.terminal_outcome === "success" && BigInt(state.paid_raw) === AMOUNT
+        ? { done: true, value: { state, intent } }
+        : { done: false, value: { state, terminal_outcome: intent?.terminal_outcome } };
+    });
+    const tombstoneIntentFinalizeTx = await rootCall("finalize_receipt_recovery_intent", {
+      transfer_id: tombstoneSource.transferId,
+    }, "finalize the settled-tombstone source recovery intent", 220n * TERA);
+    assert.equal(returnedJson(tombstoneIntentFinalizeTx), true);
+    const tombstoneCreditId = tombstoneTerminal.intent.refund_credit_id;
+    const tombstoneCreditBefore = await view(CORE_ID, "receipt_recovery_credit", {
+      credit_id_hex: tombstoneCreditId,
+    });
+    assert.equal(tombstoneCreditBefore.state, "available");
+    const tombstoneBeginTx = await creditPayerCall("sandbox_begin_recovery_credit_callback_fixture", {
+      credit_id_hex: tombstoneCreditId,
+    }, "begin a tombstone withdrawal attempt", 150n * TERA);
+    const [tombstoneAmount, tombstoneNonce] = returnedJson(tombstoneBeginTx).map(BigInt);
+    assert.ok(tombstoneAmount > 0n);
+    const tombstoneStaleTx = await rootCall("sandbox_mark_recovery_storage_price_stale", {},
+      "fixture a stale storage reserve before the credit callback", 100n * TERA);
+    const tombstoneCallbackTx = await rootCall("sandbox_queue_recovery_credit_callback_fixture", {
+      credit_id_hex: tombstoneCreditId,
+      amount: tombstoneAmount.toString(),
+      nonce: tombstoneNonce.toString(),
+      result_count: 1,
+      result_too_long: false,
+      result_succeeds: true,
+    }, "settle the credit while storage revaluation is required", 220n * TERA);
+    const tombstoneSettled = await waitFor("settled zero-credit tombstone", async () => {
+      const row = await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: tombstoneCreditId });
+      return row?.settled === true && row.accrued_yocto === "0" && row.state === "available"
+        ? { done: true, value: row } : { done: false, value: row };
+    });
+    assert.equal(tombstoneSettled.storage_reserve_ready, false,
+      "a stale reserve must keep the settled tombstone until maintenance completes");
+    const tombstoneBlockedFinalize = await rootCall("finalize_receipt_recovery_credit", {
+      credit_id_hex: tombstoneCreditId,
+    }, "report a settled tombstone as not finalizable before reserve maintenance", 150n * TERA);
+    assert.equal(returnedJson(tombstoneBlockedFinalize), false,
+      "finalization must not close a tombstone while the reserve is stale");
+    assert.notEqual(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: tombstoneCreditId }), null,
+      "a blocked finalization must preserve the settled tombstone");
+    await rootCall("begin_recovery_storage_revaluation", {},
+      "begin reserve maintenance for the settled tombstone", 100n * TERA);
+    let tombstoneRevaluationIndex = 0;
+    const tombstoneRevaluationBatches = [];
+    for (let batches = 0; batches < 100; batches += 1) {
+      const batchTx = await rootCall("revalue_recovery_storage_batch", {
+        start_index: tombstoneRevaluationIndex,
+        limit: 16,
+      }, `revalue the registry for the settled tombstone from ${tombstoneRevaluationIndex}`, 180n * TERA);
+      const result = returnedJson(batchTx);
+      tombstoneRevaluationBatches.push(result);
+      if (result.status === "complete") break;
+      assert.equal(result.status, "in_progress", `unexpected tombstone revaluation status ${result.status}`);
+      tombstoneRevaluationIndex = result.next_record_index;
+      assert.ok(batches < 99, "tombstone revaluation did not complete within 100 batches");
+    }
+    const tombstoneReserveAfter = await view(CORE_ID, "recovery_storage_reserve_view", {});
+    assert.equal(tombstoneReserveAfter.ready, true,
+      "reserve maintenance must restore readiness before tombstone finalization");
+    const tombstoneFinalizeTx = await rootCall("finalize_receipt_recovery_credit", {
+      credit_id_hex: tombstoneCreditId,
+    }, "finalize the settled zero-credit tombstone", 150n * TERA);
+    assert.equal(returnedJson(tombstoneFinalizeTx), true);
+    assert.equal(await view(CORE_ID, "receipt_recovery_credit", { credit_id_hex: tombstoneCreditId }), null,
+      "finalization must remove the settled tombstone");
+    results.recovery_credit_tombstone_finalize = {
+      source_transfer_transaction_hash: tombstoneSource.tx.transaction.hash,
+      intent_finalization_transaction_hash: tombstoneIntentFinalizeTx.transaction.hash,
+      intent_finalization_receipt_gas_burnt: outerReceiptGas(tombstoneIntentFinalizeTx),
+      withdrawal_attempt_transaction_hash: tombstoneBeginTx.transaction.hash,
+      stale_reserve_transaction_hash: tombstoneStaleTx.transaction.hash,
+      settlement_callback_transaction_hash: tombstoneCallbackTx.transaction.hash,
+      blocked_finalize_transaction_hash: tombstoneBlockedFinalize.transaction.hash,
+      blocked_finalize_returned_false: true,
+      revaluation_batches: tombstoneRevaluationBatches,
+      finalize_transaction_hash: tombstoneFinalizeTx.transaction.hash,
+      finalize_receipt_gas_burnt: outerReceiptGas(tombstoneFinalizeTx),
+      settled_tombstone_removed: true,
+    };
+    console.log("PASS a settled zero-credit tombstone remains until reserve maintenance and closes through finalize_receipt_recovery_credit");
 
     return results;
   }

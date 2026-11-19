@@ -98,7 +98,7 @@ canary and no production enablement is approved.
 | Stuck-callback allowance (hours → count, correlation assumption) | 24 h → 16 callbacks; shared-incident stalls all in-flight callbacks at once | owner-approved 2026-11-19 |
 | Margin (percentage or flat, with rationale) | 25% of subtotal (percentage, tracks outflow) | owner-approved 2026-11-19 |
 | Separate gas float (NEAR), monitored separately | 0.064 NEAR (16 × 40 Tgas) | prepaid signer gas, not solvency capital |
-| Method gas limits derived from measured worst case + margin | Partial: `recover_nep141_transfer` 26, `bootstrap_receipt_recovery` 11, `revalue_recovery_storage_batch` 18 Tgas (1.5× from 689fbf1 captures); finalize/code-hash/quarantine/credit withdrawal/retirement provisional | `derive-method-gas.mjs`, traceability Gate 5 |
+| Method gas limits derived from measured worst case + margin | Complete: every policy method has a 1.5× floor and the derivation reports no unmeasured method — `recover_nep141_transfer` 26, `bootstrap_receipt_recovery` 11, `revalue_recovery_storage_batch` 18 Tgas from `689fbf1`; finalize intent 8, finalize credit 6, code-hash propose/cancel/activate 20/19/7, quarantine release 6, credit withdrawal 12, epoch retirement 7 Tgas from the local `gate5-method-gas-2026-11-19` capture | `derive-method-gas.mjs`, traceability Gate 5 |
 | Approved values recorded in `TODO.md` and deployment runbook | Owner-approved 2026-11-19 | `TODO.md`, `P2-PENDING-CALLBACK-FUNDING-BUFFER.md`, `P2-OPEN-DECISIONS-REVIEW-PACKAGE.md` |
 
 The buffer is solvency capital; the gas float is not. Neither may be counted

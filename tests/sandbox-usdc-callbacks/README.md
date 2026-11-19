@@ -38,6 +38,29 @@ reproduction, and it is not canary approval. The `689fbf1` captures below
 remain the evidence for that older source. Do not regenerate their
 manifests.
 
+## Gate 5 method-gas capture — 2026-11-19
+
+The older capture sets record summarized scenario fields, not the transaction
+outcomes for every recovery method. This separate capture fills the Gate 5 gas
+rows that had no committed figure: `finalize_receipt_recovery_intent`,
+`finalize_receipt_recovery_credit`, `propose`/`cancel`/`activate_usdc_code_hash_change`,
+`release_usdc_certificate_quarantine`, `withdraw_receipt_recovery_credit`, and
+`retire_receipt_recovery_epoch`. It was produced from source `a1d4fdc` with the
+reproducible `sandbox-recovery` build (WASM SHA-256
+`e1ed579097c82e212d2d5b75cbaf7253657c602210118ccbf9d0c1225dc19cef`) on isolated
+Sandbox 2.14.0, protocol 88; no public network was used. Each figure is the gas
+burnt by the outer contract-call receipt, which is the execution a caller's
+prepaid gas must cover.
+
+The capture is [`gate5-method-gas-2026-11-19/recovery.json`](gate5-method-gas-2026-11-19/recovery.json)
+with provenance in its [README](gate5-method-gas-2026-11-19/README.md), a source
+manifest in [`gate5-method-gas-2026-11-19.sha256`](gate5-method-gas-2026-11-19.sha256),
+and a tooling manifest in
+[`gate5-method-gas-2026-11-19.tooling.sha256`](gate5-method-gas-2026-11-19.tooling.sha256).
+`node tests/sandbox-usdc-callbacks/derive-method-gas.mjs` reads it together with
+the `689fbf1` captures and now reports every policy method as measured. The
+`689fbf1` and `29ed585` captures were not regenerated.
+
 ## Historical local acceptance candidate — 689fbf1
 
 The recovery source for this older capture set is commit
