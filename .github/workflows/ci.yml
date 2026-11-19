@@ -87,6 +87,8 @@ jobs:
       - name: Verify committed captures
         run: |
           node tests/sandbox-usdc-callbacks/verify-rotation-live-intent-capture.mjs
+          node tests/sandbox-usdc-callbacks/verify-rotation-live-intent-capture.mjs \
+            --fresh tests/sandbox-usdc-callbacks/rotation-live-intent-acceptance-2026-11-19/reproduction-recovery.json
           node tests/sandbox-usdc-callbacks/verify-storage-registry-capture.mjs
       - name: Run capture verifier mutation checks
         run: node --test tests/sandbox-usdc-callbacks/test/*.test.mjs

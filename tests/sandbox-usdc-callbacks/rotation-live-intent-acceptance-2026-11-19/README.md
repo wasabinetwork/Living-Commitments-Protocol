@@ -65,6 +65,44 @@ recorded transaction hashes, instance ID, chain ID, and activation timestamps;
 the procedure for a second operator is
 [`INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md`](../INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md).
 
+## Reproduction check, 2026-11-19
+
+The owner re-ran the whole `LCP_RECOVERY_ONLY=1` suite against the same pinned
+artifact — the cached reproducible build of `e47b194`, 1,226,309 bytes, WASM
+SHA-256 `de9dc7cf…a192` — in `node:26-trixie-slim` at
+`sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc`.
+The repository root was mounted so the existing
+`target/wasm32-unknown-unknown/release/sandbox_mock_ft*.wasm` builds
+(`d01d4434…` and `91c7ba42…`) were deployed:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -v "$REPO_ROOT:/repo" -v /tmp/lcp-near-sandbox-cache:/sandbox-cache \
+  -w /repo/tests/sandbox-usdc-callbacks node:26-trixie-slim sh -lc \
+  'npm ci --ignore-scripts --no-audit --no-fund && NEAR_RPC_TIMEOUT_SECS=120 \
+     LCP_RECOVERY_ONLY=1 \
+     LCP_CORE_WASM_PATH=/sandbox-cache/reproducible-core-e47b194/lcp_core.wasm \
+     LCP_EXPECTED_CORE_WASM_SHA256=de9dc7cfed3e6f9b9b47350e257381a77ddc7f765b347173e89e926cde06a192 \
+     LCP_SANDBOX_BINARY_DIR=/sandbox-cache/bin TMPDIR=/sandbox-cache/tmp \
+     LCP_FIXTURE_OUTPUT=/sandbox-cache/fresh-rotation-recovery.json node run.mjs'
+```
+
+The run exited `0`, printed 166 `PASS` lines plus `All isolated receipt-recovery
+Sandbox checks passed; no public network was used.`, and wrote
+[`reproduction-recovery.json`](reproduction-recovery.json) (SHA-256
+`b68aea2b5612a1f46aa5f3d3685fae53472df6ba8ab74734899521fdcb82a573`, listed in
+[`../rotation-live-intent-acceptance-2026-11-19.reproduction.sha256`](../rotation-live-intent-acceptance-2026-11-19.reproduction.sha256)).
+Run against the committed evidence, `verify-rotation-live-intent-capture.mjs
+--fresh` reported 28 scenario fields compared and 9 excluded wholesale: the six
+transaction hashes, the instance ID, and the two activation timestamps differed
+between runs, and nothing else did, including the retained-epoch settlement,
+both retirement results, the upgrade code hash, every preservation flag, the
+transfer counter, and the escrow buckets.
+
+This was the owner re-running on the owner's machine, so it is reproducibility
+of the fixture, not the independent reproduction. The second-operator procedure
+is [`../INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md`](../INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md).
+
 ## Limits
 
 This is local Sandbox evidence produced by the same operator, not an
