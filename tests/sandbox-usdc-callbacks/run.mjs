@@ -3145,6 +3145,9 @@ async function main() {
 
     const rotationKeys = Array.from({ length: 5 }, newKey)
       .sort((left, right) => Buffer.compare(left.publicKeyBytes, right.publicKeyBytes));
+    // The committee that signs the later code-hash measurement follows the
+    // active epoch, so rotate it alongside the rotation below.
+    let activeCommittee = rotationKeys;
     const genesisHash = base58Decode(config.genesis_hash);
     const blockBeforeGovernance = await rpc("block", { finality: "final" });
     const nowNs = BigInt(blockBeforeGovernance.header.timestamp_nanosec);
@@ -3300,6 +3303,168 @@ async function main() {
     };
     console.log("PASS signed rotation proposal/cancellation, delayed Sandbox activation, old-key rejection, and epoch retirement");
 
+    // Gate 4 with a live intent, plus an in-place upgrade: an intent created
+    // under epoch 1 must keep its pinned committee across a rotation to epoch 2
+    // and a redeploy of the same core artifact, then settle under epoch 1. The
+    // retained epoch must refuse retirement until that intent settles.
+    const rotationPendingId = "201";
+    const poolBalanceBeforeRotation = await tokenBalance(CORE_ID);
+    const rotationPendingSource = await queueRecovery(
+      rotationPendingId, 1, "committee-rotation live pending transfer",
+    );
+    const rotationPending = await waitFor("rotation pending intent", async () => {
+      const [state, intent] = await Promise.all([
+        escrow(rotationPendingId), recoveryIntent(rotationPendingSource.transferId),
+      ]);
+      return state && intent && BigInt(state.pending_raw) === AMOUNT && intent.terminal_outcome === null
+        ? { done: true, value: { state, intent } }
+        : { done: false, value: { state, terminal_outcome: intent?.terminal_outcome } };
+    });
+    assert.equal((await tranche(rotationPendingId)).status, "Pending");
+    assert.equal((await view(CORE_ID, "receipt_recovery_configuration", {})).current_epoch, 1);
+    const secondRotationKeys = Array.from({ length: 5 }, newKey)
+      .sort((left, right) => Buffer.compare(left.publicKeyBytes, right.publicKeyBytes));
+    const liveRotationBase = BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec);
+    const liveRotationAt = liveRotationBase + minDelay + activationSlack;
+    const liveRotationMessage = buildRotationMessage(
+      configAfterReusedKey, nodeStatus.chain_id, genesisHash, CORE_ID, 1, 2, 3, secondRotationKeys, liveRotationAt,
+    );
+    const liveRotationEnvelope = signedEnvelope(
+      liveRotationMessage, "LCP/NEP141/COMMITTEE-ROTATION/V2\0", rotationKeys,
+    );
+    const liveRotationProposalTx = await functionCall(
+      CORE_ID, coreKey, "propose_receipt_recovery_rotation", {
+        signed_proposal_base64: liveRotationEnvelope,
+      }, 220n * TERA, ONE_NEAR,
+    );
+    const liveRotationProposal = returnedJson(liveRotationProposalTx);
+    assert.equal(liveRotationProposal.proposal_generation, "3");
+    assert.equal(liveRotationProposal.new_epoch, 2);
+    let liveRotationObserved = BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec);
+    let liveRotationFastForwards = 0;
+    while (liveRotationObserved < liveRotationAt && liveRotationFastForwards < 12) {
+      const remainingNs = liveRotationAt - liveRotationObserved;
+      const deltaHeight = Number((remainingNs + 299_999_999n) / 300_000_000n + 2n);
+      await rpc("sandbox_fast_forward", { delta_height: deltaHeight });
+      liveRotationFastForwards += 1;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      liveRotationObserved = BigInt((await rpc("block", { finality: "final" })).header.timestamp_nanosec);
+    }
+    assert.ok(liveRotationObserved >= liveRotationAt,
+      `Sandbox time did not reach the live-intent rotation boundary ${liveRotationAt}; observed ${liveRotationObserved}`);
+    const liveRotationActivateTx = await rootCall(
+      "activate_receipt_recovery_rotation", {}, "activate the live-intent committee rotation", 220n * TERA,
+    );
+    const postRotationConfig = await view(CORE_ID, "receipt_recovery_configuration", {});
+    assert.equal(postRotationConfig.current_epoch, 2);
+    assert.equal(postRotationConfig.used_key_count, 15);
+    assert.deepEqual(postRotationConfig.current_committee_keys, secondRotationKeys.map((key) => key.publicKey));
+    assert.deepEqual(
+      await view(CORE_ID, "receipt_recovery_committee", { epoch: 1 }),
+      rotationKeys.map((key) => key.publicKey),
+    );
+    const retainedEpochRetireBlocked = await rootCall(
+      "retire_receipt_recovery_epoch", { epoch: 1 },
+      "refuse to retire a committee epoch with a live pending intent", 180n * TERA,
+    );
+    assert.equal(returnedJson(retainedEpochRetireBlocked), false);
+    assert.deepEqual(await escrow(rotationPendingId), rotationPending.state);
+    assert.equal((await recoveryIntent(rotationPendingSource.transferId)).terminal_outcome, null);
+
+    activeCommittee = secondRotationKeys;
+    const preUpgradeConfig = await view(CORE_ID, "receipt_recovery_configuration", {});
+    const preUpgradeEscrow = await escrow(rotationPendingId);
+    const preUpgradeIntent = await recoveryIntent(rotationPendingSource.transferId);
+    const preUpgradeCash = (await nativeCashSnapshot()).map(String);
+    const preUpgradeRecordCount = await view(CORE_ID, "sandbox_recovery_storage_record_count", {});
+    const upgrade = await deployAndWait(
+      CORE_ID, coreKey, coreWasm, coreCodeHash, "redeploy the core artifact over live recovery state",
+    );
+    const upgradedConfig = await view(CORE_ID, "receipt_recovery_configuration", {});
+    assert.deepEqual(upgradedConfig, preUpgradeConfig);
+    assert.deepEqual(await escrow(rotationPendingId), preUpgradeEscrow);
+    assert.deepEqual(await recoveryIntent(rotationPendingSource.transferId), preUpgradeIntent);
+    assert.deepEqual((await nativeCashSnapshot()).map(String), preUpgradeCash);
+    assert.equal(await view(CORE_ID, "sandbox_recovery_storage_record_count", {}), preUpgradeRecordCount);
+    const postUpgradeTransfer = await queueRecovery(
+      "202", 20, "post-upgrade transfer continues the transfer counter",
+    );
+    assert.equal(
+      BigInt(postUpgradeTransfer.transferId),
+      BigInt(rotationPendingSource.transferId) + 1n,
+    );
+    await waitFor("post-upgrade callback settlement", async () => {
+      const state = await escrow("202");
+      return state && BigInt(state.paid_raw) === AMOUNT
+        ? { done: true, value: state }
+        : { done: false, value: state };
+    });
+
+    const retainedEpochCertificate = recoveryCertificate(rotationPending.intent, "success", rotationKeys);
+    const retainedEpochSettleTx = await rootCall("recover_nep141_transfer", {
+      transfer_id: rotationPendingSource.transferId,
+      certificate_base64: retainedEpochCertificate.envelope,
+    }, "settle the live intent under its retained committee epoch", 220n * TERA);
+    const retainedEscrow = await assertEscrow(rotationPendingId, {
+      pending_raw: 0n, paid_raw: AMOUNT, free_raw: 0n,
+    });
+    assert.equal((await tranche(rotationPendingId)).status, "Paid");
+    assert.equal((await recoveryIntent(rotationPendingSource.transferId)).terminal_outcome, "success");
+    const retainedEpochRetireTx = await rootCall(
+      "retire_receipt_recovery_epoch", { epoch: 1 },
+      "retire the retained committee epoch once its intent settles", 180n * TERA,
+    );
+    assert.equal(returnedJson(retainedEpochRetireTx), true);
+    assert.equal(await view(CORE_ID, "receipt_recovery_committee", { epoch: 1 }), null);
+    // Two AMOUNT payouts left the fixture pool; return them so the later
+    // token-balance scenarios keep their documented starting supply.
+    const poolRepaymentTx = await submitAndWaitForTransaction(
+      CASH_RECIPIENT_ID,
+      cashRecipientKey,
+      TOKEN_ID,
+      [actionFunctionCall("ft_transfer", {
+        receiver_id: CORE_ID,
+        amount: (AMOUNT * 2n).toString(),
+        memo: null,
+      }, 25n * TERA, 1n)],
+      "return the live-intent payouts to the mock token pool",
+    );
+    assert.equal(await tokenBalance(CORE_ID), poolBalanceBeforeRotation,
+      "the capture must leave the mock token pool where the later scenarios expect it");
+    results.rotation_live_intent = {
+      pool_repayment_transaction_hash: poolRepaymentTx.transaction.hash,
+      mock_pool_balance_restored: true,
+      pending_transfer_id: rotationPendingSource.transferId,
+      pending_transfer_transaction_hash: rotationPendingSource.tx.transaction.hash,
+      proposal_transaction_hash: liveRotationProposalTx.transaction.hash,
+      activation_transaction_hash: liveRotationActivateTx.transaction.hash,
+      activated_generation: liveRotationProposal.proposal_generation,
+      activate_at_ns: liveRotationAt.toString(),
+      observed_activation_time_ns: liveRotationObserved.toString(),
+      fast_forward_calls: liveRotationFastForwards,
+      retained_epoch: 1,
+      active_epoch: postRotationConfig.current_epoch,
+      retire_blocked_while_intent_pending: returnedJson(retainedEpochRetireBlocked) === false,
+      upgrade_transaction_hash: upgrade.transaction_hash,
+      upgrade_code_hash: upgrade.near_code_hash,
+      instance_identity_preserved: upgradedConfig.instance_id === preUpgradeConfig.instance_id,
+      instance_id: upgradedConfig.instance_id,
+      current_epoch_preserved: upgradedConfig.current_epoch === preUpgradeConfig.current_epoch,
+      used_key_count_preserved: upgradedConfig.used_key_count === preUpgradeConfig.used_key_count,
+      last_rotation_generation_preserved:
+        upgradedConfig.last_rotation_generation === preUpgradeConfig.last_rotation_generation,
+      last_rotation_generation: upgradedConfig.last_rotation_generation,
+      storage_record_count_preserved: true,
+      native_cash_ledger_preserved: true,
+      next_transfer_after_upgrade: postUpgradeTransfer.transferId,
+      settlement_transaction_hash: retainedEpochSettleTx.transaction.hash,
+      settlement_committee_epoch: 1,
+      escrow: retainedEscrow,
+      retired_retained_epoch: returnedJson(retainedEpochRetireTx),
+      recipient_token_balance: (await tokenBalance(CASH_RECIPIENT_ID)).toString(),
+    };
+    console.log("PASS a live pending intent keeps its epoch settleable across committee rotation and an in-place upgrade");
+
     // Gate 5 measurement: the committed governance capture records no gas for
     // the signed USDC code-hash methods. Exercise propose, cancel, and a
     // delayed activation with the currently active committee here, before the
@@ -3335,7 +3500,7 @@ async function main() {
         + minDelay + activationSlack),
     ]);
     const firstCodeHashEnvelope = signedEnvelope(
-      firstCodeHashMessage, "LCP/NEP141/CODE-HASH/V1\0", rotationKeys,
+      firstCodeHashMessage, "LCP/NEP141/CODE-HASH/V1\0", activeCommittee,
     );
     const codeHashProposeTx = await functionCall(CORE_ID, coreKey, "propose_usdc_code_hash_change", {
       signed_proposal_base64: firstCodeHashEnvelope,
@@ -3353,7 +3518,7 @@ async function main() {
       hexBytes(codeHashProposal.proposal_digest),
     ]);
     const codeHashCancellationEnvelope = signedEnvelope(
-      codeHashCancellationMessage, "LCP/NEP141/CODE-HASH-CANCEL/V1\0", rotationKeys,
+      codeHashCancellationMessage, "LCP/NEP141/CODE-HASH-CANCEL/V1\0", activeCommittee,
     );
     const codeHashCancelTx = await functionCall(CORE_ID, coreKey, "cancel_usdc_code_hash_change", {
       signed_cancellation_base64: codeHashCancellationEnvelope,
@@ -3377,7 +3542,7 @@ async function main() {
       u64(codeHashActivateAt),
     ]);
     const secondCodeHashEnvelope = signedEnvelope(
-      secondCodeHashMessage, "LCP/NEP141/CODE-HASH/V1\0", rotationKeys,
+      secondCodeHashMessage, "LCP/NEP141/CODE-HASH/V1\0", activeCommittee,
     );
     const codeHashActivationProposeTx = await functionCall(CORE_ID, coreKey, "propose_usdc_code_hash_change", {
       signed_proposal_base64: secondCodeHashEnvelope,

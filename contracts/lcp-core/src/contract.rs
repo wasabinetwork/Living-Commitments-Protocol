@@ -11010,6 +11010,88 @@ mod tests {
     }
 
     #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[allow(deprecated)]
+    fn legacy_pending_transfer_without_an_intent_stays_ineligible_under_recovery() {
+        let hash_a = [4_u8; 32];
+        let (mut contract, _) = bootstrapped_recovery(&[hash_a], hash_a);
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let transfer_id = claim_usdc_tranche(&mut contract, id);
+        let pending = crate::receipt_recovery::pending_intent(transfer_id.0)
+            .expect("claim writes a pending intent");
+        let envelope = recovery_certificate_envelope(
+            &pending.intent,
+            crate::receipt_recovery::TransferOutcomeV1::Success,
+            &recovery_signers(),
+        );
+        let before = contract
+            .get_escrow_status(id)
+            .map(|status| escrow_raws(&status))
+            .expect("escrow status");
+
+        // Drop the recovery rows while keeping the pending transfer and its
+        // escrow reservation: this is the v2 layout an instance carries when
+        // it is upgraded from code that predates receipt recovery.
+        crate::receipt_recovery::clear_pending_intents_for_test();
+        assert!(crate::receipt_recovery::pending_intent(transfer_id.0).is_none());
+
+        testing_env!(context_at(accounts(3), 0, NOW_NS + 1));
+        assert!(
+            contract
+                .settle_token_transfer_outcome(
+                    transfer_id.0,
+                    crate::receipt_recovery::TransferOutcomeV1::Success,
+                    [9; 32],
+                )
+                .is_none(),
+            "a v2 record must not settle through the recovery path"
+        );
+        let certificate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            contract.recover_nep141_transfer(transfer_id, envelope);
+        }));
+        let message = certificate.as_ref().err().and_then(|payload| {
+            payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .map(str::to_owned)
+        });
+        assert!(
+            message
+                .as_deref()
+                .is_some_and(|text| text.contains("pending recovery intent does not exist")),
+            "unexpected panic: {message:?}"
+        );
+
+        // The callback path also refuses it: recovery never settles a NEP-141
+        // transfer it cannot bind to an exact stored intent.
+        testing_env_with_promise_results(
+            context(accounts(0), 0),
+            PromiseResult::Successful(vec![]),
+        );
+        contract.on_tranche_transfer(transfer_id);
+        let after = contract
+            .get_escrow_status(id)
+            .map(|status| escrow_raws(&status))
+            .expect("escrow status");
+        assert_eq!(after, before, "a v2 record must not move escrow");
+        assert!(contract.pending_transfers.get(&transfer_id.0).is_some());
+        assert_eq!(
+            contract
+                .commitments
+                .get(&id.0)
+                .expect("commitment")
+                .pending_transfer_count,
+            1
+        );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
     const RECOVERY_DOMAIN: &[u8] = b"LCP/NEP141/RECOVERY/V1\0";
     #[cfg(feature = "usdc-receipt-recovery")]
     const INTENT_DOMAIN: &[u8] = b"LCP/NEP141/INTENT/V1\0";

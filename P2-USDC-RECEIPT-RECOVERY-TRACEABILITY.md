@@ -9,9 +9,9 @@ matrix" can be worked row by row instead of by TODO bullet.
 Source of record: design at the revision in this repository; local VM evidence
 from the pinned Sandbox 2.14.0 / protocol 88 captures listed below. Test
 identifiers were read from `cargo test -p lcp-core --features
-'sandbox-callback-fixture usdc-receipt-recovery' -- --list` (151 tests after
-the rotation, old-epoch settlement, and golden-governance tests added on
-2026-11-19).
+'sandbox-callback-fixture usdc-receipt-recovery' -- --list` (152 tests after
+the rotation, old-epoch settlement, golden-governance, and legacy-v2
+ineligibility tests added on 2026-11-19).
 
 ## Status vocabulary
 
@@ -74,7 +74,7 @@ Capture: `tests/sandbox-usdc-callbacks/recovery-acceptance-2026-11-17-689fbf1/re
 | Proposal-generation overflow | `contract::tests::rotation_generation_overflow_is_rejected` sets `last_rotation_generation` to `u64::MAX` and asserts the signed proposal is rejected with `committee rotation generation overflow` before any state write | `PASS-OFFLINE` | — |
 | Many generations and distinct payers | `contract::tests::rotation_generations_keep_each_payers_credit_separate` drives three propose/cancel generations from distinct payers and asserts each payer's credit and generation stay separate; `contract::tests::rotation_cancellation_credits_the_proposer_and_consumes_the_generation` covers the single-generation credit accounting | `PASS-OFFLINE` | — |
 | Golden governance vectors | `tests/receipt-recovery-vectors/golden-vectors.json` includes `CommitteeRotationV2` and `CommitteeRotationCancellationV2`; the Rust consumer reconstructs them, and `contract::tests::contract_parser_matches_the_committed_governance_vectors` feeds the same stored envelopes to the contract's own rotation and cancellation parsers, which must accept the signatures, reproduce both published digests, and re-serialize to the published Borsh bytes | `PASS-OFFLINE` | VM parity for the same vectors |
-| v2 legacy records remain ineligible | Partially implied by `contract::tests::legacy_usdc_transfer_callback_still_settles_after_upgrade` | `PARTIAL` | Explicit ineligibility assertion for a v2 record under recovery |
+| v2 legacy records remain ineligible | `contract::tests::legacy_pending_transfer_without_an_intent_stays_ineligible_under_recovery` removes the recovery rows while keeping a pending NEP-141 tranche transfer and its escrow reservation, then asserts the recovery settlement path returns `None`, `recover_nep141_transfer` panics with `pending recovery intent does not exist`, the token callback is ignored, and escrow, pending-transfer count, and the transfer record are byte-for-byte unchanged | `PASS-OFFLINE` | — |
 | In-place upgrade preserves counter and instance | `contract::tests::rotation_state_survives_a_contract_state_round_trip` serializes the contract state, reloads it, and asserts the instance ID, generation counter, and pending rotation survive; `contract::tests::legacy_usdc_transfer_callback_still_settles_after_upgrade` covers the legacy callback path | `PARTIAL` | A migration test that compares pre/post counters and instance identity across an actual code upgrade rather than a state round trip |
 | Full-state restore that deletes the consumed marker | Design states this is **not** rejected. **Owner decision 2026-11-19:** prohibited and out of scope for recovery-enabled/candidate instances; forward-only upgrades from finalized live state, with pre-upgrade/pre-enable consumed-marker/counter/ledger continuity checks, and owner-approved incident reconciliation if a restore is ever unavoidable | `N/A` | Not applicable by decision, not by code: no on-chain whole-state-rollback detection exists. Enforce through the operator-policy deployment continuity preconditions and record the prohibition |
 | Seven-day production delay elapsed | Fixture is ten seconds; the design says the production period was not elapsed. **Owner decision 2026-11-19:** run it; do not accept as a permanent operational gap | `OWNER` | Run one real 7-day propose/cancel-or-activate cycle on the isolated recovery-enabled instance and record instance, generation/digest, `activate_at_ns`, observed activation time/block, actions, and tx hashes (pre-canary gate). Procedure: [`P2-USDC-RECEIPT-RECOVERY-SEVEN-DAY-DELAY-RUNBOOK.md`](P2-USDC-RECEIPT-RECOVERY-SEVEN-DAY-DELAY-RUNBOOK.md) |

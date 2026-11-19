@@ -49,8 +49,8 @@ npm run build --workspace=@lcp/console
 ```
 
 Record the recovery-feature suites as well, because later P2 work depends on
-them. The documented counts after the 2026-11-19 rotation tests are 111 default,
-151 with `usdc-receipt-recovery`, and 151 with
+them. The documented counts after the 2026-11-19 rotation and legacy-v2
+tests are 111 default, 152 with `usdc-receipt-recovery`, and 152 with
 `sandbox-callback-fixture,usdc-receipt-recovery`; treat them as a baseline to
 compare against, not as fixed numbers.
 
