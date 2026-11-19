@@ -7,12 +7,16 @@ testnet canary or production upgrade. It packages the evidence, open decisions,
 recommendations, and sign-off records needed to close Workstreams A–E.
 
 **Owner decisions (2026-11-19):** the owner accepted the recommendations for
-decisions 2–5 below. **A1 evidence (2026-11-19):** an owner-machine mechanical
-rerun of the handoff procedure was recorded at
+decisions 2–5 below and approved the Decision 5 buffer/gas inputs (40.2468 NEAR
+buffer, 0.064 NEAR gas float). **A1 evidence (2026-11-19):** an owner-machine
+mechanical rerun of the handoff procedure was recorded at
 [`audit/owner-rerun-689fbf1-2026-11-19/`](audit/owner-rerun-689fbf1-2026-11-19/report.md)
-(not independent; see §3). Acceptance below records direction and required gates;
-it does not by itself close elapsed-run, measurement, independence, drill, or
-owner-numeric sign-offs.
+(not independent; see §3). **D1–D4 (2026-11-19):** operator-readiness gates are
+deferred to mainnet readiness and are not required to be strict during the
+current testnet development phase (available testing wallets may be used).
+Acceptance below records direction and required gates; it does not by itself
+close the 7-day elapsed run, independence/review, funded buffer enforcement, or
+mainnet-readiness operator evidence.
 
 Normative behavior remains defined by
 [`Living_Commitments_Protocol_[LCP]-PRD.md`](Living_Commitments_Protocol_%5BLCP%5D-PRD.md),
@@ -345,10 +349,10 @@ byte-compare JSON captures.
 
 | ID | Requirement | Evidence to produce | Status gate |
 | --- | --- | --- | --- |
-| D1 | Five independently administered operators | Named operators, ownership/admin separation, key custody/backup, software/finality-verifier version, archive sources, chain/genesis/instance binding | Required before canary |
-| D2 | Funded archive-retention plan for unresolved intents | Retention owner, storage/location, funding, retention duration tied to pending epochs/intents | Required before canary (policy states committee is not operational without it) |
-| D3 | Drills | Sign-once journaling, conflicting-source abstention, 1 signer down (quorum survives), 2 signers down (recovery pending), lost historical key handling; outcomes recorded | Required before canary |
-| D4 | Sign-off table | Attach to [`P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md`](P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md) or a linked record | Required before canary |
+| D1 | Five independently administered operators | Named operators, ownership/admin separation, key custody/backup, software/finality-verifier version, archive sources, chain/genesis/instance binding | Required before mainnet; deferred during testnet development (owner decision 2026-11-19) |
+| D2 | Funded archive-retention plan for unresolved intents | Retention owner, storage/location, funding, retention duration tied to pending epochs/intents | Required before mainnet; deferred during testnet development (owner decision 2026-11-19) |
+| D3 | Drills | Sign-once journaling, conflicting-source abstention, 1 signer down (quorum survives), 2 signers down (recovery pending), lost historical key handling; outcomes recorded | Required before mainnet; deferred during testnet development (owner decision 2026-11-19) |
+| D4 | Sign-off table | Attach to [`P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md`](P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md) or a linked record | Required before mainnet; deferred during testnet development (owner decision 2026-11-19) |
 
 ## 5. Canary preconditions (Workstream E)
 
@@ -378,11 +382,11 @@ approval:
 | D2 | 7-day rotation delay: real run completed (pre-canary gate); not elapsed yet | owner (accepted 2026-11-19) |  | recommendation accepted; 7-day evidence pending |  |
 | D3 | Full state restore deleting consumed marker: prohibited/out of scope (or approved redesign) | owner (accepted 2026-11-19) |  | runbook/policy enforcement required |  |
 | D4 | False-`Failure` quarantine lock: canary risk accepted with limits | owner (accepted 2026-11-19) |  | max exposure/controls record required |  |
-| D5 | Buffer, concurrency cap, stuck allowance, margin, method gas limits approved | owner (framework accepted 2026-11-19) |  | numeric inputs/measurements/sign-off pending |  |
+| D5 | Buffer, concurrency cap, stuck allowance, margin, method gas limits approved | owner (approved 2026-11-19) | 2026-11-19 | [`P2-PENDING-CALLBACK-FUNDING-BUFFER.md`](P2-PENDING-CALLBACK-FUNDING-BUFFER.md) | 40.2468 NEAR buffer, 0.064 NEAR gas float (16 pending, 24h/16 stuck, 1 NEAR, 25%); fund and enforce limits |
 | A1 | Independent reproduction of `689fbf1` captures |  |  |  |  |
 | A2 | Independent rebuild (WASM/code hash match) |  |  |  |  |
 | A3 | Independent verifier/settlement review |  |  |  |  |
-| D1–D4 | Operator readiness and drills |  |  |  |  |
+| D1–D4 | Operator readiness and drills | owner (testnet deferred 2026-11-19) | 2026-11-19 | this package / traceability | Required before mainnet; not strict during current testnet development (testing wallets acceptable) |
 | E | Canary approved (scope, instance, limits) |  |  |  |  |
 
 ## 7. Related documents

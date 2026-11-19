@@ -40,7 +40,7 @@ Required statement (do not paraphrase away):
 | Maximum number of commitments | TBD | TBD |
 | Maximum concurrent pending payouts | TBD | funding-buffer artifact |
 | Disposable low-value instance confirmed | TBD | TBD |
-| Operators named (4-of-5 sign-once, abstain on uncertainty) | TBD | Workstream D1 |
+| Operators named (4-of-5 sign-once, abstain on uncertainty) | TBD for mainnet; testnet development may use available testing wallets (owner decision 2026-11-19) | Workstream D1 (mainnet gate) |
 | Quarantine and backing-shortfall alerting | TBD (channel, threshold, on-call) | TBD |
 | Response runbook location (quarantine stuck, no override) | TBD | operator policy |
 | False-`Failure` incident review obligation | TBD (who reviews, when) | TBD |
@@ -91,13 +91,13 @@ canary and no production enablement is approved.
 
 | Field | Approved value | Evidence |
 | --- | --- | --- |
-| Buffer (NEAR) and component subtotal | TBD | calculator JSON + measurement probes |
-| Largest authorized single payout/refund | TBD | policy |
-| Stuck-callback allowance (hours → count, correlation assumption) | TBD | policy |
-| Margin (percentage or flat, with rationale) | TBD | policy |
-| Separate gas float (NEAR), monitored separately | TBD | calculator JSON |
-| Method gas limits derived from measured worst case + margin | TBD | traceability Gate 5 |
-| Approved values recorded in `TODO.md` and deployment runbook | TBD | link |
+| Buffer (NEAR) and component subtotal | 40.2468 NEAR (subtotal 32.19744: 16 in-flight + 16 retained + 0.19744 storage) | `measure-funding-buffer.mjs` with 617/617 bytes, 16/16 callbacks, 1 NEAR, 25% |
+| Largest authorized single payout/refund | 1 NEAR per commitment | owner-approved 2026-11-19 (fixture ceiling) |
+| Stuck-callback allowance (hours → count, correlation assumption) | 24 h → 16 callbacks; shared-incident stalls all in-flight callbacks at once | owner-approved 2026-11-19 |
+| Margin (percentage or flat, with rationale) | 25% of subtotal (percentage, tracks outflow) | owner-approved 2026-11-19 |
+| Separate gas float (NEAR), monitored separately | 0.064 NEAR (16 × 40 Tgas) | prepaid signer gas, not solvency capital |
+| Method gas limits derived from measured worst case + margin | Partial: `recover_nep141_transfer` 26, `bootstrap_receipt_recovery` 11, `revalue_recovery_storage_batch` 18 Tgas (1.5× from 689fbf1 captures); finalize/code-hash/quarantine/credit withdrawal/retirement provisional | `derive-method-gas.mjs`, traceability Gate 5 |
+| Approved values recorded in `TODO.md` and deployment runbook | Owner-approved 2026-11-19 | `TODO.md`, `P2-PENDING-CALLBACK-FUNDING-BUFFER.md`, `P2-OPEN-DECISIONS-REVIEW-PACKAGE.md` |
 
 The buffer is solvency capital; the gas float is not. Neither may be counted
 twice or netted against the other.
@@ -109,7 +109,7 @@ twice or netted against the other.
 | A1 independent capture reproduction | Independent operator report | TBD |
 | A2 independent rebuild | Matching WASM/code hash from a separate environment | TBD |
 | A3 independent verifier/settlement review | Signed review, no open Critical/High | TBD |
-| D1–D4 operator readiness | Operators, archive retention, drills, sign-off table | TBD |
+| D1–D4 operator readiness | Deferred to mainnet readiness for current testnet development (owner decision 2026-11-19) | Workstream D1–D4 (mainnet gate) |
 | Fresh instance + zero migrated state | Export hashes before bootstrap | TBD |
 | Prohibited-restore rule acknowledged | Signed acknowledgment of the operator policy preconditions | TBD |
 

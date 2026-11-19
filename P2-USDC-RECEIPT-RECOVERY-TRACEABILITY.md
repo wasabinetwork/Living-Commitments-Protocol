@@ -112,9 +112,9 @@ Capture: `tests/sandbox-usdc-callbacks/recovery-acceptance-2026-11-17-689fbf1/re
 
 | Requirement | Evidence | Status | Missing |
 | --- | --- | --- | --- |
-| Five independently administered operators with documented ownership separation and key custody | `P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md` defines rules; no named operators or sign-off | `OWNER` | Workstream D1 |
-| Fund and archive receipt data for unresolved intents | Policy requires it; no funded plan | `OWNER` | Workstream D2 |
-| Sign-once journaling, abstention, one/two signers down, lost historical key drills | No drill record | `OWNER` | Workstream D3 |
+| Five independently administered operators with documented ownership separation and key custody | `P2-USDC-RECEIPT-RECOVERY-OPERATOR-POLICY.md` defines rules; no named operators or sign-off | `OWNER` | Workstream D1. **Owner decision (2026-11-19):** deferred to mainnet readiness; not required to be strict during the current testnet development phase (available testing wallets may be used) |
+| Fund and archive receipt data for unresolved intents | Policy requires it; no funded plan | `OWNER` | Workstream D2. **Owner decision (2026-11-19):** deferred to mainnet readiness; not required during current testnet development |
+| Sign-once journaling, abstention, one/two signers down, lost historical key drills | No drill record | `OWNER` | Workstream D3. **Owner decision (2026-11-19):** deferred to mainnet readiness; not required during current testnet development |
 | Independent reproduction of Sandbox artifacts | The `29ed585` capture is owner-run and explicitly not independent. The `689fbf1` set was mechanically rerun on the owner's machine on 2026-11-19 (all verifiers pass, 65/65 non-volatile payloads match) but that is **not** independent: [`audit/owner-rerun-689fbf1-2026-11-19/`](audit/owner-rerun-689fbf1-2026-11-19/report.md). A second-operator procedure with pinned inputs and comparison rules is [`INDEPENDENT-REPRODUCTION-689FBF1.md`](tests/sandbox-usdc-callbacks/INDEPENDENT-REPRODUCTION-689FBF1.md). Source resolved: `689fbf1` is the source; `9e08339` only pins its captures | `OWNER` | A different operator on different infrastructure must perform and sign the run (resolve the mock-token pin/host-toolchain dependence first) |
 | Independent rebuild and independent verifier review | Not performed | `OWNER` | Workstreams A2 and A3 |
 

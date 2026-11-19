@@ -1,17 +1,17 @@
 # Pending-callback funding buffer
 
-**Status (2026-11-19):** storage measurements complete, value not set. The
-arithmetic model, the four measured payout paths, and the open policy inputs are
-recorded here.
-The production buffer stays an owner decision until the policy inputs are fixed.
+**Status (2026-11-19):** storage measurements complete and canary buffer inputs
+approved by the owner. The arithmetic model and the four measured payout paths
+are recorded here; the gas float is reported separately and is not solvency
+capital.
 
-**Owner decision (2026-11-19):** the closure method below is accepted; no
-numeric buffer or method gas limit is approved yet. Close B2 by fixing the four
-policy inputs, completing the missing measurements, rerunning
-`tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs` with the approved
-inputs, deriving method gas limits from measured worst cases plus margin, and
-recording the approved values in `TODO.md` and the deployment runbook with the
-gas float kept separate. See
+**Owner decision (2026-11-19):** the closure method and the four canary policy
+inputs below are approved. Recovery-credit withdrawal and callback-OOG-retention
+storage are measured, and `tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs`
+computes the approved buffer from those measurements and inputs. Method gas
+floors are partially derived from committed worst-case captures in
+`tests/sandbox-usdc-callbacks/derive-method-gas.mjs`; methods without a
+committed figure keep their provisional policy floors. See
 [`P2-OPEN-DECISIONS-REVIEW-PACKAGE.md`](P2-OPEN-DECISIONS-REVIEW-PACKAGE.md)
 for the full decision record and canary guidance.
 
@@ -21,24 +21,23 @@ credit, refund liabilities). The 1.07 NEAR and 0.06 NEAR margins in `TODO.md`
 are fixture values, not recommendations. This document replaces them with a
 formula and explicit inputs.
 
-## Owner decision required (B2)
+## Approved policy inputs (B2)
 
-B2 is not a missing measurement and not a code change. The per-callback storage
-cost is measured below; the unresolved input is a **policy limit** that the
-design documents do not currently state. To turn the formula into a published
-buffer, the owner must fix four values:
+B2 is a policy limit, not a missing measurement. The owner fixed the four
+values below for the canary (2026-11-19):
 
-1. **Maximum concurrent pending payouts** per commitment (the contract enforces
-   no cap, so this is an operational limit).
-2. **Stuck-callback allowance**, stated in hours and converted to a count.
-3. **Largest single authorized payout or refund**, which replaces the 1 NEAR
-   fixture value.
-4. **Margin** above the computed subtotal, and whether it is a percentage or a
-   flat amount.
+1. **Maximum concurrent pending payouts:** 16 per instance. The contract
+   enforces no cap, so this is an operational limit: pause new token outflows
+   once 16 are outstanding.
+2. **Stuck-callback allowance:** 24 hours, converted to 16 callbacks. The
+   correlation assumption is that one shared token-contract or RPC incident can
+   stall every callback in flight at once, so the allowance is bounded by the
+   16-pending cap rather than an independent per-callback failure rate.
+3. **Largest single authorized payout or refund:** 1 NEAR per commitment (the
+   largest fixture refund attach). Raising it raises the buffer proportionally.
+4. **Margin:** 25% of the subtotal (a percentage so it tracks the outflow term).
 
-These belong in the policy design documents because they bound an operational
-obligation, not because the implementation is incomplete. Until they are set,
-the sample output (85.52445 NEAR) remains illustrative.
+These bound an operational obligation; they are not contract-enforced limits.
 
 ## Measured inputs
 
@@ -117,21 +116,19 @@ with the 2026-11-19 measured storage inputs and the sample policy values:
 Gas is prepaid by the transaction signer and is not contract cash, so it is
 reported separately and must not be counted as payout liquidity.
 
-## Proposed canary inputs (awaiting owner sign-off)
+## Approved canary buffer (2026-11-19)
 
-These are proposed defaults for review, not approved policy:
-
-| Input | Proposed value | Basis |
+| Input | Approved value | Basis |
 | --- | --- | --- |
-| Maximum simultaneous pending payouts | 16 per instance | Small enough for one canary treasury and a daily operator check, above the four simultaneous transfers the callback fixture exercised. Enforced operationally: pause new token outflows once 16 are outstanding, because the contract caps no count |
-| Stuck-callback allowance | 24 hours, converted to 16 callbacks | Correlation assumption: one shared token-contract or RPC incident stalls every callback in flight at once, so the allowance is bounded by the 16-pending cap rather than a per-callback failure rate. A 24-hour allowance exceeds the observed settlement time by orders of magnitude and leaves time for the daily check to intervene |
-| Largest single authorized payout or refund | 1 NEAR per commitment | The largest fixture refund attach and the amount every capture settles. Raising it raises the buffer proportionally, so raise it deliberately with a new calculation |
-| Margin | 25% of the subtotal | Percentage, not flat, so it tracks the outflow term |
+| Maximum simultaneous pending payouts | 16 per instance | Operational limit (contract caps no count); pause new token outflows once 16 are outstanding. Above the four simultaneous transfers the callback fixture exercised |
+| Stuck-callback allowance | 24 hours, converted to 16 callbacks | Correlation assumption: one shared token-contract or RPC incident stalls every callback in flight at once, so the allowance is bounded by the 16-pending cap |
+| Largest single authorized payout or refund | 1 NEAR per commitment | Largest fixture refund attach. Raising it requires a new calculation |
+| Margin | 25% of the subtotal | Percentage, so it tracks the outflow term |
 
-The proposed buffer is 40.2468 NEAR, with a separate 0.064 NEAR gas float
+**Approved buffer: 40.2468 NEAR**, with a **separate 0.064 NEAR gas float**
 (16 pending × 40 Tgas at 0.0001 NEAR/Tgas). The 40 Tgas figure is the
-`recover_nep141_transfer` operator-policy floor, which is itself above the
-1.5× derived floor; it is prepaid by the signer and is not part of the buffer.
+`recover_nep141_transfer` operator-policy floor (above the 1.5× derived floor);
+it is prepaid by the signer and is not part of the solvency buffer.
 
 ```sh
 node tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs \
@@ -145,35 +142,38 @@ node tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs \
   --json target/funding-buffer-proposed.json
 ```
 
-Until the owner approves these four values, the buffer stays unapproved and
-the canary acceptance record must not cite it as funded policy.
+The canary acceptance record should cite these values only when the buffer is
+actually funded and the operational pending-count limit is enforced.
 
-## Why this is not yet a recommendation
+## Limits and conditions
 
-- `max_pending = 64`, `stuck_callbacks = 4`, and `margin = 0.25` are policy
-  choices, not measurements. The contract does not cap
-  `pending_transfer_count`, so the cap must be an operational limit.
-- The 617-byte peak covers all four payout paths: the refund path is 512 pending
-  / 114 retained, and the native credit withdrawal is 26 pending. An unresolved
-  callback retains the whole pending footprint, which is why `retained_bytes` is
-  617 rather than the 199-byte terminal record.
-- The largest single outflow is 1 NEAR because that is the largest fixture
-  refund attach. Real policies can set a larger tranche or refund bond.
+The approved values are an arithmetic model over measured storage costs, not a
+network measurement. They remain valid only while these conditions hold:
+
+- The 16-pending and 1 NEAR limits are enforced operationally (the contract does
+  not cap `pending_transfer_count` or payout size).
+- The 617-byte pending/retained figure remains the worst case for the measured
+  paths (claim 617/199 settled, refund 512/114, native credit withdrawal 26;
+  an unresolved callback retains the full 617-byte footprint).
+- The stuck-allowance count is interpreted with the stated shared-incident
+  correlation assumption; independent failures could need a different count.
 - Delayed-receipt behavior is characterized only by the eight synthetic
   intermediate receipts in the design capture, not by public-network latency.
-- The model assumes every pending callback can be stuck at once. A production
-  number should use a stated correlation assumption or the observed cap.
+- Raising the largest authorized payout, the pending cap, or the stuck allowance
+  requires rerunning the calculator and recording a revised approved buffer.
 
 ## Closing checklist
 
-1. Fix `max_pending` as an enforced or operational limit, and state the stuck
-   allowance as hours rather than a callback count.
-2. ~~Measure recovery-credit withdrawal and OOG-retention storage with the same
-   probe and record them beside the tranche and refund values.~~ Measured
-   2026-11-19: `credit_withdrawal_storage_is_measured` (26 pending / −114 success
-   / −26 failure) and `token_callback_oog_retains_the_pending_footprint` (617
-   pending, 0 committed delta, 617 retained).
-3. Replace the 1 NEAR outflow with the largest policy-authorized single payout.
-4. Re-run the model with the remaining measured inputs and record the owner's
-   approved buffer in `TODO.md` and the deployment runbook.
-5. Keep the gas float separate and monitored; it is not solvency capital.
+1. [x] Fix `max_pending` as an enforced operational limit (16) and state the
+   stuck allowance in hours (24 h → 16 callbacks, shared-incident assumption).
+2. [x] Measure recovery-credit withdrawal and OOG-retention storage:
+   `credit_withdrawal_storage_is_measured` (26 pending / −114 success / −26
+   failure) and `token_callback_oog_retains_the_pending_footprint` (617 pending,
+   0 committed delta, 617 retained).
+3. [x] Set the largest authorized payout/refund (1 NEAR, fixture ceiling) and
+   the margin (25%).
+4. [x] Re-run the model and record the owner's approved buffer in `TODO.md` and
+   this document (40.2468 NEAR, separate 0.064 NEAR gas float).
+5. Keep the gas float separate and monitored; it is not solvency capital. The
+   canary acceptance record must cite the buffer only when it is funded and the
+   limits are enforced.
