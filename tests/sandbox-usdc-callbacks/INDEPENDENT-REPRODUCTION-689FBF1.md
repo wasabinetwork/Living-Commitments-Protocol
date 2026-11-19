@@ -68,27 +68,39 @@ Manifests (both root-relative, valid at the `9e08339` tree):
 
 ### Mock NEP-141 tokens (not in the manifests)
 
-`run.mjs` deploys two test-only token contracts that the handoff previously
-failed to document. Their sources live in `contracts/sandbox-mock-ft` (crate
-`sandbox-mock-ft`) at the pinned source commit and must be built by the operator:
+`run.mjs` deploys two test-only token contracts. Their sources live in
+`contracts/sandbox-mock-ft` (crate `sandbox-mock-ft`) at the pinned source
+commit. Build both with the pinned image, not a host `cargo build`:
 
-| Artifact | Build command | Owner-host digest (informational) |
+```sh
+tests/sandbox-usdc-callbacks/build-mock-tokens-pinned.sh
+```
+
+The script asserts the image digest, runs
+`cargo near build non-reproducible-wasm --locked --no-abi` with the default and
+`variant-b` features inside `sourcescan/cargo-near:0.23.0-rust-1.100.0`
+(`sha256:265b662a…`, the same image the core WASM uses), and writes both
+artifacts to the paths `run.mjs` resolves. Two independent runs of the script
+produced identical outputs, so this is now a checkable pin rather than a
+host-dependent value.
+
+Expected values for this source:
+
+| Artifact | SHA-256 | NEAR code hash |
 | --- | --- | --- |
-| `target/wasm32-unknown-unknown/release/sandbox_mock_ft.wasm` | `cargo build --locked --release --target wasm32-unknown-unknown -p sandbox-mock-ft` | `c8669f67957668888767cebb360d34c096e0654684e489377b634ab11c898619` |
-| `target/wasm32-unknown-unknown/release/sandbox_mock_ft_variant_b.wasm` | `CARGO_TARGET_DIR=target/lcp-sandbox-variant-b cargo build --locked --release --target wasm32-unknown-unknown -p sandbox-mock-ft --features variant-b`, then copy the output to `target/wasm32-unknown-unknown/release/sandbox_mock_ft_variant_b.wasm` | `56c46e717bf7b12e41ea848b14a6b58e5c73e2c979c2f4a38cb6910561b7e489` |
+| `target/wasm32-unknown-unknown/release/sandbox_mock_ft.wasm` | `d01d4434643ebc9a240abe9d4522408dc7f6636d38f07bd809713d9255a178ad` | `F1PghgpN3UQmRhjm6hmoB9na3dfW9NNaW7cTKAoDdTfA` |
+| `target/wasm32-unknown-unknown/release/sandbox_mock_ft_variant_b.wasm` | `91c7ba424c9ca159a4e5117aae3211864c289eff0d695b5fe750c0f1711e4848` | `Ap4ks3KUK5Dm93SacgHEEbZRgZ78bRmjuNHXppttiBUB` |
 
-**These digests are not a reproducible-build pin.** The same source, lockfile,
-and `rustc 1.100.0` compiled inside the pinned Linux image produced
-`371222ba…` / `634d6522…` instead. The recorded values were produced by a host
-`wasm32-unknown-unknown` build on macOS x86_64. Consequences:
+If these differ, stop: either the source tree or the pinned image moved. Do not
+substitute a host `cargo build`; it produces different digests for identical
+source (`c8669f67…` / `56c46e71…` on the owner's macOS host and
+`371222ba…` / `634d6522…` for a plain `cargo build` inside the Linux image),
+and those historical values are not a reproducibility pin.
 
-- Build both tokens from the pinned source tree with Rust 1.100.0, then record
-  your own two digests in the report.
-- Do **not** treat a mock-token digest difference from the owner-host values as
-  a failure. The substantive criteria are the contract core WASM/code hash, the
-  scenario set and assertions, and the non-volatile payload comparison (step 6).
-- If you build on the same host platform as the original run, state that
-  explicitly; if the digests match, say so.
+The tokens are not in the manifests, so record your two digests in the report.
+The committed captures embed the historical token digests; treat
+`wasm_artifacts.mock_ft_variant_a` and `wasm_artifacts.mock_ft_variant_b` as
+expected-to-differ.
 
 ## 1. Prepare the two source trees and verify the manifests
 
@@ -257,8 +269,9 @@ These fields are expected to differ and are not a mismatch:
   digest built from per-run keys.
 - Governance activation timestamps.
 - `captured_at`.
-- **Mock-token artifact digests** when your build host differs from the
-  original owner host (see above). State the digests you produced.
+- **Mock-token artifact digests** in the committed captures: the canonical
+  pinned-image build differs from the historical values embedded in those
+  captures (see above). State the digests you produced.
 
 Do not compare the JSON files byte for byte. Report the comparison as a table of
 capture, scenario count, verifier result, and each field-level difference outside

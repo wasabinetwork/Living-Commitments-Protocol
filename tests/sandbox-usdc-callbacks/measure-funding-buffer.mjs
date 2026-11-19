@@ -21,6 +21,7 @@
 //   --retained-bytes      measured bytes retained after settlement (default: same)
 //   --stuck-callbacks     callbacks allowed to remain unresolved indefinitely
 //   --margin              extra fraction on top of the computed minimum (default 0.25)
+//   --gas-tgas-per-callback  prepaid gas per pending callback (default 20)
 //   --json                write the full result to a file
 
 const STORAGE_PRICE_YOCTO_PER_BYTE = 10n ** 19n; // NEAR protocol storage price
@@ -48,6 +49,7 @@ const storageBytes = Number(flag("storage-bytes"));
 const retainedBytes = Number(flag("retained-bytes") ?? flag("storage-bytes"));
 const stuckCallbacks = Number(flag("stuck-callbacks"));
 const margin = Number(flag("margin") ?? "0.25");
+const callbackGasTgas = Number(flag("gas-tgas-per-callback") ?? "20");
 
 const missing = [
   ["--max-pending", maxPending],
@@ -70,8 +72,8 @@ const storageReserve =
   pendingStorageYocto * BigInt(maxPending) + retainedStorageYocto * BigInt(stuckCallbacks);
 // Callback gas is prepaid by the transaction signer, not the contract balance.
 // It is reported so the operator can size a separate gas/refund float.
-const callbackGasTgas = 20n;
-const gasFloatYocto = callbackGasTgas * 10n ** 12n * GAS_PRICE_YOCTO_PER_GAS * BigInt(maxPending);
+const gasFloatYocto =
+  BigInt(callbackGasTgas) * 10n ** 12n * GAS_PRICE_YOCTO_PER_GAS * BigInt(maxPending);
 
 const subtotal = inFlightOutflow + retainedOutflow + storageReserve;
 const marginYocto = (subtotal * BigInt(Math.round(margin * 100))) / 100n;
@@ -84,6 +86,7 @@ const inputs = [
   { name: "bytes retained after settlement", value: retainedBytes, unit: "bytes", provenance: "measured worst case: an unresolved (OOG) callback retains 617; a settled transfer retains 199" },
   { name: "indefinitely unresolved callbacks", value: stuckCallbacks, unit: "callbacks", provenance: "policy input" },
   { name: "safety margin", value: margin, unit: "fraction", provenance: "policy input" },
+  { name: "prepaid gas per pending callback", value: callbackGasTgas, unit: "Tgas", provenance: "operator policy gas floor for the method, not contract cash" },
 ];
 
 const result = {

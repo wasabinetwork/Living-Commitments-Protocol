@@ -321,9 +321,13 @@ captures regenerated, all verifiers passed, and 65/65 non-volatile scenario
 payloads matched the committed set. This **does not** satisfy the A1 independence
 requirement. The report also records handoff defects a second operator must
 address (manifests/verifier defaults tied to later commits or older captures,
-undocumented mock-token artifacts, and host-dependent mock-token hashes). A
-different operator on different infrastructure must still reproduce, sign, and
-attach the result.
+undocumented mock-token artifacts, and host-dependent mock-token hashes). Those
+handoff gaps are corrected, and the mock tokens are now pinned:
+[`tests/sandbox-usdc-callbacks/build-mock-tokens-pinned.sh`](tests/sandbox-usdc-callbacks/build-mock-tokens-pinned.sh)
+builds both in the same SourceScan image as the core WASM, with two runs
+producing identical digests (`d01d4434…` / `91c7ba42…`). A different operator on
+different infrastructure must still reproduce, sign, and attach the result;
+that independence, not the build recipe, is the open A1 gate.
 
 | ID | Goal | Procedure / artifact | Exit criteria | Sign-off |
 | --- | --- | --- | --- | --- |

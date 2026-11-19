@@ -136,13 +136,13 @@ cargo near build non-reproducible-wasm --locked --no-abi \
   --out-dir /tmp/lcp-near-sandbox-cache/wasm-opt-default
 cp /tmp/lcp-near-sandbox-cache/wasm-opt-default/lcp_core.wasm \
   target/wasm32-unknown-unknown/release/lcp_core.wasm
-cargo build --locked --release --target wasm32-unknown-unknown \
-  -p sandbox-mock-ft
-CARGO_TARGET_DIR=target/lcp-sandbox-variant-b cargo build --locked --release \
-  --target wasm32-unknown-unknown -p sandbox-mock-ft --features variant-b
-cp target/lcp-sandbox-variant-b/wasm32-unknown-unknown/release/sandbox_mock_ft.wasm \
-  target/wasm32-unknown-unknown/release/sandbox_mock_ft_variant_b.wasm
+tests/sandbox-usdc-callbacks/build-mock-tokens-pinned.sh
 ```
+
+The mock-token script builds both NEP-141 artifacts inside the pinned
+`sourcescan/cargo-near:0.23.0-rust-1.100.0` image and prints their digests. A
+host `cargo build` of the same source produces different digests and is not the
+canonical reproduction build.
 
 The harness uses the pinned `near-sandbox` package to start NEAR Sandbox 2.14.0
 inside a Linux x86_64 container with glibc 2.38 or newer. It signs local test

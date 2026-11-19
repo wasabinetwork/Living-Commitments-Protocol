@@ -117,6 +117,37 @@ with the 2026-11-19 measured storage inputs and the sample policy values:
 Gas is prepaid by the transaction signer and is not contract cash, so it is
 reported separately and must not be counted as payout liquidity.
 
+## Proposed canary inputs (awaiting owner sign-off)
+
+These are proposed defaults for review, not approved policy:
+
+| Input | Proposed value | Basis |
+| --- | --- | --- |
+| Maximum simultaneous pending payouts | 16 per instance | Small enough for one canary treasury and a daily operator check, above the four simultaneous transfers the callback fixture exercised. Enforced operationally: pause new token outflows once 16 are outstanding, because the contract caps no count |
+| Stuck-callback allowance | 24 hours, converted to 16 callbacks | Correlation assumption: one shared token-contract or RPC incident stalls every callback in flight at once, so the allowance is bounded by the 16-pending cap rather than a per-callback failure rate. A 24-hour allowance exceeds the observed settlement time by orders of magnitude and leaves time for the daily check to intervene |
+| Largest single authorized payout or refund | 1 NEAR per commitment | The largest fixture refund attach and the amount every capture settles. Raising it raises the buffer proportionally, so raise it deliberately with a new calculation |
+| Margin | 25% of the subtotal | Percentage, not flat, so it tracks the outflow term |
+
+The proposed buffer is 40.2468 NEAR, with a separate 0.064 NEAR gas float
+(16 pending × 40 Tgas at 0.0001 NEAR/Tgas). The 40 Tgas figure is the
+`recover_nep141_transfer` operator-policy floor, which is itself above the
+1.5× derived floor; it is prepaid by the signer and is not part of the buffer.
+
+```sh
+node tests/sandbox-usdc-callbacks/measure-funding-buffer.mjs \
+  --max-pending 16 \
+  --max-outflow-near 1 \
+  --storage-bytes 617 \
+  --retained-bytes 617 \
+  --stuck-callbacks 16 \
+  --margin 0.25 \
+  --gas-tgas-per-callback 40 \
+  --json target/funding-buffer-proposed.json
+```
+
+Until the owner approves these four values, the buffer stays unapproved and
+the canary acceptance record must not cite it as funded policy.
+
 ## Why this is not yet a recommendation
 
 - `max_pending = 64`, `stuck_callbacks = 4`, and `margin = 0.25` are policy
