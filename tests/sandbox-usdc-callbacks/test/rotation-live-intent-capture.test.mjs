@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  compareRotationLiveIntentCaptures,
   validateRotationLiveIntentCapture,
   verifyManifest,
 } from "../verify-rotation-live-intent-capture.mjs";
@@ -187,6 +188,57 @@ test("rejects a capture without the rotation scenario", () => {
   delete changed.scenarios.rotation_live_intent;
   assert.throws(() => validateRotationLiveIntentCapture(changed),
     /must include the rotation_live_intent scenario/);
+});
+
+test("accepts a fresh capture that differs only in recorded identifiers", () => {
+  const fresh = clone();
+  const live = rotation(fresh);
+  live.instance_id = "ab".repeat(32);
+  live.activate_at_ns = "1795113906000000000";
+  live.observed_activation_time_ns = "1795113908000000000";
+  live.settlement_transaction_hash = "11111111111111111111111111111111";
+  fresh.node.chain_id = "test-chain-ZZZZZ";
+  fresh.captured_at = "2026-11-20T00:00:00.000Z";
+  const { compared, volatile } = compareRotationLiveIntentCaptures(fresh, canonical);
+  assert.equal(volatile.length, 9);
+  assert.equal(compared, Object.keys(rotation(canonical)).length - 9
+    + 8);
+});
+
+test("rejects a fresh capture whose rotation counters drifted", () => {
+  const fresh = clone();
+  rotation(fresh).pending_transfer_id = "12";
+  rotation(fresh).next_transfer_after_upgrade = "13";
+  assert.throws(() => compareRotationLiveIntentCaptures(fresh, canonical),
+    /fresh rotation field pending_transfer_id/);
+});
+
+test("rejects a fresh capture whose governance continuity drifted", () => {
+  const fresh = clone();
+  fresh.scenarios.governance.canceled_generation = "9";
+  assert.throws(() => compareRotationLiveIntentCaptures(fresh, canonical),
+    /fresh governance field canceled_generation/);
+});
+
+test("rejects a fresh capture with a different scenario set", () => {
+  const fresh = clone();
+  fresh.scenarios.unexpected_scenario = {};
+  assert.throws(() => compareRotationLiveIntentCaptures(fresh, canonical),
+    /same scenarios in the same order/);
+});
+
+test("rejects a fresh capture that adds a rotation field", () => {
+  const fresh = clone();
+  rotation(fresh).unexpected_field = true;
+  assert.throws(() => compareRotationLiveIntentCaptures(fresh, canonical),
+    /same fields in the same order/);
+});
+
+test("rejects a fresh capture from a different Sandbox build", () => {
+  const fresh = clone();
+  fresh.node.version = { ...fresh.node.version, commit: "0".repeat(40) };
+  assert.throws(() => compareRotationLiveIntentCaptures(fresh, canonical),
+    /same Sandbox build/);
 });
 
 test("rejects a rotation recorded before the governance scenarios", () => {

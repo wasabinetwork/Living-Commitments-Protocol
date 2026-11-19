@@ -21,6 +21,22 @@ const TRANSACTION_HASH_FIELDS = [
   "upgrade_transaction_hash",
   "settlement_transaction_hash",
 ];
+const VOLATILE_ROTATION_FIELDS = new Set([
+  "instance_id",
+  "activate_at_ns",
+  "observed_activation_time_ns",
+  ...TRANSACTION_HASH_FIELDS,
+]);
+const COMPARED_GOVERNANCE_FIELDS = [
+  "canceled_generation",
+  "activated_generation",
+  "fast_forward_calls",
+  "active_epoch",
+  "retired_epoch_zero",
+  "canceled_proposal_replay_rejected",
+  "historical_key_reuse_after_retirement_rejected",
+  "early_activation_rejected",
+];
 
 function base58Encode(bytes) {
   let value = BigInt(`0x${bytes.toString("hex") || "0"}`);
@@ -182,6 +198,46 @@ export function validateRotationLiveIntentCapture(capture) {
   return { paidRaw, generation, pendingTransfer, nextTransfer };
 }
 
+export function compareRotationLiveIntentCaptures(fresh, committed) {
+  validateRotationLiveIntentCapture(fresh);
+
+  assert.deepEqual(Object.keys(fresh.scenarios), Object.keys(committed.scenarios),
+    "a fresh capture must run the same scenarios in the same order");
+  assert.equal(fresh.fixture_schema, committed.fixture_schema,
+    "a fresh capture must use the same fixture schema");
+  assert.equal(fresh.node.sandbox_version, committed.node.sandbox_version,
+    "a fresh capture must use the same NEAR Sandbox release");
+  assert.equal(fresh.node.protocol_version, committed.node.protocol_version,
+    "a fresh capture must use the same NEAR protocol version");
+  assert.deepEqual(fresh.node.version, committed.node.version,
+    "a fresh capture must use the same Sandbox build");
+  assert.deepEqual(fresh.wasm_artifacts, committed.wasm_artifacts,
+    "a fresh capture must deploy the committed artifacts");
+
+  const freshRotation = fresh.scenarios.rotation_live_intent;
+  const committedRotation = committed.scenarios.rotation_live_intent;
+  assert.deepEqual(Object.keys(freshRotation), Object.keys(committedRotation),
+    "a fresh rotation scenario must record the same fields in the same order");
+  let compared = 0;
+  const volatile = [];
+  for (const field of Object.keys(committedRotation)) {
+    if (VOLATILE_ROTATION_FIELDS.has(field)) {
+      volatile.push(field);
+      continue;
+    }
+    assert.deepEqual(freshRotation[field], committedRotation[field],
+      `fresh rotation field ${field} differs from the committed evidence`);
+    compared += 1;
+  }
+
+  for (const field of COMPARED_GOVERNANCE_FIELDS) {
+    assert.deepEqual(fresh.scenarios.governance[field], committed.scenarios.governance[field],
+      `fresh governance field ${field} differs from the committed evidence`);
+    compared += 1;
+  }
+  return { compared, volatile };
+}
+
 export async function verifyManifest(capturePath, manifestPath) {
   const relativeCapturePath = relative(repoRoot, capturePath).split(sep).join("/");
   assert.ok(relativeCapturePath && relativeCapturePath !== ".."
@@ -211,14 +267,39 @@ export async function verifyManifest(capturePath, manifestPath) {
 }
 
 async function main() {
-  const captureArgument = process.argv[2];
+  const args = process.argv.slice(2);
+  const positional = [];
+  let freshArgument;
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--fresh") {
+      freshArgument = args[index + 1];
+      assert.ok(freshArgument && !freshArgument.startsWith("--"),
+        "--fresh requires the path to a freshly captured recovery.json");
+      index += 1;
+    } else {
+      assert.ok(!args[index].startsWith("--"), `unknown option: ${args[index]}`);
+      positional.push(args[index]);
+    }
+  }
+  const [captureArgument, manifestArgument] = positional;
   const capturePath = resolve(captureArgument ?? defaultCapturePath);
-  const manifestPath = resolve(process.argv[3]
+  const manifestPath = resolve(manifestArgument
     ?? (captureArgument ? capturePath.replace(/\.json$/, ".sha256") : defaultManifestPath));
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
   const { paidRaw, generation, pendingTransfer, nextTransfer } =
     validateRotationLiveIntentCapture(capture);
   const sourceCount = await verifyManifest(capturePath, manifestPath);
+
+  if (freshArgument) {
+    const freshPath = resolve(freshArgument);
+    const fresh = JSON.parse(await readFile(freshPath, "utf8"));
+    const { compared, volatile } = compareRotationLiveIntentCaptures(fresh, capture);
+    const shownPath = relative(process.cwd(), freshPath) || freshPath;
+    console.log(`PASS fresh rotation capture ${shownPath} matches the committed evidence: ${compared} scenario fields compared, ${volatile.length} volatile fields excluded (${volatile.join(", ")}), plus the artifact, node build, scenario order, and governance continuity`);
+    console.log("LIMITATION: compares two captures of the same fixture field by field; it does not re-execute receipts, and matching identifiers or counters are evidence of reproducibility, not of an independent operator.");
+    return;
+  }
+
   console.log(`PASS rotation-with-live-intent capture: ${sourceCount} source hashes, pinned artifact, epoch ${capture.scenarios.rotation_live_intent.retained_epoch} blocked from retirement until transfer ${pendingTransfer} settles under the active epoch ${capture.scenarios.rotation_live_intent.active_epoch}, generation ${generation} preserved across an in-place upgrade (next transfer ${nextTransfer}), ${paidRaw} raw units paid, and the mock pool repaid`);
   console.log("LIMITATION: validates the recorded scenario fields, their cross-scenario continuity, and manifest consistency; it does not re-derive receipt-level execution, and the upgrade is a DeployContract over live state rather than a state-migration function.");
 }

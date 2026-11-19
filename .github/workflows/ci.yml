@@ -68,3 +68,25 @@ jobs:
         run: npm run check --workspace=@lcp/reviewer-access
       - name: Build Console
         run: npm run build
+
+  captures:
+    name: Sandbox capture evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # The harness package requires >= 26 and the pinned runner is
+          # node:26-trixie-slim. These checks use only Node builtins.
+          node-version: 26
+      # The historical protocol-88, bootstrap-guard, and native-excess-refund
+      # verifiers pin contract sources from earlier revisions, so they are run at
+      # their pinned source revision (see the capture README), not at HEAD.
+      # verify-release-feature-exclusion.mjs regenerates a committed capture, so
+      # it is not a HEAD gate either.
+      - name: Verify committed captures
+        run: |
+          node tests/sandbox-usdc-callbacks/verify-rotation-live-intent-capture.mjs
+          node tests/sandbox-usdc-callbacks/verify-storage-registry-capture.mjs
+      - name: Run capture verifier mutation checks
+        run: node --test tests/sandbox-usdc-callbacks/test/*.test.mjs

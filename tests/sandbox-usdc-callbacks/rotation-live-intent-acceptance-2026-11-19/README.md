@@ -49,6 +49,8 @@ scenarios keep their documented starting supply.
 ```bash
 node tests/sandbox-usdc-callbacks/verify-rotation-live-intent-capture.mjs
 node --test tests/sandbox-usdc-callbacks/test/rotation-live-intent-capture.test.mjs
+node tests/sandbox-usdc-callbacks/verify-rotation-live-intent-capture.mjs \
+  --fresh <new-capture>/recovery.json
 ```
 
 The first command rechecks every recorded field in
@@ -57,7 +59,11 @@ source manifest: the retained-epoch settlement while epoch 2 is active, the
 blocked-then-successful retirement, generation and epoch continuity with the
 preceding governance rotation, the preserved instance ID and counters, the
 full raw payout, and the repaid mock pool. The second mutates the capture one
-field at a time and expects each mutation to be rejected.
+field at a time and expects each mutation to be rejected. The third compares a
+freshly captured run with this evidence field by field, excluding only the
+recorded transaction hashes, instance ID, chain ID, and activation timestamps;
+the procedure for a second operator is
+[`INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md`](../INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md).
 
 ## Limits
 

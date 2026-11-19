@@ -91,8 +91,11 @@ A saved-evidence checker,
 [`verify-rotation-live-intent-capture.mjs`](verify-rotation-live-intent-capture.mjs),
 revalidates the pinned artifact, retained-epoch settlement, retirement ordering,
 preserved identity and counters, escrow payout, and repaid pool against the
-manifest; its mutation suite is
+manifest; it accepts `--fresh <capture>` to compare a new run field by field
+with this evidence, and its mutation suite is
 [`test/rotation-live-intent-capture.test.mjs`](test/rotation-live-intent-capture.test.mjs).
+The handoff for a second operator is
+[`INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md`](INDEPENDENT-REPRODUCTION-ROTATION-LIVE-INTENT.md).
 The `689fbf1`, `29ed585`, and Gate 5 captures were not regenerated. This is
 same-operator local evidence; the production seven-day rotation cycle and an
 independent reproduction remain open.
