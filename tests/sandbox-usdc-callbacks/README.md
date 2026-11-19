@@ -61,6 +61,36 @@ and a tooling manifest in
 the `689fbf1` captures and now reports every policy method as measured. The
 `689fbf1` and `29ed585` captures were not regenerated.
 
+## Rotation with a live intent and in-place upgrade — 2026-11-19
+
+Source commit `e47b19440aa71def96f3a0ccd349c0f11b0fbd79` adds a Gate 4
+scenario that rotates the committee while a tranche intent is still pending,
+redeploys the same core artifact over the live state, and settles that intent
+with the retained epoch's signatures before the keyset can be retired. The
+pinned reproducible `sandbox-recovery` build produced WASM SHA-256
+`de9dc7cfed3e6f9b9b47350e257381a77ddc7f765b347173e89e926cde06a192` (NEAR code
+hash `Fz13ws3yxBWcuAd7FHtYvR3EwpfpaJTcVi8BxbBHkWxH`). The run used
+`LCP_RECOVERY_ONLY=1` in `node:26-trixie-slim` at
+`sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc` on
+Sandbox 2.14.0, protocol 88; no public network was used.
+
+The capture is
+[`rotation-live-intent-acceptance-2026-11-19/recovery.json`](rotation-live-intent-acceptance-2026-11-19/recovery.json)
+with provenance in its [README](rotation-live-intent-acceptance-2026-11-19/README.md).
+Transfer 9 is pending under epoch 1, `retire_receipt_recovery_epoch(1)` returns
+`false`, generation 3 activates epoch 2, the unchanged artifact is redeployed,
+and the instance ID, epoch, used-key count, generation, pending intent, storage
+record count, and native cash ledger compare equal across the upgrade. Transfer
+10 then allocates after the upgrade, the epoch-1 committee settles transfer 9
+(`paid_raw` `1000000`), and retiring epoch 1 finally returns `true`. Its source
+manifest is
+[`rotation-live-intent-acceptance-2026-11-19.sha256`](rotation-live-intent-acceptance-2026-11-19.sha256)
+and its tooling manifest is
+[`rotation-live-intent-acceptance-2026-11-19.tooling.sha256`](rotation-live-intent-acceptance-2026-11-19.tooling.sha256).
+The `689fbf1`, `29ed585`, and Gate 5 captures were not regenerated. This is
+same-operator local evidence; the production seven-day rotation cycle and an
+independent reproduction remain open.
+
 ## Historical local acceptance candidate — 689fbf1
 
 The recovery source for this older capture set is commit

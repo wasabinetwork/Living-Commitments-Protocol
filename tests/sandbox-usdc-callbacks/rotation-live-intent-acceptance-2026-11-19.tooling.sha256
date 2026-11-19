@@ -1,0 +1,5 @@
+84c3b1a7003e5a92a8fcc1a3bdf3bf7e2b0771bb59343b9c68f11470ecfaf6e5  tests/sandbox-usdc-callbacks/run.mjs
+4a00042e447acbde8de806c9343101dfb64d671c04f423673ef7b9dc489ebba3  tests/sandbox-usdc-callbacks/README.md
+006465f8d1b762e3c51f4caafeada94e4e1cffa24e5580758b99ed630e24f490  tests/sandbox-usdc-callbacks/rotation-live-intent-acceptance-2026-11-19/README.md
+d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548  tests/sandbox-usdc-callbacks/package.json
+c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e  tests/sandbox-usdc-callbacks/package-lock.json
