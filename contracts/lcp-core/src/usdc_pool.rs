@@ -82,9 +82,12 @@ pub(crate) fn quarantine_certificate_failure(commitment_id: u64, amount_raw: u12
             .unwrap_or_else(|| env::panic_str("certificate quarantine total overflow")),
     );
     let mut pool = read_pool();
-    pool.spendable_raw = pool.spendable_raw.checked_sub(amount_raw).unwrap_or_else(|| {
-        env::panic_str("certificate quarantine exceeds USDC spendable accounting")
-    });
+    pool.spendable_raw = pool
+        .spendable_raw
+        .checked_sub(amount_raw)
+        .unwrap_or_else(|| {
+            env::panic_str("certificate quarantine exceeds USDC spendable accounting")
+        });
     bump_generation(&mut pool);
     write_pool(&pool);
 }
@@ -159,7 +162,8 @@ fn read_pool() -> UsdcPoolAccountingV1 {
             generation: 0,
         };
     };
-    borsh::from_slice(&bytes).unwrap_or_else(|_| env::panic_str("USDC pool accounting is malformed"))
+    borsh::from_slice(&bytes)
+        .unwrap_or_else(|_| env::panic_str("USDC pool accounting is malformed"))
 }
 
 fn write_pool(pool: &UsdcPoolAccountingV1) {

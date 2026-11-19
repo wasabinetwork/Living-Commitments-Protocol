@@ -5017,10 +5017,7 @@ impl Contract {
         let free_raw = self
             .escrow_available_for_tranche(&commitment)
             .unwrap_or_else(|| env::panic_str("escrow accounting invariant violated"));
-        require!(
-            free_raw >= tranche_amount,
-            "tranche exceeds free escrow"
-        );
+        require!(free_raw >= tranche_amount, "tranche exceeds free escrow");
         if let Some(mut state) = settlement {
             state.pending_raw = state
                 .pending_raw
@@ -9632,14 +9629,7 @@ mod tests {
             claim_storage_bytes <= 8_192,
             "pending callback storage exceeded the measured envelope"
         );
-        assert_eq!(
-            contract
-                .get_escrow_status(id)
-                .unwrap()
-                .pending_raw
-                .0,
-            0
-        );
+        assert_eq!(contract.get_escrow_status(id).unwrap().pending_raw.0, 0);
         assert!(contract.pending_transfers.get(&transfer_id.0).is_none());
     }
 
@@ -9680,11 +9670,7 @@ mod tests {
         );
         assert!(contract.pending_transfers.get(&transfer_id.0).is_none());
         assert_eq!(
-            contract
-                .get_escrow_status(id)
-                .unwrap()
-                .refunded_raw
-                .0,
+            contract.get_escrow_status(id).unwrap().refunded_raw.0,
             4_500_000
         );
     }
@@ -9854,7 +9840,10 @@ mod tests {
             crate::receipt_recovery::TransferOutcomeV1::Failure,
             [9; 32],
         );
-        assert!(settled.is_some(), "certificate failure must settle the transfer");
+        assert!(
+            settled.is_some(),
+            "certificate failure must settle the transfer"
+        );
     }
 
     #[cfg(feature = "usdc-receipt-recovery")]
@@ -10005,9 +9994,16 @@ mod tests {
             U128(backed.spendable_raw),
             U128(backed.total_quarantine_raw),
         ));
-        assert_eq!(contract.get_escrow_status(first).unwrap().free_raw.0, 4_500_000);
         assert_eq!(
-            contract.get_escrow_status(second).unwrap().quarantined_raw.0,
+            contract.get_escrow_status(first).unwrap().free_raw.0,
+            4_500_000
+        );
+        assert_eq!(
+            contract
+                .get_escrow_status(second)
+                .unwrap()
+                .quarantined_raw
+                .0,
             1_500_000
         );
 
@@ -10037,7 +10033,10 @@ mod tests {
             U128(fully_backed.spendable_raw),
             U128(fully_backed.total_quarantine_raw),
         ));
-        assert_eq!(contract.get_escrow_status(second).unwrap().free_raw.0, 4_500_000);
+        assert_eq!(
+            contract.get_escrow_status(second).unwrap().free_raw.0,
+            4_500_000
+        );
     }
 
     #[cfg(feature = "usdc-receipt-recovery")]
@@ -10058,7 +10057,10 @@ mod tests {
         assert_eq!(refunding.pending_raw.0, 3_000_000);
         assert_eq!(refunding.quarantined_raw.0, 1_500_000);
         assert_eq!(refunding.free_raw.0, 0);
-        assert_eq!(contract.get_escrow_status(second).unwrap().free_raw.0, 4_500_000);
+        assert_eq!(
+            contract.get_escrow_status(second).unwrap().free_raw.0,
+            4_500_000
+        );
         let after_refund = crate::usdc_pool::snapshot(first.0);
         assert_eq!(after_refund.spendable_raw, before_refund.spendable_raw);
         assert_eq!(after_refund.quarantine_raw, 1_500_000);
@@ -10312,10 +10314,12 @@ mod tests {
         let signatures = recovery_signers()
             .into_iter()
             .take(4)
-            .map(|(verifying, signing)| crate::receipt_recovery::SignatureEntryV1 {
-                public_key: verifying.to_bytes(),
-                signature: signing.sign(&digest).to_bytes(),
-            })
+            .map(
+                |(verifying, signing)| crate::receipt_recovery::SignatureEntryV1 {
+                    public_key: verifying.to_bytes(),
+                    signature: signing.sign(&digest).to_bytes(),
+                },
+            )
             .collect();
         crate::receipt_recovery::test_signed_envelope(domain, message, signatures)
     }
@@ -10355,7 +10359,10 @@ mod tests {
             committee_keys: recovery_signers()
                 .iter()
                 .map(|(verifying, _)| {
-                    format!("ed25519:{}", bs58::encode(verifying.to_bytes()).into_string())
+                    format!(
+                        "ed25519:{}",
+                        bs58::encode(verifying.to_bytes()).into_string()
+                    )
                 })
                 .collect(),
             approved_usdc_code_hashes: approved
@@ -11003,6 +11010,298 @@ mod tests {
     }
 
     #[cfg(feature = "usdc-receipt-recovery")]
+    const RECOVERY_DOMAIN: &[u8] = b"LCP/NEP141/RECOVERY/V1\0";
+    #[cfg(feature = "usdc-receipt-recovery")]
+    const INTENT_DOMAIN: &[u8] = b"LCP/NEP141/INTENT/V1\0";
+    #[cfg(feature = "usdc-receipt-recovery")]
+    const GOLDEN_VECTORS_JSON: &str =
+        include_str!("../../../tests/receipt-recovery-vectors/golden-vectors.json");
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn hex32(text: &str) -> [u8; 32] {
+        let bytes = text.as_bytes();
+        assert_eq!(bytes.len(), 64, "expected a 32-byte lowercase hex field");
+        let mut out = [0_u8; 32];
+        for (index, byte) in out.iter_mut().enumerate() {
+            let digits = std::str::from_utf8(&bytes[index * 2..index * 2 + 2]).unwrap();
+            *byte = u8::from_str_radix(digits, 16).unwrap();
+        }
+        out
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn hex_bytes(bytes: &[u8]) -> String {
+        use std::fmt::Write;
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            write!(out, "{byte:02x}").unwrap();
+        }
+        out
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn recovery_certificate_envelope(
+        intent: &crate::receipt_recovery::RecoveryIntentV1,
+        outcome: crate::receipt_recovery::TransferOutcomeV1,
+        signers: &[(ed25519_dalek::VerifyingKey, ed25519_dalek::SigningKey)],
+    ) -> String {
+        let intent_bytes = near_sdk::borsh::to_vec(intent).unwrap();
+        let intent_hash = crate::receipt_recovery::test_domain_digest(INTENT_DOMAIN, &intent_bytes);
+        let certificate = crate::receipt_recovery::RecoveryCertificateV1 {
+            schema_version: 1,
+            intent: intent.clone(),
+            intent_hash,
+            origin_transaction_hash: [0x44; 32],
+            origin_receipt_id: [0x55; 32],
+            origin_block_hash: [0x66; 32],
+            origin_block_height: 300_000_000,
+            token_receipt_id: [0x77; 32],
+            token_action_index: 0,
+            outcome_block_hash: [0x88; 32],
+            outcome_block_height: 300_000_001,
+            outcome,
+        };
+        let message = near_sdk::borsh::to_vec(&certificate).unwrap();
+        signed_committee_envelope(RECOVERY_DOMAIN, &message, signers)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn rotation_keeps_old_epoch_intents_settleable_until_they_settle() {
+        let hash_a = [4_u8; 32];
+        let (mut contract, instance) = bootstrapped_recovery(&[hash_a], hash_a);
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let transfer_id = claim_usdc_tranche(&mut contract, id);
+        let pending = crate::receipt_recovery::pending_intent(transfer_id.0)
+            .expect("claim writes a pending intent");
+        assert_eq!(pending.intent.committee_epoch, 0);
+        assert_eq!(
+            contract
+                .receipt_recovery_configuration()
+                .expect("configuration")
+                .current_epoch_pending_intents
+                .0,
+            1
+        );
+
+        let epoch1_signers = rotation_signer_set([6, 7, 8, 9, 10]);
+        let epoch1_keys = rotation_keys(&epoch1_signers);
+        let activate_at_ns = NOW_NS + 1 + ROTATION_MINIMUM_DELAY_NS;
+        propose_committee_rotation(
+            &mut contract,
+            accounts(2),
+            instance,
+            1,
+            epoch1_keys,
+            activate_at_ns,
+            NOW_NS + 1,
+        );
+        testing_env!(context_at(accounts(3), 0, activate_at_ns));
+        contract.activate_receipt_recovery_rotation();
+
+        // The pinned epoch still owns a live intent, so its keyset cannot be
+        // retired out from under the certificate that must settle it.
+        testing_env!(context_at(accounts(4), 0, activate_at_ns + 1));
+        assert!(!contract.retire_receipt_recovery_epoch(0));
+        assert!(contract.receipt_recovery_committee(0).is_some());
+
+        let epoch0_envelope = recovery_certificate_envelope(
+            &pending.intent,
+            crate::receipt_recovery::TransferOutcomeV1::Success,
+            &recovery_signers(),
+        );
+        assert!(contract.recover_nep141_transfer(transfer_id, epoch0_envelope));
+        let status = contract.get_escrow_status(id).expect("escrow status");
+        assert_eq!(status.paid_raw.0, 1_500_000);
+        assert_eq!(status.pending_raw.0, 0);
+        assert_eq!(
+            contract
+                .receipt_recovery_configuration()
+                .expect("configuration")
+                .current_epoch_pending_intents
+                .0,
+            0
+        );
+
+        assert!(contract.finalize_receipt_recovery_intent(transfer_id));
+        assert!(contract.retire_receipt_recovery_epoch(0));
+        assert!(contract.receipt_recovery_committee(0).is_none());
+
+        // A later intent pins the rotated epoch and settles under its keys.
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), activate_at_ns + 2));
+        let next_id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, next_id);
+        let next_transfer = claim_usdc_tranche(&mut contract, next_id);
+        let next_pending = crate::receipt_recovery::pending_intent(next_transfer.0)
+            .expect("claim writes a pending intent");
+        assert_eq!(next_pending.intent.committee_epoch, 1);
+        let epoch1_envelope = recovery_certificate_envelope(
+            &next_pending.intent,
+            crate::receipt_recovery::TransferOutcomeV1::Success,
+            &epoch1_signers,
+        );
+        testing_env!(context_at(accounts(4), 0, activate_at_ns + 3));
+        assert!(contract.recover_nep141_transfer(next_transfer, epoch1_envelope));
+        assert_eq!(
+            contract
+                .get_escrow_status(next_id)
+                .expect("escrow status")
+                .paid_raw
+                .0,
+            1_500_000
+        );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "signature key is not in the pinned committee")]
+    fn rotated_committee_cannot_sign_for_an_old_epoch_intent() {
+        let hash_a = [4_u8; 32];
+        let (mut contract, instance) = bootstrapped_recovery(&[hash_a], hash_a);
+        testing_env!(context_at(accounts(1), 10_u128.pow(25), NOW_NS));
+        let id = contract.create_service_availability_commitment_on_chain(
+            usdc_service_commitment_args(),
+            "testnet",
+        );
+        fund_and_activate_usdc_service_commitment(&mut contract, id);
+        let transfer_id = claim_usdc_tranche(&mut contract, id);
+        let pending = crate::receipt_recovery::pending_intent(transfer_id.0)
+            .expect("claim writes a pending intent");
+
+        let epoch1_signers = rotation_signer_set([6, 7, 8, 9, 10]);
+        let activate_at_ns = NOW_NS + 1 + ROTATION_MINIMUM_DELAY_NS;
+        propose_committee_rotation(
+            &mut contract,
+            accounts(2),
+            instance,
+            1,
+            rotation_keys(&epoch1_signers),
+            activate_at_ns,
+            NOW_NS + 1,
+        );
+        testing_env!(context_at(accounts(3), 0, activate_at_ns));
+        contract.activate_receipt_recovery_rotation();
+
+        testing_env!(context_at(accounts(4), 0, activate_at_ns + 1));
+        let epoch1_envelope = recovery_certificate_envelope(
+            &pending.intent,
+            crate::receipt_recovery::TransferOutcomeV1::Success,
+            &epoch1_signers,
+        );
+        contract.recover_nep141_transfer(transfer_id, epoch1_envelope);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn contract_parser_matches_the_committed_governance_vectors() {
+        let vectors: near_sdk::serde_json::Value =
+            near_sdk::serde_json::from_str(GOLDEN_VECTORS_JSON).expect("golden vector JSON");
+        let rotation = &vectors["governance"]["rotation"];
+        let cancellation = &vectors["governance"]["cancellation"];
+        let message = &rotation["message"];
+        let context = crate::receipt_recovery::RecoveryNetworkContextV1 {
+            chain_id: message["chain_id"].as_str().unwrap().to_string(),
+            genesis_hash: hex32(message["genesis_hash"].as_str().unwrap()),
+            core_account_id: message["core_account_id"].as_str().unwrap().to_string(),
+            instance_id: hex32(message["instance_id"].as_str().unwrap()),
+        };
+        let old_keys: Vec<[u8; 32]> = vectors["committee_public_keys_hex"]
+            .as_array()
+            .expect("committee keys")
+            .iter()
+            .map(|key| hex32(key.as_str().unwrap()))
+            .collect();
+        let current_epoch = u32::try_from(message["old_epoch"].as_u64().unwrap()).unwrap();
+        let generation = message["proposal_generation"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+        let activate_at_ns = message["activate_at_ns"]
+            .as_str()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
+
+        let parsed = crate::receipt_recovery::parse_and_verify_rotation_proposal(
+            rotation["envelope_base64"].as_str().unwrap(),
+            &context,
+            current_epoch,
+            generation - 1,
+            activate_at_ns - ROTATION_MINIMUM_DELAY_NS,
+            &old_keys,
+            &old_keys,
+        )
+        .expect("the contract parser accepts the golden rotation envelope");
+        assert_eq!(
+            crate::receipt_recovery::encode_lower_hex_32(&parsed.proposal_digest),
+            rotation["digest_hex"].as_str().unwrap()
+        );
+        assert_eq!(parsed.proposal.new_epoch, current_epoch + 1);
+        assert_eq!(parsed.proposal.proposal_generation, generation);
+        assert_eq!(
+            parsed.proposal.activate_at_ns, activate_at_ns,
+            "the parser must not reorder or rescale the activation boundary"
+        );
+        assert_eq!(
+            hex_bytes(&near_sdk::borsh::to_vec(&parsed.proposal).unwrap()),
+            rotation["borsh_hex"].as_str().unwrap()
+        );
+        let vector_keys: Vec<&str> = message["new_keys"]
+            .as_array()
+            .expect("new committee keys")
+            .iter()
+            .map(|key| key.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            parsed
+                .proposal
+                .new_keys
+                .iter()
+                .map(crate::receipt_recovery::encode_lower_hex_32)
+                .collect::<Vec<_>>(),
+            vector_keys
+        );
+
+        let parsed_cancellation = crate::receipt_recovery::parse_and_verify_rotation_cancellation(
+            cancellation["envelope_base64"].as_str().unwrap(),
+            &context,
+            &parsed.proposal,
+            current_epoch,
+            activate_at_ns - ROTATION_MINIMUM_DELAY_NS,
+            &old_keys,
+        )
+        .expect("the contract parser accepts the golden cancellation envelope");
+        let cancellation_bytes = near_sdk::borsh::to_vec(&parsed_cancellation).unwrap();
+        assert_eq!(
+            hex_bytes(&cancellation_bytes),
+            cancellation["borsh_hex"].as_str().unwrap()
+        );
+        assert_eq!(
+            crate::receipt_recovery::encode_lower_hex_32(
+                &crate::receipt_recovery::test_domain_digest(
+                    ROTATION_CANCEL_DOMAIN,
+                    &cancellation_bytes
+                )
+            ),
+            cancellation["digest_hex"].as_str().unwrap()
+        );
+        // Both signed messages bind the same proposal digest.
+        assert_eq!(
+            crate::receipt_recovery::encode_lower_hex_32(&parsed_cancellation.proposal_digest),
+            rotation["digest_hex"].as_str().unwrap()
+        );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
     fn propose_code_hash(
         contract: &mut Contract,
         instance: [u8; 32],
@@ -11048,7 +11347,10 @@ mod tests {
         let config = contract.receipt_recovery_configuration().unwrap();
         assert_eq!(config.token_account_id, token_before);
         assert_eq!(config.token_account_id.as_str(), NEAR_TESTNET_USDC_ACCOUNT);
-        assert_eq!(config.active_usdc_code_hash, bs58::encode(hash_c).into_string());
+        assert_eq!(
+            config.active_usdc_code_hash,
+            bs58::encode(hash_c).into_string()
+        );
         assert!(config
             .approved_usdc_code_hashes
             .contains(&bs58::encode(hash_a).into_string()));
@@ -11093,7 +11395,8 @@ mod tests {
         let (mut contract, instance) = bootstrapped_recovery(&[hash_a, hash_b], hash_a);
         let message = code_hash_proposal_bytes(instance, 1, [3u8; 32]);
         let proposed = propose_code_hash(&mut contract, instance, 1, [3u8; 32], 10_u128.pow(24));
-        let proposal_digest = crate::receipt_recovery::test_domain_digest(CODE_HASH_DOMAIN, &message);
+        let proposal_digest =
+            crate::receipt_recovery::test_domain_digest(CODE_HASH_DOMAIN, &message);
         assert_eq!(
             proposed.proposal_digest,
             crate::receipt_recovery::encode_lower_hex_32(&proposal_digest)
@@ -11115,7 +11418,10 @@ mod tests {
         let config = contract.receipt_recovery_configuration().unwrap();
         assert!(config.pending_code_hash_change.is_none());
         assert_eq!(config.last_code_hash_generation.0, 1);
-        assert_eq!(config.active_usdc_code_hash, bs58::encode(hash_a).into_string());
+        assert_eq!(
+            config.active_usdc_code_hash,
+            bs58::encode(hash_a).into_string()
+        );
         assert_eq!(config.approved_usdc_code_hashes.len(), 2);
         assert_eq!(config.token_account_id.as_str(), NEAR_TESTNET_USDC_ACCOUNT);
     }
@@ -11149,7 +11455,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "approved USDC code hash list is full")]
     fn code_hash_change_rejects_a_ninth_hash() {
-        let hashes: [[u8; 32]; 8] = core::array::from_fn(|index| [u8::try_from(index + 1).unwrap(); 32]);
+        let hashes: [[u8; 32]; 8] =
+            core::array::from_fn(|index| [u8::try_from(index + 1).unwrap(); 32]);
         let (mut contract, instance) = bootstrapped_recovery(&hashes, hashes[0]);
         propose_code_hash(&mut contract, instance, 1, [9u8; 32], 10_u128.pow(24));
     }

@@ -7,10 +7,10 @@ mod native_cash;
 mod receipt_recovery;
 mod recovery_accounting;
 #[cfg(feature = "usdc-receipt-recovery")]
-mod usdc_pool;
-#[cfg(feature = "usdc-receipt-recovery")]
 mod recovery_config;
 mod temporal;
+#[cfg(feature = "usdc-receipt-recovery")]
+mod usdc_pool;
 
 pub use contract::Contract;
 pub use models::{

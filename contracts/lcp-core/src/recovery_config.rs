@@ -938,11 +938,8 @@ pub(crate) fn propose_code_hash_change(encoded: &str) -> ReceiptRecoveryCodeHash
     };
     let storage_before = env::storage_usage();
     write_pending_code_hash(&pending);
-    let bond = crate::recovery_accounting::register_measured_record(
-        storage_record_id,
-        0,
-        storage_before,
-    );
+    let bond =
+        crate::recovery_accounting::register_measured_record(storage_record_id, 0, storage_before);
     require!(
         deposit >= crate::recovery_accounting::measured_storage_cost(bond.storage_bytes),
         "code hash proposal deposit is insufficient for measured storage"
@@ -1033,10 +1030,7 @@ fn preview_code_hash(config: &RecoveryConfigV1, new_hash: [u8; 32]) {
 }
 
 fn install_code_hash(config: &mut RecoveryConfigV1, new_hash: [u8; 32]) {
-    require!(
-        new_hash != [0; 32],
-        "USDC code hash must not be all zeroes"
-    );
+    require!(new_hash != [0; 32], "USDC code hash must not be all zeroes");
     let count = usize::from(config.approved_code_hash_count);
     if config.approved_code_hashes[..count].contains(&new_hash) {
         require!(
