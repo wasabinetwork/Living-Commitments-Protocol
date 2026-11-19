@@ -52,7 +52,9 @@ limit above or if a quarantine lasts longer than the approved response window.
 ## 3. Seven-day rotation delay evidence (Decision 2)
 
 One real elapsed propose/cancel-or-activate cycle on this instance, not the
-ten-second Sandbox fixture. Record both the proposal and the resolution.
+ten-second Sandbox fixture. Record both the proposal and the resolution. See
+[`P2-USDC-RECEIPT-RECOVERY-SEVEN-DAY-DELAY-RUNBOOK.md`](P2-USDC-RECEIPT-RECOVERY-SEVEN-DAY-DELAY-RUNBOOK.md)
+for the execution and recording procedure.
 
 | Field | Value |
 | --- | --- |

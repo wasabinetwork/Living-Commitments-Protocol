@@ -1992,4 +1992,109 @@ mod tests {
         let reserve = load_reserve();
         !reserve.is_ready(env::storage_byte_cost().as_yoctonear())
     }
+
+    #[test]
+    fn no_redirection_recovery_credit_withdrawal_is_bound_to_recorded_payer() {
+        let payer = accounts(0);
+        let other = accounts(1);
+        let mut credit = RefundCreditV1::preallocate(payer.clone(), 7);
+        credit.register_live_bond_record().unwrap();
+        credit.seal().unwrap();
+        credit.release_record_bond(13).unwrap();
+        let before = credit.clone();
+
+        assert_eq!(
+            credit.begin_withdrawal(&other),
+            Err("only the refund payer may withdraw this credit")
+        );
+        assert_eq!(credit, before);
+
+        let attempt = credit.begin_withdrawal(&payer).unwrap();
+        assert_eq!(attempt.amount_yocto, 13);
+        assert_eq!(
+            credit
+                .resolve_withdrawal(&other, attempt.amount_yocto, attempt.nonce, false)
+                .unwrap(),
+            None
+        );
+        assert!(matches!(&credit.state, RefundCreditStateV1::Withdrawing));
+        assert_eq!(credit.accrued_yocto, 13);
+        assert_eq!(credit.attempt_amount_yocto, 13);
+        assert_eq!(credit.attempt_nonce, attempt.nonce);
+    }
+
+    #[test]
+    fn no_duplicate_restoration_recovery_credit_failed_callback_restores_once() {
+        let payer = accounts(0);
+        let mut credit = RefundCreditV1::preallocate(payer.clone(), 7);
+        credit.register_live_bond_record().unwrap();
+        credit.seal().unwrap();
+        credit.release_record_bond(13).unwrap();
+
+        let attempt = credit.begin_withdrawal(&payer).unwrap();
+        assert_eq!(attempt.amount_yocto, 13);
+        assert_eq!(
+            credit
+                .resolve_withdrawal(&payer, attempt.amount_yocto, attempt.nonce, false)
+                .unwrap(),
+            None
+        );
+        assert!(matches!(&credit.state, RefundCreditStateV1::RefundPending));
+        assert_eq!(credit.accrued_yocto, 13);
+
+        // A stale duplicate failure while not withdrawing must be ignored and
+        // must not restore the liability a second time.
+        let after_failure = credit.clone();
+        assert_eq!(
+            credit
+                .resolve_withdrawal(&payer, attempt.amount_yocto, attempt.nonce, false)
+                .unwrap(),
+            None
+        );
+        assert_eq!(credit, after_failure);
+
+        let retry = credit.begin_withdrawal(&payer).unwrap();
+        assert_eq!(retry.nonce, 2);
+        assert_eq!(
+            credit
+                .resolve_withdrawal(&payer, attempt.amount_yocto, attempt.nonce, false)
+                .unwrap(),
+            None
+        );
+        assert!(matches!(&credit.state, RefundCreditStateV1::Withdrawing));
+        assert_eq!(credit.accrued_yocto, 13);
+        assert_eq!(credit.next_withdrawal_nonce, 2);
+    }
+
+    #[test]
+    fn no_double_payment_recovery_credit_cannot_be_paid_twice() {
+        let payer = accounts(0);
+        let mut credit = RefundCreditV1::preallocate(payer.clone(), 7);
+        credit.register_live_bond_record().unwrap();
+        credit.seal().unwrap();
+        credit.release_record_bond(13).unwrap();
+
+        let attempt = credit.begin_withdrawal(&payer).unwrap();
+        let closed = credit
+            .resolve_withdrawal(&payer, attempt.amount_yocto, attempt.nonce, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(closed.paid_yocto, 13);
+        assert_eq!(closed.treasury_bond_yocto, 7);
+        assert_eq!(credit.accrued_yocto, 0);
+        assert!(credit.settled);
+
+        assert_eq!(
+            credit.begin_withdrawal(&payer),
+            Err("refund credit has already been paid")
+        );
+        assert_eq!(
+            credit
+                .resolve_withdrawal(&payer, attempt.amount_yocto, attempt.nonce, true)
+                .unwrap(),
+            None
+        );
+        assert_eq!(credit.accrued_yocto, 0);
+        assert!(credit.settled);
+    }
 }
