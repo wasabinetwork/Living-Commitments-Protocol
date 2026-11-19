@@ -10400,6 +10400,609 @@ mod tests {
     }
 
     #[cfg(feature = "usdc-receipt-recovery")]
+    const ROTATION_CANCEL_DOMAIN: &[u8] = b"LCP/NEP141/ROTATION-CANCEL/V2\0";
+
+    #[cfg(feature = "sandbox-callback-fixture")]
+    const ROTATION_MINIMUM_DELAY_NS: u64 = 10_000_000_000;
+    #[cfg(not(feature = "sandbox-callback-fixture"))]
+    const ROTATION_MINIMUM_DELAY_NS: u64 = 604_800_000_000_000;
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn rotation_signer_set(
+        seeds: [u8; 5],
+    ) -> Vec<(ed25519_dalek::VerifyingKey, ed25519_dalek::SigningKey)> {
+        let mut signers: Vec<_> = seeds
+            .iter()
+            .map(|seed| {
+                let signing = ed25519_dalek::SigningKey::from_bytes(&[*seed; 32]);
+                (signing.verifying_key(), signing)
+            })
+            .collect();
+        signers.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+        signers
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn rotation_keys(
+        signers: &[(ed25519_dalek::VerifyingKey, ed25519_dalek::SigningKey)],
+    ) -> [[u8; 32]; 5] {
+        let mut keys: Vec<[u8; 32]> = signers
+            .iter()
+            .map(|(verifying, _)| verifying.to_bytes())
+            .collect();
+        keys.sort_unstable();
+        keys.try_into().expect("five rotation keys")
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn signed_committee_envelope(
+        domain: &[u8],
+        message: &[u8],
+        signers: &[(ed25519_dalek::VerifyingKey, ed25519_dalek::SigningKey)],
+    ) -> String {
+        use ed25519_dalek::Signer;
+        let digest = crate::receipt_recovery::test_domain_digest(domain, message);
+        let signatures = signers
+            .iter()
+            .take(4)
+            .map(
+                |(verifying, signing)| crate::receipt_recovery::SignatureEntryV1 {
+                    public_key: verifying.to_bytes(),
+                    signature: signing.sign(&digest).to_bytes(),
+                },
+            )
+            .collect();
+        crate::receipt_recovery::test_signed_envelope(domain, message, signatures)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn rotation_proposal_message(
+        instance: [u8; 32],
+        generation: u64,
+        new_keys: [[u8; 32]; 5],
+        activate_at_ns: u64,
+    ) -> Vec<u8> {
+        let proposal = crate::receipt_recovery::CommitteeRotationV2 {
+            schema_version: 2,
+            chain_id: "test".to_string(),
+            genesis_hash: [9u8; 32],
+            core_account_id: accounts(0).to_string(),
+            instance_id: instance,
+            old_epoch: 0,
+            new_epoch: 1,
+            proposal_generation: generation,
+            new_keys,
+            activate_at_ns,
+        };
+        near_sdk::borsh::to_vec(&proposal).unwrap()
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn cancellation_message(
+        instance: [u8; 32],
+        proposal_generation: u64,
+        proposal_message: &[u8],
+    ) -> Vec<u8> {
+        let cancellation = crate::receipt_recovery::CommitteeRotationCancellationV2 {
+            schema_version: 2,
+            chain_id: "test".to_string(),
+            genesis_hash: [9u8; 32],
+            core_account_id: accounts(0).to_string(),
+            instance_id: instance,
+            old_epoch: 0,
+            new_epoch: 1,
+            proposal_generation,
+            proposal_digest: crate::receipt_recovery::test_domain_digest(
+                ROTATION_DOMAIN,
+                proposal_message,
+            ),
+        };
+        near_sdk::borsh::to_vec(&cancellation).unwrap()
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn propose_committee_rotation(
+        contract: &mut Contract,
+        proposer: AccountId,
+        instance: [u8; 32],
+        generation: u64,
+        new_keys: [[u8; 32]; 5],
+        activate_at_ns: u64,
+        now_ns: u64,
+    ) -> crate::ReceiptRecoveryRotationViewV1 {
+        let message = rotation_proposal_message(instance, generation, new_keys, activate_at_ns);
+        let envelope = signed_committee_envelope(ROTATION_DOMAIN, &message, &recovery_signers());
+        testing_env!(context_at(proposer, 10_u128.pow(24), now_ns));
+        contract.propose_receipt_recovery_rotation(envelope)
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "committee rotation activation is less than seven days away")]
+    fn rotation_proposal_rejects_activation_inside_the_minimum_delay() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let new_keys = rotation_keys(&rotation_signer_set([6, 7, 8, 9, 10]));
+        let message = rotation_proposal_message(
+            instance,
+            1,
+            new_keys,
+            NOW_NS + ROTATION_MINIMUM_DELAY_NS - 1,
+        );
+        let envelope = signed_committee_envelope(ROTATION_DOMAIN, &message, &recovery_signers());
+        testing_env!(context_at(accounts(1), 10_u128.pow(24), NOW_NS));
+        contract.propose_receipt_recovery_rotation(envelope);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn rotation_cancellation_credits_the_proposer_and_consumes_the_generation() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let new_keys = rotation_keys(&rotation_signer_set([6, 7, 8, 9, 10]));
+        let activate_at_ns = NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        let proposed = propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            new_keys,
+            activate_at_ns,
+            NOW_NS,
+        );
+        assert_eq!(proposed.old_epoch, 0);
+        assert_eq!(proposed.new_epoch, 1);
+        assert_eq!(proposed.proposal_generation.0, 1);
+        assert_eq!(proposed.proposer, accounts(1));
+        assert_eq!(proposed.activate_at_ns.0, activate_at_ns);
+
+        // The reserved epoch stays hidden from the committee view until it is
+        // activated, but the pending proposal already names it.
+        let pending = contract
+            .receipt_recovery_configuration()
+            .expect("configuration")
+            .pending_rotation
+            .expect("pending rotation");
+        assert_eq!(pending.new_epoch, 1);
+        assert!(contract.receipt_recovery_committee(1).is_none());
+        let proposal_before = contract
+            .receipt_recovery_credit(proposed.proposal_refund_credit_id.clone())
+            .expect("proposal credit");
+        assert_eq!(proposal_before.payer, accounts(1));
+        assert!(!proposal_before.sealed);
+
+        let message = rotation_proposal_message(instance, 1, new_keys, activate_at_ns);
+        let cancellation = cancellation_message(instance, 1, &message);
+        let envelope =
+            signed_committee_envelope(ROTATION_CANCEL_DOMAIN, &cancellation, &recovery_signers());
+        testing_env!(context_at(accounts(4), 0, NOW_NS + 1));
+        let cancelled = contract.cancel_receipt_recovery_rotation(envelope);
+        assert_eq!(cancelled.proposal_digest, proposed.proposal_digest);
+
+        let config = contract
+            .receipt_recovery_configuration()
+            .expect("configuration");
+        assert_eq!(config.current_epoch, 0);
+        assert_eq!(config.last_rotation_generation.0, 1);
+        assert_eq!(config.used_key_count, 5);
+        assert_eq!(config.activated_epoch_count, 1);
+        assert!(config.pending_rotation.is_none());
+        assert!(contract.receipt_recovery_committee(1).is_none());
+        assert_eq!(
+            contract
+                .receipt_recovery_committee(0)
+                .expect("active keyset"),
+            recovery_signers()
+                .iter()
+                .map(|(verifying, _)| {
+                    format!(
+                        "ed25519:{}",
+                        bs58::encode(verifying.to_bytes()).into_string()
+                    )
+                })
+                .collect::<Vec<_>>()
+        );
+
+        for credit_id in [
+            proposed.proposal_refund_credit_id.clone(),
+            cancelled.epoch_refund_credit_id.clone(),
+        ] {
+            let credit = contract
+                .receipt_recovery_credit(credit_id)
+                .expect("released rotation credit");
+            assert_eq!(credit.payer, accounts(1));
+            assert!(credit.sealed);
+            assert!(!credit.settled);
+            assert!(
+                credit.accrued_yocto.parse::<u128>().unwrap() > 0,
+                "cancellation must release measured storage to the proposer"
+            );
+            assert!(credit.storage_reserve_ready);
+            assert!(credit.cash_solvency_ready);
+        }
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "committee rotation generation is stale or skipped")]
+    fn cancelled_rotation_generation_cannot_be_reproposed() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let new_keys = rotation_keys(&rotation_signer_set([6, 7, 8, 9, 10]));
+        let activate_at_ns = NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            new_keys,
+            activate_at_ns,
+            NOW_NS,
+        );
+        let message = rotation_proposal_message(instance, 1, new_keys, activate_at_ns);
+        let cancellation = cancellation_message(instance, 1, &message);
+        let cancel_envelope =
+            signed_committee_envelope(ROTATION_CANCEL_DOMAIN, &cancellation, &recovery_signers());
+        testing_env!(context_at(accounts(4), 0, NOW_NS + 1));
+        contract.cancel_receipt_recovery_rotation(cancel_envelope);
+
+        propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            new_keys,
+            activate_at_ns,
+            NOW_NS + 2,
+        );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "no committee rotation is pending")]
+    fn rotation_cancellation_cannot_be_replayed() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let new_keys = rotation_keys(&rotation_signer_set([6, 7, 8, 9, 10]));
+        let activate_at_ns = NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            new_keys,
+            activate_at_ns,
+            NOW_NS,
+        );
+        let message = rotation_proposal_message(instance, 1, new_keys, activate_at_ns);
+        let cancellation = cancellation_message(instance, 1, &message);
+        let envelope =
+            signed_committee_envelope(ROTATION_CANCEL_DOMAIN, &cancellation, &recovery_signers());
+        testing_env!(context_at(accounts(4), 0, NOW_NS + 1));
+        contract.cancel_receipt_recovery_rotation(envelope.clone());
+        testing_env!(context_at(accounts(4), 0, NOW_NS + 2));
+        contract.cancel_receipt_recovery_rotation(envelope);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "cancellation does not bind to the exact pending rotation")]
+    fn successor_cancellation_cannot_cancel_a_later_proposal() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let first_keys = rotation_keys(&rotation_signer_set([6, 7, 8, 9, 10]));
+        let activate_at_ns = NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            first_keys,
+            activate_at_ns,
+            NOW_NS,
+        );
+        let first_message = rotation_proposal_message(instance, 1, first_keys, activate_at_ns);
+        let first_cancellation = cancellation_message(instance, 1, &first_message);
+        let first_envelope = signed_committee_envelope(
+            ROTATION_CANCEL_DOMAIN,
+            &first_cancellation,
+            &recovery_signers(),
+        );
+        testing_env!(context_at(accounts(4), 0, NOW_NS + 1));
+        contract.cancel_receipt_recovery_rotation(first_envelope.clone());
+
+        let second_keys = rotation_keys(&rotation_signer_set([11, 12, 13, 14, 15]));
+        propose_committee_rotation(
+            &mut contract,
+            accounts(2),
+            instance,
+            2,
+            second_keys,
+            activate_at_ns,
+            NOW_NS + 2,
+        );
+        testing_env!(context_at(accounts(4), 0, NOW_NS + 3));
+        contract.cancel_receipt_recovery_rotation(first_envelope);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn rotation_activation_switches_committees_and_retires_the_prior_epoch() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let epoch0_keys = rotation_keys(&recovery_signers());
+        let epoch1_signers = rotation_signer_set([6, 7, 8, 9, 10]);
+        let epoch1_keys = rotation_keys(&epoch1_signers);
+        let activate_at_ns = NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            epoch1_keys,
+            activate_at_ns,
+            NOW_NS,
+        );
+
+        testing_env!(context_at(accounts(4), 0, activate_at_ns));
+        let activated = contract.activate_receipt_recovery_rotation();
+        assert_eq!(activated.old_epoch, 0);
+        assert_eq!(activated.new_epoch, 1);
+        assert_eq!(activated.proposal_generation.0, 1);
+
+        let config = contract
+            .receipt_recovery_configuration()
+            .expect("configuration");
+        assert_eq!(config.current_epoch, 1);
+        assert_eq!(config.activated_epoch_count, 2);
+        assert_eq!(config.used_key_count, 10);
+        assert_eq!(config.last_rotation_generation.0, 1);
+        assert!(config.pending_rotation.is_none());
+        assert_eq!(
+            config.current_committee_keys,
+            epoch1_keys
+                .iter()
+                .map(|key| format!("ed25519:{}", bs58::encode(key).into_string()))
+                .collect::<Vec<_>>()
+        );
+        // A retired key remains readable for the epoch it signed during, and is
+        // permanently recorded in the used-key registry.
+        assert_eq!(
+            contract
+                .receipt_recovery_committee(0)
+                .expect("retained epoch"),
+            epoch0_keys
+                .iter()
+                .map(|key| format!("ed25519:{}", bs58::encode(key).into_string()))
+                .collect::<Vec<_>>()
+        );
+
+        testing_env!(context_at(accounts(4), 0, activate_at_ns + 1));
+        assert!(contract.retire_receipt_recovery_epoch(0));
+        assert!(contract.receipt_recovery_committee(0).is_none());
+        let after_retire = contract
+            .receipt_recovery_configuration()
+            .expect("configuration");
+        assert_eq!(after_retire.used_key_count, 10);
+
+        // The next generation signs with the new committee and reaches epoch 2.
+        let epoch2_keys = rotation_keys(&rotation_signer_set([11, 12, 13, 14, 15]));
+        let next_activate_at = activate_at_ns + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        let message =
+            rotation_proposal_message_in_epoch(instance, 1, 2, 2, epoch2_keys, next_activate_at);
+        let envelope = signed_committee_envelope(ROTATION_DOMAIN, &message, &epoch1_signers);
+        testing_env!(context_at(accounts(2), 10_u128.pow(24), activate_at_ns + 2));
+        let proposed = contract.propose_receipt_recovery_rotation(envelope);
+        assert_eq!(proposed.old_epoch, 1);
+        assert_eq!(proposed.new_epoch, 2);
+        assert_eq!(proposed.proposal_generation.0, 2);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn retire_epoch_refuses_active_pending_and_unknown_epochs() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        testing_env!(context_at(accounts(4), 0, NOW_NS));
+        assert!(!contract.retire_receipt_recovery_epoch(0));
+        assert!(!contract.retire_receipt_recovery_epoch(7));
+
+        let new_keys = rotation_keys(&rotation_signer_set([6, 7, 8, 9, 10]));
+        propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            new_keys,
+            NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000,
+            NOW_NS,
+        );
+        testing_env!(context_at(accounts(4), 0, NOW_NS + 1));
+        assert!(!contract.retire_receipt_recovery_epoch(1));
+        let pending = contract
+            .receipt_recovery_configuration()
+            .expect("configuration")
+            .pending_rotation
+            .expect("pending rotation still reserves epoch 1");
+        assert_eq!(pending.new_epoch, 1);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn rotation_generations_keep_each_payers_credit_separate() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let activate_at_ns = NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        let mut credit_ids = Vec::new();
+        for (round, seeds) in [
+            [6u8, 7, 8, 9, 10],
+            [11, 12, 13, 14, 15],
+            [16, 17, 18, 19, 20],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let generation = round as u64 + 1;
+            let proposer = accounts(usize::try_from(generation + 1).unwrap());
+            let new_keys = rotation_keys(&rotation_signer_set(seeds));
+            let proposed = propose_committee_rotation(
+                &mut contract,
+                proposer.clone(),
+                instance,
+                generation,
+                new_keys,
+                activate_at_ns,
+                NOW_NS + generation,
+            );
+            assert_eq!(proposed.proposal_generation.0, generation);
+            assert_eq!(proposed.proposer, proposer);
+            assert!(!credit_ids.contains(&proposed.proposal_refund_credit_id));
+            credit_ids.push(proposed.proposal_refund_credit_id.clone());
+
+            let message = rotation_proposal_message(instance, generation, new_keys, activate_at_ns);
+            let cancellation = cancellation_message(instance, generation, &message);
+            let envelope = signed_committee_envelope(
+                ROTATION_CANCEL_DOMAIN,
+                &cancellation,
+                &recovery_signers(),
+            );
+            testing_env!(context_at(accounts(4), 0, NOW_NS + 100 + generation));
+            contract.cancel_receipt_recovery_rotation(envelope);
+
+            let credit = contract
+                .receipt_recovery_credit(proposed.proposal_refund_credit_id)
+                .expect("payer credit");
+            assert_eq!(credit.payer, proposer);
+            assert!(credit.sealed);
+            assert!(credit.accrued_yocto.parse::<u128>().unwrap() > 0);
+        }
+
+        let config = contract
+            .receipt_recovery_configuration()
+            .expect("configuration");
+        assert_eq!(config.current_epoch, 0);
+        assert_eq!(config.activated_epoch_count, 1);
+        assert_eq!(config.used_key_count, 5);
+        assert_eq!(config.last_rotation_generation.0, 3);
+        assert!(config.pending_rotation.is_none());
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    fn rotation_state_survives_a_contract_state_round_trip() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let new_keys = rotation_keys(&rotation_signer_set([6, 7, 8, 9, 10]));
+        let activate_at_ns = NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        let proposed = propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            new_keys,
+            activate_at_ns,
+            NOW_NS,
+        );
+
+        let bytes = near_sdk::borsh::to_vec(&contract).expect("state serialization");
+        let restored: Contract = near_sdk::borsh::from_slice(&bytes).expect("state reload");
+        let config = restored
+            .receipt_recovery_configuration()
+            .expect("configuration");
+        assert_eq!(
+            config.instance_id,
+            crate::receipt_recovery::encode_lower_hex_32(&instance)
+        );
+        assert_eq!(config.current_epoch, 0);
+        assert_eq!(config.last_rotation_generation.0, 1);
+        let pending = config.pending_rotation.expect("pending rotation survives");
+        assert_eq!(pending.proposal_generation.0, 1);
+        assert_eq!(pending.proposal_digest, proposed.proposal_digest);
+        assert_eq!(pending.activate_at_ns.0, activate_at_ns);
+
+        // The restored instance still enforces the consumed counter: the same
+        // proposal cannot be recorded twice after an in-place upgrade.
+        let mut restored = restored;
+        let message = rotation_proposal_message(instance, 1, new_keys, activate_at_ns);
+        let envelope = signed_committee_envelope(ROTATION_DOMAIN, &message, &recovery_signers());
+        testing_env!(context_at(accounts(1), 10_u128.pow(24), NOW_NS + 1));
+        let duplicate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            restored.propose_receipt_recovery_rotation(envelope.clone());
+        }));
+        assert!(
+            duplicate.is_err(),
+            "a pending rotation blocks a second proposal"
+        );
+        let config_after = restored
+            .receipt_recovery_configuration()
+            .expect("configuration");
+        assert_eq!(config_after.last_rotation_generation.0, 1);
+        assert_eq!(
+            config_after.pending_rotation.unwrap().proposal_generation.0,
+            1
+        );
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    fn rotation_proposal_message_in_epoch(
+        instance: [u8; 32],
+        old_epoch: u32,
+        new_epoch: u32,
+        generation: u64,
+        new_keys: [[u8; 32]; 5],
+        activate_at_ns: u64,
+    ) -> Vec<u8> {
+        let proposal = crate::receipt_recovery::CommitteeRotationV2 {
+            schema_version: 2,
+            chain_id: "test".to_string(),
+            genesis_hash: [9u8; 32],
+            core_account_id: accounts(0).to_string(),
+            instance_id: instance,
+            old_epoch,
+            new_epoch,
+            proposal_generation: generation,
+            new_keys,
+            activate_at_ns,
+        };
+        near_sdk::borsh::to_vec(&proposal).unwrap()
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
+    #[test]
+    #[should_panic(expected = "new committee key was used by an earlier epoch")]
+    fn rotation_rejects_reusing_a_retired_committee_key() {
+        let (mut contract, instance) = bootstrapped_recovery(&[[1u8; 32]], [1u8; 32]);
+        let epoch0_keys = rotation_keys(&recovery_signers());
+        let epoch1_signers = rotation_signer_set([6, 7, 8, 9, 10]);
+        let epoch1_keys = rotation_keys(&epoch1_signers);
+        let activate_at_ns = NOW_NS + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000;
+        propose_committee_rotation(
+            &mut contract,
+            accounts(1),
+            instance,
+            1,
+            epoch1_keys,
+            activate_at_ns,
+            NOW_NS,
+        );
+        testing_env!(context_at(accounts(4), 0, activate_at_ns));
+        contract.activate_receipt_recovery_rotation();
+        testing_env!(context_at(accounts(4), 0, activate_at_ns + 1));
+        assert!(contract.retire_receipt_recovery_epoch(0));
+
+        let mut reused = [
+            epoch1_keys[0],
+            epoch1_keys[1],
+            epoch1_keys[2],
+            epoch1_keys[3],
+            epoch0_keys[0],
+        ];
+        reused.sort_unstable();
+        let message = rotation_proposal_message_in_epoch(
+            instance,
+            1,
+            2,
+            2,
+            reused,
+            activate_at_ns + ROTATION_MINIMUM_DELAY_NS + 3_600_000_000_000,
+        );
+        let envelope = signed_committee_envelope(ROTATION_DOMAIN, &message, &epoch1_signers);
+        testing_env!(context_at(accounts(2), 10_u128.pow(24), activate_at_ns + 2));
+        contract.propose_receipt_recovery_rotation(envelope);
+    }
+
+    #[cfg(feature = "usdc-receipt-recovery")]
     fn propose_code_hash(
         contract: &mut Contract,
         instance: [u8; 32],
