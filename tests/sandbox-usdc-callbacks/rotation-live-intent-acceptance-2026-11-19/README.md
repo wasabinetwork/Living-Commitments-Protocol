@@ -44,6 +44,21 @@ The two payouts in this scenario leave the mock token pool and are returned in
 `3fWbPKd86Hd4iD7EgzHmqDpaYSeE7LadAatUX9hvzrN1` so the later token-balance
 scenarios keep their documented starting supply.
 
+## Verify
+
+```bash
+node tests/sandbox-usdc-callbacks/verify-rotation-live-intent-capture.mjs
+node --test tests/sandbox-usdc-callbacks/test/rotation-live-intent-capture.test.mjs
+```
+
+The first command rechecks every recorded field in
+`scenarios.rotation_live_intent` against the pinned artifact and the committed
+source manifest: the retained-epoch settlement while epoch 2 is active, the
+blocked-then-successful retirement, generation and epoch continuity with the
+preceding governance rotation, the preserved instance ID and counters, the
+full raw payout, and the repaid mock pool. The second mutates the capture one
+field at a time and expects each mutation to be rejected.
+
 ## Limits
 
 This is local Sandbox evidence produced by the same operator, not an

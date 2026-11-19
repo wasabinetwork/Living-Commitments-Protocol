@@ -143,6 +143,8 @@ node tests/sandbox-usdc-callbacks/verify-protocol-88-fixture.mjs
 node tests/sandbox-usdc-callbacks/verify-native-excess-refund-capture.mjs
 node tests/sandbox-usdc-callbacks/verify-bootstrap-activity-guard-capture.mjs
 node tests/sandbox-usdc-callbacks/verify-storage-registry-capture.mjs
+node tests/sandbox-usdc-callbacks/verify-rotation-live-intent-capture.mjs
+node --test tests/sandbox-usdc-callbacks/test/rotation-live-intent-capture.test.mjs
 node tests/sandbox-usdc-callbacks/verify-release-feature-exclusion.mjs
 ```
 

@@ -87,6 +87,12 @@ manifest is
 [`rotation-live-intent-acceptance-2026-11-19.sha256`](rotation-live-intent-acceptance-2026-11-19.sha256)
 and its tooling manifest is
 [`rotation-live-intent-acceptance-2026-11-19.tooling.sha256`](rotation-live-intent-acceptance-2026-11-19.tooling.sha256).
+A saved-evidence checker,
+[`verify-rotation-live-intent-capture.mjs`](verify-rotation-live-intent-capture.mjs),
+revalidates the pinned artifact, retained-epoch settlement, retirement ordering,
+preserved identity and counters, escrow payout, and repaid pool against the
+manifest; its mutation suite is
+[`test/rotation-live-intent-capture.test.mjs`](test/rotation-live-intent-capture.test.mjs).
 The `689fbf1`, `29ed585`, and Gate 5 captures were not regenerated. This is
 same-operator local evidence; the production seven-day rotation cycle and an
 independent reproduction remain open.

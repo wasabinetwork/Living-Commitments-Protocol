@@ -1,5 +1,7 @@
 84c3b1a7003e5a92a8fcc1a3bdf3bf7e2b0771bb59343b9c68f11470ecfaf6e5  tests/sandbox-usdc-callbacks/run.mjs
-4a00042e447acbde8de806c9343101dfb64d671c04f423673ef7b9dc489ebba3  tests/sandbox-usdc-callbacks/README.md
-006465f8d1b762e3c51f4caafeada94e4e1cffa24e5580758b99ed630e24f490  tests/sandbox-usdc-callbacks/rotation-live-intent-acceptance-2026-11-19/README.md
+43b60783c61344aaec178eb4953bdcbfb5c6d360a7401b4363d470fe93e93d9b  tests/sandbox-usdc-callbacks/README.md
+c6895dc20957e81bb96382afe980f6fcd6d26890e78f0c9da2307594b40dbe7d  tests/sandbox-usdc-callbacks/rotation-live-intent-acceptance-2026-11-19/README.md
 d5146dfb2f994d660935955a0ea10c80efcd9377a8ed480225d7c2e25ead6548  tests/sandbox-usdc-callbacks/package.json
 c14ba6bb421a3bc4c14909ba301c7e49a7e46ba5cf16c39fa097caaff6d6e39e  tests/sandbox-usdc-callbacks/package-lock.json
+6cf9896141ed026addaee8cc9730cb58c47cea67b0d07f1406927c72a3d170e3  tests/sandbox-usdc-callbacks/verify-rotation-live-intent-capture.mjs
+d22741b1d6f7601fac8e58cf25c422e69873061b305d2b92132e850d749ac257  tests/sandbox-usdc-callbacks/test/rotation-live-intent-capture.test.mjs
