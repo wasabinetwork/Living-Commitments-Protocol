@@ -288,7 +288,6 @@ async function main() {
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
   const { paidRaw, generation, pendingTransfer, nextTransfer } =
     validateRotationLiveIntentCapture(capture);
-  const sourceCount = await verifyManifest(capturePath, manifestPath);
 
   if (freshArgument) {
     const freshPath = resolve(freshArgument);
@@ -296,9 +295,11 @@ async function main() {
     const { compared, volatile } = compareRotationLiveIntentCaptures(fresh, capture);
     const shownPath = relative(process.cwd(), freshPath) || freshPath;
     console.log(`PASS fresh rotation capture ${shownPath} matches the committed evidence: ${compared} scenario fields compared, ${volatile.length} volatile fields excluded (${volatile.join(", ")}), plus the artifact, node build, scenario order, and governance continuity`);
-    console.log("LIMITATION: compares two captures of the same fixture field by field; it does not re-execute receipts, and matching identifiers or counters are evidence of reproducibility, not of an independent operator.");
+    console.log("LIMITATION: compares two captures of the same fixture field by field; it does not re-execute receipts, does not re-verify the committed source manifest, and matching identifiers or counters are evidence of reproducibility, not of an independent operator.");
     return;
   }
+
+  const sourceCount = await verifyManifest(capturePath, manifestPath);
 
   console.log(`PASS rotation-with-live-intent capture: ${sourceCount} source hashes, pinned artifact, epoch ${capture.scenarios.rotation_live_intent.retained_epoch} blocked from retirement until transfer ${pendingTransfer} settles under the active epoch ${capture.scenarios.rotation_live_intent.active_epoch}, generation ${generation} preserved across an in-place upgrade (next transfer ${nextTransfer}), ${paidRaw} raw units paid, and the mock pool repaid`);
   console.log("LIMITATION: validates the recorded scenario fields, their cross-scenario continuity, and manifest consistency; it does not re-derive receipt-level execution, and the upgrade is a DeployContract over live state rather than a state-migration function.");

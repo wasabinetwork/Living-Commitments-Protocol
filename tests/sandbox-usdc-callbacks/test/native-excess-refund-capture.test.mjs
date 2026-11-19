@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { validateNativeExcessRefundCapture } from "../verify-native-excess-refund-capture.mjs";
+import {
+  compareNativeExcessRefundFreshCapture,
+  validateNativeExcessRefundCapture,
+} from "../verify-native-excess-refund-capture.mjs";
 
 const here = new URL("../native-excess-refund-cash-gate-sandbox-acceptance-2026-11-17-reproducible.json", import.meta.url);
 const canonical = JSON.parse(await readFile(fileURLToPath(here), "utf8"));
@@ -267,4 +270,20 @@ test("rejects a settlement event in the replay graph even without a transfer", (
   target.outcome.logs = [...(target.outcome.logs ?? []), settlementLog];
   assert.throws(() => validateNativeExcessRefundCapture(changed),
     /must not emit a second settlement event/);
+});
+
+test("accepts a fresh capture that differs only in chain identity", () => {
+  const fresh = clone();
+  fresh.captured_at = "2026-11-20T00:00:00.000Z";
+  fresh.node.chain_id = "test-chain-QQQQQ";
+  fresh.node.genesis_hash = "G".repeat(44);
+  const { compared, skipped } = compareNativeExcessRefundFreshCapture(fresh, canonical);
+  assert.ok(compared > 500 && skipped > 0);
+});
+
+test("rejects a fresh capture that adds a scenario", () => {
+  const fresh = clone();
+  fresh.scenarios.unexpected_scenario = {};
+  assert.throws(() => compareNativeExcessRefundFreshCapture(fresh, canonical),
+    /scenarios records different fields/);
 });

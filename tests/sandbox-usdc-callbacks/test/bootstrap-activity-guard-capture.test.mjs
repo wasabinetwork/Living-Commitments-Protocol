@@ -4,7 +4,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { validateBootstrapActivityGuardCapture } from "../verify-bootstrap-activity-guard-capture.mjs";
+import {
+  compareBootstrapActivityGuardFreshCapture,
+  validateBootstrapActivityGuardCapture,
+} from "../verify-bootstrap-activity-guard-capture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const capture = JSON.parse(await readFile(resolve(
@@ -54,4 +57,20 @@ test("rejects if the pre-existing commitment is missing after bootstrap rejectio
   const changed = structuredClone(capture);
   changed.scenarios.bootstrap_after_commitment_activity.commitment_after_rejected_bootstrap = null;
   assert.throws(() => validateBootstrapActivityGuardCapture(changed), /preserve the commitment/);
+});
+
+test("accepts a fresh capture that differs only in chain identity", () => {
+  const fresh = structuredClone(capture);
+  fresh.captured_at = "2026-11-20T00:00:00.000Z";
+  fresh.node.chain_id = "test-chain-QQQQQ";
+  fresh.node.genesis_hash = "G".repeat(44);
+  const { compared, skipped } = compareBootstrapActivityGuardFreshCapture(fresh, capture);
+  assert.ok(compared > 200 && skipped > 0);
+});
+
+test("rejects a fresh capture that adds a scenario", () => {
+  const fresh = structuredClone(capture);
+  fresh.scenarios.unexpected_scenario = {};
+  assert.throws(() => compareBootstrapActivityGuardFreshCapture(fresh, capture),
+    /scenarios records different fields/);
 });

@@ -4,7 +4,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { validateStorageRegistryCaptures } from "../verify-storage-registry-capture.mjs";
+import {
+  compareStorageRegistryFreshCaptures,
+  validateStorageRegistryCaptures,
+} from "../verify-storage-registry-capture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const [capacityCapture, shapeCapture] = await Promise.all([
@@ -44,4 +47,21 @@ test("rejects a changed maximum-payer storage measurement", () => {
   const changed = structuredClone(shapeCapture);
   changed.scenarios.storage_registry_shape_acceptance.measured_credit_storage_bytes = "33727";
   assert.throws(() => validateStorageRegistryCaptures(capacityCapture, changed), /measured_credit_storage_bytes/);
+});
+
+test("accepts fresh captures that differ only in recorded timestamps", () => {
+  const freshCapacity = structuredClone(capacityCapture);
+  const freshShape = structuredClone(shapeCapture);
+  freshCapacity.captured_at = "2026-11-20T00:00:00.000Z";
+  freshShape.captured_at = "2026-11-20T00:00:00.000Z";
+  const { compared, skipped } = compareStorageRegistryFreshCaptures(freshCapacity,
+    freshShape, capacityCapture, shapeCapture);
+  assert.ok(compared > 500 && skipped > 0);
+});
+
+test("rejects a fresh maximum-payer capture that adds a scenario", () => {
+  const freshShape = structuredClone(shapeCapture);
+  freshShape.scenarios.unexpected_scenario = {};
+  assert.throws(() => compareStorageRegistryFreshCaptures(capacityCapture, freshShape,
+    capacityCapture, shapeCapture), /scenarios records different fields/);
 });

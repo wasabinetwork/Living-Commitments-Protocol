@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareCaptureFields, extractFreshArguments } from "./fresh-capture-compare.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
@@ -149,15 +150,30 @@ export async function verifyBootstrapActivityGuardManifest(capturePath, manifest
   return rows.length;
 }
 
+export function compareBootstrapActivityGuardFreshCapture(fresh, committed) {
+  validateBootstrapActivityGuardCapture(fresh);
+  return compareCaptureFields(fresh, committed, { label: "bootstrap activity guard" });
+}
+
 async function main() {
-  const captureArgument = process.argv[2];
+  const { freshPaths, positional } = extractFreshArguments(process.argv.slice(2));
+  const captureArgument = positional[0];
   const capturePath = resolve(captureArgument ?? defaultCapturePath);
   const inferredManifestPath = captureArgument
     ? capturePath.replace(/\.json$/, ".sha256")
     : defaultManifestPath;
-  const manifestPath = resolve(process.argv[3] ?? inferredManifestPath);
+  const manifestPath = resolve(positional[1] ?? inferredManifestPath);
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
   validateBootstrapActivityGuardCapture(capture);
+
+  if (freshPaths.length > 0) {
+    const fresh = JSON.parse(await readFile(resolve(freshPaths[0]), "utf8"));
+    const { compared, skipped } = compareBootstrapActivityGuardFreshCapture(fresh, capture);
+    console.log(`PASS fresh bootstrap-guard capture ${relative(process.cwd(), resolve(freshPaths[0])) || freshPaths[0]} matches the committed evidence: ${compared} fields compared, ${skipped} volatile fields excluded`);
+    console.log("LIMITATION: compares two captures of the same fixture field by field; it does not re-execute receipts, does not re-verify the committed source manifest, and matching values are evidence of reproducibility, not of an independent operator.");
+    return;
+  }
+
   const checked = await verifyBootstrapActivityGuardManifest(capturePath, manifestPath);
   console.log(`PASS bootstrap-guard capture: ${checked} source hashes, finalized commitment, rejected bootstrap, preserved state`);
   console.log("LIMITATION: validates saved local Sandbox records; it is not a testnet or receipt-proof verification.");

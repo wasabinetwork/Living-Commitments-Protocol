@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareCaptureFields, extractFreshArguments } from "./fresh-capture-compare.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
@@ -144,17 +145,43 @@ export function validateStorageRegistryCaptures(capacityCapture, shapeCapture) {
   };
 }
 
+export function compareStorageRegistryFreshCaptures(freshCapacity, freshShape,
+  capacityCapture, shapeCapture) {
+  validateStorageRegistryCaptures(freshCapacity, freshShape);
+  const capacity = compareCaptureFields(freshCapacity, capacityCapture,
+    { label: "storage registry capacity" });
+  const shape = compareCaptureFields(freshShape, shapeCapture,
+    { label: "storage registry shape" });
+  return {
+    compared: capacity.compared + shape.compared,
+    skipped: capacity.skipped + shape.skipped,
+  };
+}
+
 async function main() {
-  const args = process.argv.slice(2);
-  assert.ok(args.length === 0 || args.length === 2,
-    "usage: node verify-storage-registry-capture.mjs [<capacity-capture> <shape-capture>]");
-  const capacityPath = args.length === 2 ? resolve(repoRoot, args[0]) : defaultCapacityPath;
-  const shapePath = args.length === 2 ? resolve(repoRoot, args[1]) : defaultShapePath;
+  const { freshPaths, positional } = extractFreshArguments(process.argv.slice(2), 2);
+  assert.ok(positional.length === 0 || positional.length === 2,
+    "usage: node verify-storage-registry-capture.mjs [<capacity-capture> <shape-capture>] [--fresh <capacity> <shape>]");
+  const capacityPath = positional.length === 2
+    ? resolve(repoRoot, positional[0]) : defaultCapacityPath;
+  const shapePath = positional.length === 2
+    ? resolve(repoRoot, positional[1]) : defaultShapePath;
   const [capacityCapture, shapeCapture] = await Promise.all([
     readFile(capacityPath, "utf8").then(JSON.parse),
     readFile(shapePath, "utf8").then(JSON.parse),
   ]);
   const summary = validateStorageRegistryCaptures(capacityCapture, shapeCapture);
+
+  if (freshPaths.length > 0) {
+    const [freshCapacity, freshShape] = await Promise.all(freshPaths.map((path) =>
+      readFile(resolve(path), "utf8").then(JSON.parse)));
+    const { compared, skipped } = compareStorageRegistryFreshCaptures(freshCapacity,
+      freshShape, capacityCapture, shapeCapture);
+    console.log(`PASS fresh storage registry captures match the committed evidence: ${compared} fields compared, ${skipped} volatile fields excluded`);
+    console.log("LIMITATION: compares two capture pairs of the same fixture field by field; it does not re-execute receipts, and matching values are evidence of reproducibility, not of an independent operator.");
+    return;
+  }
+
   console.log(`PASS full registry and maximum-payer captures: ${JSON.stringify(summary)}`);
   console.log("LIMITATION: validates saved Sandbox evidence; it does not independently rerun Sandbox or verify receipt proofs against block headers.");
 }

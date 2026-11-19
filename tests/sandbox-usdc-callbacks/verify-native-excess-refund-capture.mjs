@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareCaptureFields, extractFreshArguments } from "./fresh-capture-compare.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
@@ -337,11 +338,26 @@ async function verifyManifest(capturePath, manifestPath) {
   return checked;
 }
 
+export function compareNativeExcessRefundFreshCapture(fresh, committed) {
+  validateNativeExcessRefundCapture(fresh);
+  return compareCaptureFields(fresh, committed, { label: "native excess-refund" });
+}
+
 async function main() {
-  const capturePath = resolve(process.argv[2] ?? defaultCapturePath);
-  const manifestPath = resolve(process.argv[3] ?? capturePath.replace(/\.json$/, ".sha256"));
+  const { freshPaths, positional } = extractFreshArguments(process.argv.slice(2));
+  const capturePath = resolve(positional[0] ?? defaultCapturePath);
+  const manifestPath = resolve(positional[1] ?? capturePath.replace(/\.json$/, ".sha256"));
   const capture = JSON.parse(await readFile(capturePath, "utf8"));
   validateNativeExcessRefundCapture(capture);
+
+  if (freshPaths.length > 0) {
+    const fresh = JSON.parse(await readFile(resolve(freshPaths[0]), "utf8"));
+    const { compared, skipped } = compareNativeExcessRefundFreshCapture(fresh, capture);
+    console.log(`PASS fresh native excess-refund capture ${relative(process.cwd(), resolve(freshPaths[0])) || freshPaths[0]} matches the committed evidence: ${compared} fields compared, ${skipped} volatile fields excluded`);
+    console.log("LIMITATION: compares two captures of the same fixture field by field; it does not re-execute receipts, does not re-verify the committed source manifest, and matching values are evidence of reproducibility, not of an independent operator.");
+    return;
+  }
+
   const sourceCount = await verifyManifest(capturePath, manifestPath);
   console.log(`PASS native excess-refund capture: ${sourceCount} source hashes, closed finalized receipt graphs, pinned artifact, exact transfer actions and replay rejection, exact storage margin, and solvency`);
   console.log("LIMITATION: validates captured Sandbox node records and manifest consistency; it does not validate cryptographic receipt inclusion proofs against block headers.");
